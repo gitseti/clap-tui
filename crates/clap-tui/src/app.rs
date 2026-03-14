@@ -1,6 +1,7 @@
 use std::io::{self, Stdout};
 use std::time::Duration;
 
+use arboard::Clipboard;
 use clap::{Command, CommandFactory, Parser};
 use crossterm::event::{self, Event};
 use crossterm::execute;
@@ -128,6 +129,7 @@ impl TuiApp {
         }
 
         loop {
+            state.clear_expired_toast();
             terminal.draw(|frame| ui::render(frame, &mut state, &self.config))?;
 
             if event::poll(Duration::from_millis(200))? {
@@ -138,6 +140,9 @@ impl TuiApp {
                         {
                             match action {
                                 Action::Run(argv) => return Ok(argv),
+                                Action::CopyCommand(command) => {
+                                    copy_preview_to_clipboard(&mut state, &command);
+                                }
                                 Action::Exit => return Err(TuiError::Cancelled),
                             }
                         }
@@ -148,6 +153,9 @@ impl TuiApp {
                         {
                             match action {
                                 Action::Run(argv) => return Ok(argv),
+                                Action::CopyCommand(command) => {
+                                    copy_preview_to_clipboard(&mut state, &command);
+                                }
                                 Action::Exit => return Err(TuiError::Cancelled),
                             }
                         }
@@ -159,5 +167,13 @@ impl TuiApp {
                 }
             }
         }
+    }
+}
+
+fn copy_preview_to_clipboard(state: &mut AppState, command: &str) {
+    let result = Clipboard::new().and_then(|mut clipboard| clipboard.set_text(command.to_string()));
+    match result {
+        Ok(()) => state.show_toast("Copied command to clipboard", Duration::from_secs(2), false),
+        Err(_) => state.show_toast("Clipboard unavailable", Duration::from_secs(2), true),
     }
 }

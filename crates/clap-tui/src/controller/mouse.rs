@@ -46,6 +46,11 @@ pub(crate) fn handle_mouse_event(
                 return handle_footer_click(event, state);
             }
         }
+        if let Some(preview_area) = layout.preview {
+            if contains(preview_area, event.column, event.row) {
+                return Some(handle_preview_click(state));
+            }
+        }
         if let Some(search_area) = layout.search {
             if contains(search_area, event.column, event.row) {
                 state.focus = Focus::Search;
@@ -90,6 +95,10 @@ pub(crate) fn handle_mouse_event(
         navigation::scroll_form(state, -2);
     }
     None
+}
+
+fn handle_preview_click(state: &AppState) -> Action {
+    Action::CopyCommand(argv::build_argv(state).join(" "))
 }
 
 fn update_mouse_selection(state: &mut AppState, event: event::MouseEvent) -> bool {
@@ -336,6 +345,7 @@ fn handle_footer_click(event: event::MouseEvent, state: &mut AppState) -> Option
                     state.focus = Focus::Sidebar;
                     return None;
                 }
+                crate::input::HoverTarget::Preview => return None,
             }
         }
     }
@@ -349,6 +359,14 @@ fn update_hover(state: &mut AppState, x: u16, y: u16) {
         .iter()
         .find(|button| contains(button.rect, x, y))
         .map(|button| button.target);
+    if state.hover.is_none()
+        && state
+            .layout
+            .preview
+            .is_some_and(|area| contains(area, x, y))
+    {
+        state.hover = Some(crate::input::HoverTarget::Preview);
+    }
 
     state.hover_tab = state
         .layout

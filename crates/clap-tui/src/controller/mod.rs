@@ -4,6 +4,7 @@ pub(crate) mod navigation;
 
 pub(crate) enum Action {
     Run(Vec<String>),
+    CopyCommand(String),
     Exit,
 }
 

@@ -9,7 +9,7 @@ use crate::view::argv;
 use crate::view::command_tree::{self, TreeItem};
 use crate::view::form;
 
-use super::{dropdown, footer, form as form_ui, header, preview, sidebar, styles};
+use super::{dropdown, footer, form as form_ui, header, preview, sidebar, styles, toast};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScreenArg {
@@ -108,6 +108,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiCo
     let main_area = root[1];
 
     state.layout.sidebar = Some(sidebar_area);
+    state.layout.preview = Some(preview_area);
     state.layout.footer = Some(footer_area);
 
     let vm = ScreenView::build(state);
@@ -116,6 +117,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiCo
     dropdown::render_dropdown(frame, state, config, Rect::default(), &vm);
     preview::render_preview(frame, state, config, preview_area, &vm);
     footer::render_footer(frame, state, config, footer_area, &vm);
+    toast::render_toast(frame, state, config, size);
 }
 
 fn render_main(

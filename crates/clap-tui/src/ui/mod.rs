@@ -6,5 +6,6 @@ mod preview;
 mod screen;
 mod sidebar;
 mod styles;
+mod toast;
 
 pub(crate) use screen::render;

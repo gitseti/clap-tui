@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
 use tui_textarea::TextArea;
@@ -37,6 +38,7 @@ pub struct LayoutCache {
     pub sidebar: Option<Rect>,
     pub form: Option<Rect>,
     pub search: Option<Rect>,
+    pub preview: Option<Rect>,
     pub footer: Option<Rect>,
     pub dropdown: Option<Rect>,
     pub sidebar_items: Vec<SidebarItemLayout>,
@@ -52,6 +54,7 @@ pub enum HoverTarget {
     Exit,
     Search,
     Focus,
+    Preview,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +85,13 @@ pub struct MouseSelection {
     pub active: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub expires_at: Instant,
+    pub is_error: bool,
+}
+
 #[derive(Debug)]
 pub struct AppState {
     pub root: CommandSpec,
@@ -103,6 +113,7 @@ pub struct AppState {
     pub hover_tab: Option<ActiveTab>,
     pub touched: HashMap<String, HashSet<String>>,
     pub mouse_select: Option<MouseSelection>,
+    pub toast: Option<Toast>,
 }
 
 impl AppState {
@@ -129,6 +140,7 @@ impl AppState {
             hover_tab: None,
             touched: HashMap::new(),
             mouse_select: None,
+            toast: None,
         }
     }
 
@@ -304,5 +316,23 @@ impl AppState {
         textareas
             .entry(arg_id.to_string())
             .or_insert_with(|| TextArea::new(vec![initial.to_string()]))
+    }
+
+    pub fn show_toast(&mut self, message: impl Into<String>, duration: Duration, is_error: bool) {
+        self.toast = Some(Toast {
+            message: message.into(),
+            expires_at: Instant::now() + duration,
+            is_error,
+        });
+    }
+
+    pub fn clear_expired_toast(&mut self) {
+        if self
+            .toast
+            .as_ref()
+            .is_some_and(|toast| Instant::now() >= toast.expires_at)
+        {
+            self.toast = None;
+        }
     }
 }
