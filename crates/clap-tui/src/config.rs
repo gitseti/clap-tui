@@ -102,7 +102,10 @@ pub struct Keymap {
 
 impl Default for Keymap {
     fn default() -> Self {
-        Self { help: '?', search: '/' }
+        Self {
+            help: '?',
+            search: '/',
+        }
     }
 }
 

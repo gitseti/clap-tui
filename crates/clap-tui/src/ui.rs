@@ -1,8 +1,11 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, BorderType, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
-use ratatui::Frame;
+use ratatui::widgets::{
+    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState,
+};
 use tui_textarea::TextArea;
 
 use crate::config::TuiConfig;
@@ -36,7 +39,9 @@ fn style_input(config: &TuiConfig, selected: bool) -> Style {
 
 fn style_label(config: &TuiConfig, selected: bool) -> Style {
     if selected {
-        Style::default().fg(config.theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(config.theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(config.theme.dim)
     }
@@ -68,11 +73,18 @@ pub fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) {
         .border_style(Style::default().fg(config.theme.border))
         .style(style_panel(config));
     frame.render_widget(background, size);
-    let inner_size = size.inner(Margin { horizontal: 1, vertical: 1 });
+    let inner_size = size.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
 
     let vertical = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3), Constraint::Length(1)])
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
         .split(inner_size);
 
     let body_area = vertical[0];
@@ -82,7 +94,11 @@ pub fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) {
     let root = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(sidebar_width.max(20).min(body_area.width.saturating_sub(20))),
+            Constraint::Length(
+                sidebar_width
+                    .max(20)
+                    .min(body_area.width.saturating_sub(20)),
+            ),
             Constraint::Min(20),
         ])
         .split(body_area);
@@ -122,15 +138,22 @@ fn render_sidebar(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfi
         }
     }
 
-    let search = Paragraph::new(format!("🔍 {}", if state.search.is_empty() { "/ to search".to_string() } else { state.search.clone() }))
-        .style(search_style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .title("Search")
-                .style(style_panel(config)),
-        );
+    let search = Paragraph::new(format!(
+        "🔍 {}",
+        if state.search.is_empty() {
+            "/ to search".to_string()
+        } else {
+            state.search.clone()
+        }
+    ))
+    .style(search_style)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Search")
+            .style(style_panel(config)),
+    );
     frame.render_widget(search, sidebar[0]);
     state.layout.search = Some(sidebar[0]);
 
@@ -156,7 +179,11 @@ fn render_sidebar(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfi
                 .title("Commands")
                 .style(style_panel(config)),
         )
-        .style(Style::default().fg(config.theme.dim).bg(config.theme.panel_bg))
+        .style(
+            Style::default()
+                .fg(config.theme.dim)
+                .bg(config.theme.panel_bg),
+        )
         .highlight_style(style_list_highlight(config))
         .highlight_symbol("> ");
 
@@ -177,12 +204,15 @@ fn render_sidebar(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfi
         } else {
             None
         };
-        state.layout.sidebar_items.push(crate::input::SidebarItemLayout {
-            path: item.path.clone(),
-            row: row_rect,
-            caret,
-            has_children: item.has_children,
-        });
+        state
+            .layout
+            .sidebar_items
+            .push(crate::input::SidebarItemLayout {
+                path: item.path.clone(),
+                row: row_rect,
+                caret,
+                has_children: item.has_children,
+            });
     }
 }
 
@@ -207,23 +237,26 @@ fn render_header(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig
     };
     let title = Span::styled(
         cmd.name.clone(),
-        Style::default().fg(config.theme.accent).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(config.theme.accent)
+            .add_modifier(Modifier::BOLD),
     );
     let desc = Span::styled(
         cmd.about.clone().unwrap_or_default(),
         Style::default().fg(config.theme.dim),
     );
-    let crumb = Span::styled(format!("  |  {breadcrumb}"), Style::default().fg(config.theme.dim));
+    let crumb = Span::styled(
+        format!("  |  {breadcrumb}"),
+        Style::default().fg(config.theme.dim),
+    );
     let line = Line::from(vec![title, Span::raw("  "), desc, crumb]);
-    let header = Paragraph::new(line)
-        .style(style_header(config))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(config.theme.border))
-                .style(style_header(config)),
-        );
+    let header = Paragraph::new(line).style(style_header(config)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(config.theme.border))
+            .style(style_header(config)),
+    );
     frame.render_widget(header, area);
 }
 
@@ -252,14 +285,14 @@ fn render_footer(frame: &mut Frame<'_>, _state: &mut AppState, config: &TuiConfi
                 .bg(config.theme.pill_bg)
                 .add_modifier(Modifier::BOLD)
         };
-        spans.push(Span::styled(
-            label.clone(),
-            style,
-        ));
+        spans.push(Span::styled(label.clone(), style));
         spans.push(Span::raw(" "));
 
         let rect = Rect::new(cursor_x, area.y, width, 1);
-        _state.layout.footer_buttons.push(FooterButtonLayout { target, rect });
+        _state
+            .layout
+            .footer_buttons
+            .push(FooterButtonLayout { target, rect });
         cursor_x = cursor_x.saturating_add(width + 1);
     }
     let line = Line::from(spans);
@@ -304,14 +337,22 @@ fn render_form(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig, 
         state.ensure_selected_arg_visible();
     }
 
-    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let visible_tabs = state.visible_tabs();
     let show_tabs = visible_tabs.len() > 1;
     let mut content_area = inner;
     if show_tabs {
         let tabs_rect = Rect::new(inner.x, inner.y, inner.width, 1);
         render_tab_bar(frame, state, config, tabs_rect, &visible_tabs);
-        content_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1));
+        content_area = Rect::new(
+            inner.x,
+            inner.y + 1,
+            inner.width,
+            inner.height.saturating_sub(1),
+        );
     }
     state.layout.form_view = Some(content_area);
 
@@ -327,11 +368,27 @@ fn render_form(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig, 
     match state.active_tab {
         ActiveTab::Options => {
             let cursor_y = content_area.y as i32 - state.form_scroll as i32;
-            render_fields(frame, state, config, content_area, cursor_y, &others, inputs.as_ref());
+            render_fields(
+                frame,
+                state,
+                config,
+                content_area,
+                cursor_y,
+                &others,
+                inputs.as_ref(),
+            );
         }
         ActiveTab::Arguments => {
             let cursor_y = content_area.y as i32 - state.form_scroll as i32;
-            render_fields(frame, state, config, content_area, cursor_y, &positionals, inputs.as_ref());
+            render_fields(
+                frame,
+                state,
+                config,
+                content_area,
+                cursor_y,
+                &positionals,
+                inputs.as_ref(),
+            );
         }
         ActiveTab::Help => {
             render_help(frame, state, config, content_area);
@@ -346,7 +403,11 @@ fn render_form(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig, 
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .track_symbol(Some("┃"))
             .thumb_symbol("█")
-            .thumb_style(Style::default().fg(config.theme.accent).add_modifier(Modifier::BOLD))
+            .thumb_style(
+                Style::default()
+                    .fg(config.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )
             .track_style(Style::default().fg(config.theme.text));
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
@@ -410,7 +471,10 @@ fn render_tab_bar(
         spans.push(Span::raw(" "));
 
         let rect = Rect::new(cursor_x, area.y, width, 1);
-        state.layout.form_tabs.push(TabButtonLayout { tab: *tab, rect });
+        state
+            .layout
+            .form_tabs
+            .push(TabButtonLayout { tab: *tab, rect });
         cursor_x = cursor_x.saturating_add(width + 1);
     }
     let line = Line::from(spans);
@@ -440,7 +504,8 @@ fn render_fields(
         if y >= area.y as i32 + area.height as i32 {
             break;
         }
-        let selected = *order_index == state.selected_arg_index && matches!(state.focus, Focus::Form);
+        let selected =
+            *order_index == state.selected_arg_index && matches!(state.focus, Focus::Form);
         let mut label = format!("{}", arg.name);
         if arg.required {
             label.push_str(" *");
@@ -467,24 +532,36 @@ fn render_fields(
             );
         }
 
-        let input_rect = Rect::new(area.x + 1, (y + 1) as u16, area.width.saturating_sub(2), input_height);
+        let input_rect = Rect::new(
+            area.x + 1,
+            (y + 1) as u16,
+            area.width.saturating_sub(2),
+            input_height,
+        );
         state.layout.form_inputs.insert(arg.id.clone(), input_rect);
         let value = inputs
             .and_then(|i| i.values.get(&arg.id))
             .map(|v| match v {
                 crate::input::ArgValue::Bool(v) => if *v { "[x]" } else { "[ ]" }.to_string(),
                 crate::input::ArgValue::Text(v) => v.clone(),
-                crate::input::ArgValue::Enum(idx) => arg.possible_values.get(*idx).cloned().unwrap_or_default(),
+                crate::input::ArgValue::Enum(idx) => {
+                    arg.possible_values.get(*idx).cloned().unwrap_or_default()
+                }
             })
             .unwrap_or_default();
-        let is_default = !state.is_touched(&arg.id) && match (&arg.default, inputs.and_then(|i| i.values.get(&arg.id))) {
-            (Some(def), Some(crate::input::ArgValue::Text(v))) => v == def,
-            (Some(def), Some(crate::input::ArgValue::Enum(idx))) => arg.possible_values.get(*idx).map(|v| v == def).unwrap_or(false),
-            (Some(def), Some(crate::input::ArgValue::Bool(v))) => {
-                (def == "true" && *v) || (def == "false" && !*v)
-            }
-            _ => false,
-        };
+        let is_default = !state.is_touched(&arg.id)
+            && match (&arg.default, inputs.and_then(|i| i.values.get(&arg.id))) {
+                (Some(def), Some(crate::input::ArgValue::Text(v))) => v == def,
+                (Some(def), Some(crate::input::ArgValue::Enum(idx))) => arg
+                    .possible_values
+                    .get(*idx)
+                    .map(|v| v == def)
+                    .unwrap_or(false),
+                (Some(def), Some(crate::input::ArgValue::Bool(v))) => {
+                    (def == "true" && *v) || (def == "false" && !*v)
+                }
+                _ => false,
+            };
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -504,20 +581,37 @@ fn render_fields(
         match arg.kind {
             crate::spec::ArgKind::Flag => {
                 if rect_visible(area, input_rect) {
-                    let checkbox = if value.is_empty() { "[ ]".to_string() } else { value };
-                    let input = Paragraph::new(checkbox).block(block).style(fill_style.patch(text_style));
+                    let checkbox = if value.is_empty() {
+                        "[ ]".to_string()
+                    } else {
+                        value
+                    };
+                    let input = Paragraph::new(checkbox)
+                        .block(block)
+                        .style(fill_style.patch(text_style));
                     frame.render_widget(input, input_rect);
                 }
             }
             crate::spec::ArgKind::Enum => {
                 if rect_visible(area, input_rect) {
-                    let display = if value.is_empty() { "Select…".to_string() } else { format!("{value}  ▾") };
-                    let input = Paragraph::new(display).block(block).style(fill_style.patch(text_style));
+                    let display = if value.is_empty() {
+                        "Select…".to_string()
+                    } else {
+                        format!("{value}  ▾")
+                    };
+                    let input = Paragraph::new(display)
+                        .block(block)
+                        .style(fill_style.patch(text_style));
                     frame.render_widget(input, input_rect);
                 }
                 if state.enum_open.as_deref() == Some(&arg.id) {
                     let dropdown_height = arg.possible_values.len().min(6) as u16;
-                    let dropdown_rect = Rect::new(area.x, input_rect.y + input_rect.height, area.width, dropdown_height + 2);
+                    let dropdown_rect = Rect::new(
+                        area.x,
+                        input_rect.y + input_rect.height,
+                        area.width,
+                        dropdown_height + 2,
+                    );
                     state.layout.dropdown = Some(dropdown_rect);
                 }
             }
@@ -528,8 +622,9 @@ fn render_fields(
                         *textarea = TextArea::new(vec![value.clone()]);
                     }
                     textarea.set_block(block);
-                    let base_style =
-                        Style::default().fg(text_style.fg.unwrap_or(config.theme.text)).bg(config.theme.input_bg);
+                    let base_style = Style::default()
+                        .fg(text_style.fg.unwrap_or(config.theme.text))
+                        .bg(config.theme.input_bg);
                     textarea.set_style(base_style);
                     textarea.set_cursor_line_style(base_style);
                     textarea.set_cursor_style(
@@ -549,7 +644,9 @@ fn render_fields(
                     }
                 } else {
                     if rect_visible(area, input_rect) {
-                        let input = Paragraph::new(value).block(block).style(fill_style.patch(text_style));
+                        let input = Paragraph::new(value)
+                            .block(block)
+                            .style(fill_style.patch(text_style));
                         frame.render_widget(input, input_rect);
                     }
                 }
@@ -560,7 +657,10 @@ fn render_fields(
         if selected && rect_visible(area, input_rect) {
             let bar = Rect::new(area.x, input_rect.y, 1, input_rect.height);
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled("│", Style::default().fg(config.theme.accent)))),
+                Paragraph::new(Line::from(Span::styled(
+                    "│",
+                    Style::default().fg(config.theme.accent),
+                ))),
                 bar,
             );
         }
@@ -601,8 +701,12 @@ fn place_textarea_cursor(frame: &mut Frame<'_>, textarea: &TextArea<'_>, area: R
     if inner_w == 0 || inner_h == 0 {
         return;
     }
-    let x = inner_x.saturating_add(col as u16).min(inner_x + inner_w - 1);
-    let y = inner_y.saturating_add(row as u16).min(inner_y + inner_h - 1);
+    let x = inner_x
+        .saturating_add(col as u16)
+        .min(inner_x + inner_w - 1);
+    let y = inner_y
+        .saturating_add(row as u16)
+        .min(inner_y + inner_h - 1);
     frame.set_cursor_position((x, y));
 }
 
@@ -645,9 +749,15 @@ fn render_help(frame: &mut Frame<'_>, state: &AppState, config: &TuiConfig, area
 }
 
 fn render_dropdown_overlay(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) {
-    let Some(arg_id) = state.enum_open.clone() else { return; };
-    let Some(rect) = state.layout.dropdown else { return; };
-    let Some(arg) = state.current_command().args.iter().find(|a| a.id == arg_id) else { return; };
+    let Some(arg_id) = state.enum_open.clone() else {
+        return;
+    };
+    let Some(rect) = state.layout.dropdown else {
+        return;
+    };
+    let Some(arg) = state.current_command().args.iter().find(|a| a.id == arg_id) else {
+        return;
+    };
     let total = arg.possible_values.len();
     let visible = rect.height.saturating_sub(2) as usize;
     let start = state.enum_scroll.min(total.saturating_sub(visible));
@@ -658,7 +768,10 @@ fn render_dropdown_overlay(frame: &mut Frame<'_>, state: &mut AppState, config: 
         .skip(start)
         .take(visible)
         .map(|v| {
-            let line = Line::from(Span::styled(v.clone(), Style::default().fg(config.theme.text)));
+            let line = Line::from(Span::styled(
+                v.clone(),
+                Style::default().fg(config.theme.text),
+            ));
             ListItem::new(line)
         })
         .collect::<Vec<_>>();
@@ -699,7 +812,11 @@ fn render_dropdown_overlay(frame: &mut Frame<'_>, state: &mut AppState, config: 
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .track_symbol(Some("┃"))
             .thumb_symbol("█")
-            .thumb_style(Style::default().fg(config.theme.accent).add_modifier(Modifier::BOLD))
+            .thumb_style(
+                Style::default()
+                    .fg(config.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )
             .track_style(Style::default().fg(config.theme.text));
         frame.render_stateful_widget(scrollbar, rect, &mut scrollbar_state);
     }
@@ -820,7 +937,12 @@ fn build_tree_items_inner(
 ) -> bool {
     let matches = filter.is_empty()
         || cmd.name.to_lowercase().contains(filter)
-        || cmd.about.as_deref().unwrap_or("").to_lowercase().contains(filter);
+        || cmd
+            .about
+            .as_deref()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains(filter);
 
     let mut any_child_matches = false;
     path.push(cmd.name.clone());
@@ -866,7 +988,11 @@ fn build_tree_items_inner(
             indent: indent.len(),
             expanded: is_expanded,
         });
-        let show_children = if filter.is_empty() { is_expanded } else { any_child_matches };
+        let show_children = if filter.is_empty() {
+            is_expanded
+        } else {
+            any_child_matches
+        };
         if show_children {
             items.extend(child_items);
         }
