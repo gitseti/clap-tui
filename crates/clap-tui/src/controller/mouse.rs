@@ -379,3 +379,79 @@ fn update_hover(state: &mut AppState, x: u16, y: u16) {
 fn contains(area: ratatui::layout::Rect, x: u16, y: u16) -> bool {
     x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height
 }
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    use super::handle_form_click;
+    use crate::input::{ActiveTab, AppState, ArgValue, Focus};
+    use crate::spec::{ArgKind, ArgSpec, CommandSpec};
+
+    fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
+        ArgSpec {
+            id: id.to_string(),
+            name: name.to_string(),
+            help: None,
+            required: false,
+            kind,
+            default: None,
+            possible_values: Vec::new(),
+            positional_index: None,
+            is_multi: false,
+            value_hint: None,
+        }
+    }
+
+    fn command(args: Vec<ArgSpec>) -> CommandSpec {
+        CommandSpec {
+            name: "tool".to_string(),
+            about: None,
+            help: String::new(),
+            args,
+            subcommands: Vec::new(),
+        }
+    }
+
+    fn click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        }
+    }
+
+    #[test]
+    fn flag_description_click_selects_without_toggling() {
+        let mut verbose = arg("verbose", "--verbose", ArgKind::Flag);
+        verbose.help = Some("Enable verbose output".to_string());
+        let mut state = AppState::new(command(vec![verbose]));
+        state.active_tab = ActiveTab::Options;
+        state.layout.form = Some(Rect::new(0, 0, 30, 10));
+        state.layout.form_view = Some(Rect::new(0, 0, 30, 10));
+
+        handle_form_click(click(1, 1), &mut state);
+
+        assert_eq!(state.selected_arg_index, 0);
+        assert!(matches!(state.focus, Focus::Form));
+        assert!(!state.is_touched("verbose"));
+        assert!(
+            state
+                .current_inputs()
+                .and_then(|inputs| inputs.values.get("verbose"))
+                .is_none()
+        );
+
+        handle_form_click(click(1, 2), &mut state);
+
+        assert!(state.is_touched("verbose"));
+        assert!(matches!(
+            state
+                .current_inputs()
+                .and_then(|inputs| inputs.values.get("verbose")),
+            Some(ArgValue::Bool(true))
+        ));
+    }
+}

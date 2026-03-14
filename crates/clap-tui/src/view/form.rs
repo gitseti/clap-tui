@@ -10,9 +10,9 @@ pub(crate) struct OrderedArg<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FieldMetrics {
     pub(crate) label_height: u16,
+    pub(crate) description_height: u16,
     pub(crate) input_height: u16,
     pub(crate) gap_height: u16,
-    pub(crate) help_height: u16,
     pub(crate) total_height: u16,
 }
 
@@ -23,6 +23,7 @@ pub(crate) struct FormHit {
     pub(crate) arg_id: String,
     pub(crate) in_input: bool,
     pub(crate) in_label: bool,
+    pub(crate) in_description: bool,
 }
 
 pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
@@ -66,19 +67,23 @@ pub(crate) fn visible_args(command: &CommandSpec, active_tab: ActiveTab) -> Vec<
 
 pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
     let label_height = 1;
-    let input_height = if arg.is_multi { 5 } else { 3 };
-    let gap_height = 1;
-    let help_height = if arg.help.is_some() || arg.value_hint.is_some() {
+    let description_height = if arg.help.is_some() || arg.value_hint.is_some() {
         1
     } else {
         0
     };
+    let input_height = match arg.kind {
+        ArgKind::Flag => 1,
+        _ if arg.is_multi => 5,
+        _ => 3,
+    };
+    let gap_height = 1;
     FieldMetrics {
         label_height,
+        description_height,
         input_height,
         gap_height,
-        help_height,
-        total_height: label_height + input_height + gap_height + help_height,
+        total_height: label_height + description_height + input_height + gap_height,
     }
 }
 
@@ -99,7 +104,9 @@ pub(crate) fn field_content_bounds(
     let mut y: u16 = 0;
     for item in args {
         let metrics = field_metrics(item.arg);
-        let input_top = y.saturating_add(metrics.label_height);
+        let input_top = y
+            .saturating_add(metrics.label_height)
+            .saturating_add(metrics.description_height);
         let input_bottom = input_top.saturating_add(metrics.input_height);
         if item.order_index == selected_index {
             return Some((input_top, input_bottom));
@@ -113,20 +120,22 @@ pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> 
     let mut y: u16 = 0;
     for item in args {
         let metrics = field_metrics(item.arg);
-        let input_top = y.saturating_add(metrics.label_height);
+        let description_top = y.saturating_add(metrics.label_height);
+        let input_top = description_top.saturating_add(metrics.description_height);
         let input_bottom = input_top.saturating_add(metrics.input_height);
-        let help_y = input_bottom.saturating_add(metrics.gap_height);
 
-        let in_label = content_y < input_top;
+        let in_label = content_y >= y && content_y < description_top;
+        let in_description =
+            metrics.description_height > 0 && content_y >= description_top && content_y < input_top;
         let in_input = content_y >= input_top && content_y < input_bottom;
-        let in_help = metrics.help_height > 0 && content_y == help_y;
-        if in_label || in_input || in_help {
+        if in_label || in_description || in_input {
             return Some(FormHit {
                 order_index: item.order_index,
                 kind: item.arg.kind,
                 arg_id: item.arg.id.clone(),
                 in_input,
                 in_label,
+                in_description,
             });
         }
         y = y.saturating_add(metrics.total_height);
@@ -222,9 +231,12 @@ mod tests {
         let mut multi = arg("paths", "--path", ArgKind::Option);
         multi.is_multi = true;
         multi.help = Some("paths".to_string());
+        let mut flag = arg("verbose", "--verbose", ArgKind::Flag);
+        flag.help = Some("toggle".to_string());
 
         assert_eq!(field_metrics(&single).total_height, 5);
         assert_eq!(field_metrics(&multi).total_height, 8);
+        assert_eq!(field_metrics(&flag).total_height, 4);
     }
 
     #[test]
@@ -236,17 +248,40 @@ mod tests {
         let visible = visible_args(&command, ActiveTab::Arguments);
 
         assert_eq!(measure_fields_height(&visible), 6);
-        assert_eq!(field_content_bounds(&visible, 0), Some((1, 4)));
+        assert_eq!(field_content_bounds(&visible, 0), Some((2, 5)));
 
         let label_hit = hit_test_form_content(&visible, 0).expect("label hit");
         assert!(label_hit.in_label);
         assert!(!label_hit.in_input);
+        assert!(!label_hit.in_description);
+
+        let description_hit = hit_test_form_content(&visible, 1).expect("description hit");
+        assert!(description_hit.in_description);
+        assert!(!description_hit.in_label);
+        assert!(!description_hit.in_input);
+
+        let input_hit = hit_test_form_content(&visible, 3).expect("input hit");
+        assert!(input_hit.in_input);
+
+        assert!(hit_test_form_content(&visible, 5).is_none());
+    }
+
+    #[test]
+    fn flag_metrics_and_hit_testing_use_compact_control_row() {
+        let mut flag = arg("verbose", "--verbose", ArgKind::Flag);
+        flag.help = Some("Enable verbose output".to_string());
+        let command = command(vec![flag]);
+        let visible = visible_args(&command, ActiveTab::Options);
+
+        assert_eq!(measure_fields_height(&visible), 4);
+        assert_eq!(field_content_bounds(&visible, 0), Some((2, 3)));
+
+        let description_hit = hit_test_form_content(&visible, 1).expect("description hit");
+        assert!(description_hit.in_description);
+        assert!(!description_hit.in_input);
 
         let input_hit = hit_test_form_content(&visible, 2).expect("input hit");
         assert!(input_hit.in_input);
-
-        let help_hit = hit_test_form_content(&visible, 5).expect("help hit");
-        assert!(!help_hit.in_input);
-        assert!(!help_hit.in_label);
+        assert!(!input_hit.in_label);
     }
 }

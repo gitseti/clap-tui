@@ -187,9 +187,30 @@ fn render_fields(
             );
         }
 
+        let description = item
+            .arg
+            .help
+            .clone()
+            .or_else(|| item.arg.value_hint.clone());
+        if let Some(description) = description.as_ref() {
+            let description_rect = Rect::new(
+                area.x,
+                (y + i32::from(metrics.label_height)) as u16,
+                area.width,
+                metrics.description_height.max(1),
+            );
+            if rect_visible(area, description_rect) {
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::raw(description.clone())))
+                        .style(styles::help(config)),
+                    description_rect,
+                );
+            }
+        }
+
         let input_rect = Rect::new(
             area.x,
-            (y + i32::from(metrics.label_height)) as u16,
+            (y + i32::from(metrics.label_height + metrics.description_height)) as u16,
             area.width,
             metrics.input_height,
         );
@@ -243,14 +264,7 @@ fn render_fields(
         match item.arg.kind {
             ArgKind::Flag => {
                 if rect_visible(area, input_rect) {
-                    let input = Paragraph::new(if value.is_empty() {
-                        "[ ]".to_string()
-                    } else {
-                        value
-                    })
-                    .block(block)
-                    .style(fill_style.patch(text_style));
-                    frame.render_widget(input, input_rect);
+                    render_flag_toggle(frame, config, input_rect, selected, &value, text_style);
                 }
             }
             ArgKind::Enum => {
@@ -325,25 +339,7 @@ fn render_fields(
             }
         }
 
-        y += i32::from(metrics.label_height + metrics.input_height + metrics.gap_height);
-        if let Some(help) = item
-            .arg
-            .help
-            .clone()
-            .or_else(|| item.arg.value_hint.clone())
-        {
-            if y >= area.y as i32 + area.height as i32 {
-                break;
-            }
-            let rect = Rect::new(area.x, y as u16, area.width, metrics.help_height.max(1));
-            if y >= area.y as i32 && y < area.y as i32 + area.height as i32 {
-                frame.render_widget(
-                    Paragraph::new(Line::from(Span::raw(help))).style(styles::help(config)),
-                    rect,
-                );
-            }
-            y += i32::from(metrics.help_height);
-        }
+        y += i32::from(metrics.total_height);
     }
 }
 
@@ -364,6 +360,24 @@ fn value_matches_default(arg: &ArgSpec, value: Option<&ArgValue>, is_touched: bo
         }
         None => false,
     }
+}
+
+fn render_flag_toggle(
+    frame: &mut Frame<'_>,
+    config: &TuiConfig,
+    area: Rect,
+    selected: bool,
+    value: &str,
+    text_style: Style,
+) {
+    let enabled = value == "[x]";
+    let line = Line::from(vec![
+        Span::styled(if enabled { "[x]" } else { "[ ]" }, text_style),
+        Span::raw(" "),
+        Span::styled(if enabled { "Enabled" } else { "Disabled" }, text_style),
+    ]);
+    let toggle = Paragraph::new(line).style(styles::flag_toggle(config, selected));
+    frame.render_widget(toggle, area);
 }
 
 fn enum_display_line(

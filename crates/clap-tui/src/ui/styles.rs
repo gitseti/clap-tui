@@ -41,6 +41,10 @@ pub(crate) fn input(config: &TuiConfig, selected: bool) -> Style {
     }
 }
 
+pub(crate) fn flag_toggle(config: &TuiConfig, selected: bool) -> Style {
+    input(config, selected)
+}
+
 pub(crate) fn label(config: &TuiConfig, selected: bool) -> Style {
     if selected {
         Style::default()
