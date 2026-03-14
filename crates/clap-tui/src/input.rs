@@ -190,28 +190,21 @@ impl AppState {
             .collect()
     }
 
-    pub fn has_positionals(&self) -> bool {
-        self.ordered_args()
-            .iter()
-            .any(|(_, arg)| matches!(arg.kind, ArgKind::Positional))
-    }
-
-    pub fn has_options(&self) -> bool {
-        self.ordered_args()
-            .iter()
-            .any(|(_, arg)| !matches!(arg.kind, ArgKind::Positional))
-    }
-
     pub fn visible_tabs(&self) -> Vec<ActiveTab> {
-        let mut tabs = Vec::new();
-        if self.has_options() {
-            tabs.push(ActiveTab::Options);
-        }
-        if self.has_positionals() {
-            tabs.push(ActiveTab::Arguments);
-        }
-        tabs.push(ActiveTab::Help);
-        tabs
+        vec![ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help]
+    }
+
+    pub fn focus_first_tab(&mut self) {
+        self.active_tab = self
+            .visible_tabs()
+            .first()
+            .copied()
+            .unwrap_or(ActiveTab::Options);
+        self.last_non_help_tab = self.active_tab;
+        self.ensure_selected_arg_visible();
+        self.form_scroll = 0;
+        self.enum_open = None;
+        self.mouse_select = None;
     }
 
     pub fn visible_args(&self) -> Vec<(usize, &crate::spec::ArgSpec)> {
@@ -232,7 +225,7 @@ impl AppState {
     pub fn ensure_active_tab_visible(&mut self) {
         let tabs = self.visible_tabs();
         if !tabs.contains(&self.active_tab) {
-            self.active_tab = tabs.first().copied().unwrap_or(ActiveTab::Help);
+            self.active_tab = tabs.first().copied().unwrap_or(ActiveTab::Options);
             if self.active_tab != ActiveTab::Help {
                 self.last_non_help_tab = self.active_tab;
                 self.ensure_selected_arg_visible();
@@ -268,7 +261,13 @@ impl AppState {
                     .iter()
                     .position(|v| arg.default.as_deref() == Some(v))
                     .map(ArgValue::Enum)
-                    .or_else(|| if arg.possible_values.is_empty() { None } else { Some(ArgValue::Enum(0)) }),
+                    .or_else(|| {
+                        if arg.possible_values.is_empty() {
+                            None
+                        } else {
+                            Some(ArgValue::Enum(0))
+                        }
+                    }),
                 _ => arg.default.clone().map(ArgValue::Text),
             };
             if let Some(value) = value {
@@ -279,12 +278,17 @@ impl AppState {
 
     pub fn set_text_value(&mut self, arg_id: &str, text: String) {
         let inputs = self.current_inputs_mut();
-        inputs.values.insert(arg_id.to_string(), ArgValue::Text(text));
+        inputs
+            .values
+            .insert(arg_id.to_string(), ArgValue::Text(text));
     }
 
     pub fn toggle_flag(&mut self, arg_id: &str) {
         let inputs = self.current_inputs_mut();
-        let entry = inputs.values.entry(arg_id.to_string()).or_insert(ArgValue::Bool(false));
+        let entry = inputs
+            .values
+            .entry(arg_id.to_string())
+            .or_insert(ArgValue::Bool(false));
         if let ArgValue::Bool(value) = entry {
             *value = !*value;
         }
@@ -292,7 +296,10 @@ impl AppState {
 
     pub fn cycle_enum(&mut self, arg_id: &str, max: usize) {
         let inputs = self.current_inputs_mut();
-        let entry = inputs.values.entry(arg_id.to_string()).or_insert(ArgValue::Enum(0));
+        let entry = inputs
+            .values
+            .entry(arg_id.to_string())
+            .or_insert(ArgValue::Enum(0));
         if let ArgValue::Enum(index) = entry {
             if max > 0 {
                 *index = (*index + 1) % max;
@@ -302,7 +309,10 @@ impl AppState {
 
     pub fn mark_touched(&mut self, arg_id: &str) {
         let key = self.command_path_key();
-        self.touched.entry(key).or_default().insert(arg_id.to_string());
+        self.touched
+            .entry(key)
+            .or_default()
+            .insert(arg_id.to_string());
     }
 
     pub fn clear_touched(&mut self, arg_id: &str) {

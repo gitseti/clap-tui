@@ -3,10 +3,12 @@ use std::time::Duration;
 
 use clap::{Command, CommandFactory, Parser};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
-use ratatui::backend::CrosstermBackend;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use tui_textarea::{CursorMove, TextArea};
 
 use crate::config::TuiConfig;
@@ -84,7 +86,10 @@ impl TuiApp {
         let mut stdout = io::stdout();
         enable_raw_mode()?;
         execute!(stdout, EnterAlternateScreen)?;
-        execute!(stdout, crossterm::terminal::Clear(crossterm::terminal::ClearType::All))?;
+        execute!(
+            stdout,
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
+        )?;
         #[cfg(feature = "mouse")]
         {
             execute!(stdout, crossterm::event::EnableMouseCapture)?;
@@ -97,16 +102,25 @@ impl TuiApp {
         disable_raw_mode()?;
         #[cfg(feature = "mouse")]
         {
-            execute!(terminal.backend_mut(), crossterm::event::DisableMouseCapture)?;
+            execute!(
+                terminal.backend_mut(),
+                crossterm::event::DisableMouseCapture
+            )?;
         }
-        execute!(terminal.backend_mut(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All))?;
+        execute!(
+            terminal.backend_mut(),
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
+        )?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
         result
     }
 
-    fn event_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<Vec<String>, TuiError> {
+    fn event_loop(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<Vec<String>, TuiError> {
         let spec = CommandSpec::from_command(&self.command);
         let mut state = AppState::new(spec);
         if let Some(start) = self.config.start_command.clone() {
@@ -261,7 +275,10 @@ fn handle_form_text_input(key: KeyEvent, state: &mut AppState, config: &TuiConfi
     if args.is_empty() {
         return false;
     }
-    let Some((_, arg)) = args.iter().find(|(idx, _)| *idx == state.selected_arg_index) else {
+    let Some((_, arg)) = args
+        .iter()
+        .find(|(idx, _)| *idx == state.selected_arg_index)
+    else {
         return false;
     };
     let arg_id = arg.id.clone();
@@ -328,7 +345,7 @@ fn switch_tab(state: &mut AppState, tab: ActiveTab) {
     let target = if tabs.contains(&tab) {
         tab
     } else {
-        tabs.first().copied().unwrap_or(ActiveTab::Help)
+        tabs.first().copied().unwrap_or(ActiveTab::Options)
     };
     if target == state.active_tab {
         return;
@@ -348,7 +365,10 @@ fn cycle_tabs(state: &mut AppState) {
     if tabs.len() <= 1 {
         return;
     }
-    let current = tabs.iter().position(|t| *t == state.active_tab).unwrap_or(0);
+    let current = tabs
+        .iter()
+        .position(|t| *t == state.active_tab)
+        .unwrap_or(0);
     let next = (current + 1) % tabs.len();
     switch_tab(state, tabs[next]);
 }
@@ -358,7 +378,7 @@ fn toggle_help_tab(state: &mut AppState) {
         let tabs = state.visible_tabs();
         let mut target = state.last_non_help_tab;
         if !tabs.contains(&target) {
-            target = tabs.first().copied().unwrap_or(ActiveTab::Help);
+            target = tabs.first().copied().unwrap_or(ActiveTab::Options);
         }
         switch_tab(state, target);
     } else {
@@ -368,12 +388,7 @@ fn toggle_help_tab(state: &mut AppState) {
 }
 
 fn handle_enum_input(key: KeyEvent, state: &mut AppState, arg_id: &str) -> bool {
-    let arg = match state
-        .current_command()
-        .args
-        .iter()
-        .find(|a| a.id == arg_id)
-    {
+    let arg = match state.current_command().args.iter().find(|a| a.id == arg_id) {
         Some(arg) => arg,
         None => {
             state.enum_open = None;
@@ -440,7 +455,10 @@ fn move_sidebar_selection(state: &mut AppState, delta: isize) {
         .position(|item| item.path == state.selected_path)
         .unwrap_or(0) as isize;
     let next_index = (current_index + delta).clamp(0, items.len() as isize - 1) as usize;
-    state.selected_path = items[next_index].path.clone();
+    if state.selected_path != items[next_index].path {
+        state.selected_path = items[next_index].path.clone();
+        state.focus_first_tab();
+    }
 }
 
 fn move_form_selection(state: &mut AppState, delta: isize) {
@@ -508,7 +526,10 @@ fn activate_form_field(state: &mut AppState) {
     if args.is_empty() {
         return;
     }
-    let Some((_, arg)) = args.iter().find(|(idx, _)| *idx == state.selected_arg_index) else {
+    let Some((_, arg)) = args
+        .iter()
+        .find(|(idx, _)| *idx == state.selected_arg_index)
+    else {
         return;
     };
     let arg_id = arg.id.clone();
@@ -534,7 +555,11 @@ fn activate_form_field(state: &mut AppState) {
     }
 }
 
-fn handle_mouse_event(event: event::MouseEvent, state: &mut AppState, _config: &TuiConfig) -> Option<Action> {
+fn handle_mouse_event(
+    event: event::MouseEvent,
+    state: &mut AppState,
+    _config: &TuiConfig,
+) -> Option<Action> {
     let layout = state.layout.clone();
     if let MouseEventKind::Moved = event.kind {
         if update_mouse_selection(state, event) {
@@ -606,7 +631,9 @@ fn handle_mouse_event(event: event::MouseEvent, state: &mut AppState, _config: &
 }
 
 fn update_mouse_selection(state: &mut AppState, event: event::MouseEvent) -> bool {
-    let Some(mut selection) = state.mouse_select.take() else { return false; };
+    let Some(mut selection) = state.mouse_select.take() else {
+        return false;
+    };
     if let Some((row, col)) = input_position_from_event(state, &selection.arg_id, event, true) {
         let textarea = ensure_textarea_for_displayed(state, &selection.arg_id);
         if !selection.active {
@@ -620,22 +647,34 @@ fn update_mouse_selection(state: &mut AppState, event: event::MouseEvent) -> boo
     true
 }
 
-fn handle_sidebar_click(event: event::MouseEvent, state: &mut AppState, _area: ratatui::layout::Rect) {
-    for item in &state.layout.sidebar_items {
-        if contains(item.row, event.column, event.row) {
-            state.selected_path = item.path.clone();
-            if let Some(caret) = item.caret {
-                if contains(caret, event.column, event.row) && item.has_children {
-                    let tree_items = ui::tree_items(state);
-                    if let Some(found) = tree_items.iter().find(|i| i.path == item.path) {
-                        toggle_expand(state, found);
-                    }
-                }
+fn handle_sidebar_click(
+    event: event::MouseEvent,
+    state: &mut AppState,
+    _area: ratatui::layout::Rect,
+) {
+    let Some((path, caret, has_children)) = state
+        .layout
+        .sidebar_items
+        .iter()
+        .find(|item| contains(item.row, event.column, event.row))
+        .map(|item| (item.path.clone(), item.caret, item.has_children))
+    else {
+        return;
+    };
+
+    if state.selected_path != path {
+        state.selected_path = path.clone();
+        state.focus_first_tab();
+    }
+    if let Some(caret) = caret {
+        if contains(caret, event.column, event.row) && has_children {
+            let tree_items = ui::tree_items(state);
+            if let Some(found) = tree_items.iter().find(|i| i.path == path) {
+                toggle_expand(state, found);
             }
-            state.focus = Focus::Sidebar;
-            return;
         }
     }
+    state.focus = Focus::Sidebar;
 }
 
 fn handle_form_click(event: event::MouseEvent, state: &mut AppState, _area: ratatui::layout::Rect) {
@@ -650,7 +689,9 @@ fn handle_form_click(event: event::MouseEvent, state: &mut AppState, _area: rata
             return;
         }
     }
-    let Some(form_view) = state.layout.form_view else { return; };
+    let Some(form_view) = state.layout.form_view else {
+        return;
+    };
     if event.row < form_view.y || event.row >= form_view.y + form_view.height {
         return;
     }
@@ -735,7 +776,10 @@ fn displayed_text_for_arg(state: &AppState, arg_id: &str) -> String {
     String::new()
 }
 
-fn ensure_textarea_for_displayed<'a>(state: &'a mut AppState, arg_id: &str) -> &'a mut TextArea<'static> {
+fn ensure_textarea_for_displayed<'a>(
+    state: &'a mut AppState,
+    arg_id: &str,
+) -> &'a mut TextArea<'static> {
     let displayed = displayed_text_for_arg(state, arg_id);
     let textarea = state.textarea_for(arg_id, &displayed);
     if textarea.lines().join("\n") != displayed {
@@ -781,8 +825,15 @@ fn input_position_from_event(
     Some((row, col))
 }
 
-fn handle_dropdown_click(event: event::MouseEvent, state: &mut AppState, area: ratatui::layout::Rect, arg_id: &str) {
-    let Some(arg) = state.current_command().args.iter().find(|a| a.id == arg_id) else { return; };
+fn handle_dropdown_click(
+    event: event::MouseEvent,
+    state: &mut AppState,
+    area: ratatui::layout::Rect,
+    arg_id: &str,
+) {
+    let Some(arg) = state.current_command().args.iter().find(|a| a.id == arg_id) else {
+        return;
+    };
     let values = arg.possible_values.clone();
     let id = arg.id.clone();
     if event.row <= area.y || event.row >= area.y + area.height - 1 {
@@ -807,7 +858,11 @@ fn handle_tabs_click(event: event::MouseEvent, state: &mut AppState) -> bool {
     false
 }
 
-fn handle_footer_click(event: event::MouseEvent, state: &mut AppState, _area: ratatui::layout::Rect) -> Option<Action> {
+fn handle_footer_click(
+    event: event::MouseEvent,
+    state: &mut AppState,
+    _area: ratatui::layout::Rect,
+) -> Option<Action> {
     for btn in &state.layout.footer_buttons {
         if contains(btn.rect, event.column, event.row) {
             match btn.target {
@@ -915,9 +970,14 @@ fn ensure_form_visible(state: &mut AppState) {
     if matches!(state.active_tab, ActiveTab::Help) {
         return;
     }
-    let Some(form) = state.layout.form_view else { return; };
+    let Some(form) = state.layout.form_view else {
+        return;
+    };
     let view_height = form.height;
-    let Some((input_top, input_bottom)) = field_content_bounds(state, state.selected_arg_index) else { return; };
+    let Some((input_top, input_bottom)) = field_content_bounds(state, state.selected_arg_index)
+    else {
+        return;
+    };
 
     let visible_top = state.form_scroll;
     let visible_bottom = state.form_scroll.saturating_add(view_height);
@@ -961,7 +1021,10 @@ fn field_content_bounds(state: &AppState, target_index: usize) -> Option<(u16, u
     None
 }
 
-fn hit_test_form_content(state: &AppState, content_y: u16) -> Option<(usize, ArgKind, String, bool, bool)> {
+fn hit_test_form_content(
+    state: &AppState,
+    content_y: u16,
+) -> Option<(usize, ArgKind, String, bool, bool)> {
     let args = state.visible_args();
     let mut y: u16 = 0;
     for (order_index, arg) in args {
@@ -997,7 +1060,9 @@ fn scroll_enum(state: &mut AppState, delta: i16) {
 }
 
 fn ensure_enum_visible(state: &mut AppState, index: usize, total: usize) {
-    let Some(dropdown) = state.layout.dropdown else { return; };
+    let Some(dropdown) = state.layout.dropdown else {
+        return;
+    };
     let visible = dropdown.height.saturating_sub(2) as usize;
     if visible == 0 {
         return;
@@ -1015,10 +1080,14 @@ fn apply_start_command(state: &mut AppState, start: &str) {
     let path = if start.contains("::") {
         start.split("::").map(|s| s.to_string()).collect::<Vec<_>>()
     } else {
-        start.split_whitespace().map(|s| s.to_string()).collect::<Vec<_>>()
+        start
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
     };
     if !path.is_empty() {
         state.selected_path = path;
+        state.focus_first_tab();
         let mut prefix = vec![state.root.name.clone()];
         state.expanded.insert(prefix.join("::"));
         for part in &state.selected_path {
