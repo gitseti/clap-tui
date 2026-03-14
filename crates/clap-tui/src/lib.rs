@@ -7,10 +7,12 @@
 
 mod app;
 mod config;
+mod controller;
 mod error;
 mod input;
 mod spec;
 mod ui;
+mod view;
 
 pub use app::TuiApp;
 pub use config::{Keymap, LayoutConfig, Theme, ThemePreset, TuiConfig};

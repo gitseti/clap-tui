@@ -1,0 +1,383 @@
+use ratatui::Frame;
+use ratatui::layout::{Margin, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
+use tui_textarea::TextArea;
+
+use crate::config::TuiConfig;
+use crate::input::{ActiveTab, AppState, ArgValue, Focus, TabButtonLayout};
+use crate::view::form::{self, field_metrics};
+
+use super::screen::ScreenView;
+use super::styles;
+
+pub(crate) fn render_form(
+    frame: &mut Frame<'_>,
+    state: &mut AppState,
+    config: &TuiConfig,
+    area: Rect,
+    vm: &ScreenView,
+) {
+    let form_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title("Form")
+        .style(styles::panel(config));
+    frame.render_widget(form_block, area);
+    state.layout.form = Some(area);
+    state.layout.dropdown = None;
+    state.layout.form_inputs.clear();
+    state.layout.form_tabs.clear();
+    state.layout.form_view = Some(area);
+
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let show_tabs = vm.visible_tabs.len() > 1;
+    let mut content_area = inner;
+    if show_tabs {
+        let tabs_rect = Rect::new(inner.x, inner.y, inner.width, 1);
+        render_tab_bar(frame, state, config, tabs_rect, vm);
+        content_area = Rect::new(
+            inner.x,
+            inner.y + 1,
+            inner.width,
+            inner.height.saturating_sub(1),
+        );
+    }
+    state.layout.form_view = Some(content_area);
+
+    let ordered_args = vm.ordered_active_args();
+    let content_height = match state.active_tab {
+        ActiveTab::Help => form::measure_help_height(&vm.command.help),
+        _ => form::measure_fields_height(&ordered_args),
+    };
+    let viewport_height = content_area.height;
+    state.form_scroll_max = content_height.saturating_sub(viewport_height);
+    state.form_scroll = state.form_scroll.min(state.form_scroll_max);
+
+    match state.active_tab {
+        ActiveTab::Help => render_help(
+            frame,
+            config,
+            content_area,
+            state.form_scroll,
+            &vm.command.help,
+        ),
+        _ => {
+            let cursor_y = content_area.y as i32 - state.form_scroll as i32;
+            render_fields(frame, state, config, content_area, cursor_y, vm);
+        }
+    }
+
+    if content_height > viewport_height {
+        let scroll_steps = state.form_scroll_max.saturating_add(1) as usize;
+        let mut scrollbar_state = ScrollbarState::new(scroll_steps)
+            .position(state.form_scroll as usize)
+            .viewport_content_length(viewport_height as usize);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .track_symbol(Some("┃"))
+            .thumb_symbol("█")
+            .thumb_style(
+                Style::default()
+                    .fg(config.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .track_style(Style::default().fg(config.theme.text));
+        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+    }
+}
+
+fn render_tab_bar(
+    frame: &mut Frame<'_>,
+    state: &mut AppState,
+    config: &TuiConfig,
+    area: Rect,
+    vm: &ScreenView,
+) {
+    let mut spans = Vec::new();
+    let mut cursor_x = area.x;
+    for tab in &vm.visible_tabs {
+        let label = format!(" {} ", tab_label(*tab));
+        let width = label.chars().count() as u16;
+        let active = *tab == state.active_tab;
+        let hovered = state.hover_tab == Some(*tab);
+        let style = if active || hovered {
+            Style::default()
+                .fg(config.theme.panel_bg)
+                .bg(config.theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(config.theme.accent)
+                .bg(config.theme.pill_bg)
+                .add_modifier(Modifier::BOLD)
+        };
+        spans.push(Span::styled(label.clone(), style));
+        spans.push(Span::raw(" "));
+
+        let rect = Rect::new(cursor_x, area.y, width, 1);
+        state
+            .layout
+            .form_tabs
+            .push(TabButtonLayout { tab: *tab, rect });
+        cursor_x = cursor_x.saturating_add(width + 1);
+    }
+    let bar = Paragraph::new(Line::from(spans)).style(styles::panel(config));
+    frame.render_widget(bar, area);
+}
+
+fn tab_label(tab: ActiveTab) -> &'static str {
+    match tab {
+        ActiveTab::Options => "Options",
+        ActiveTab::Arguments => "Arguments",
+        ActiveTab::Help => "Help",
+    }
+}
+
+fn render_fields(
+    frame: &mut Frame<'_>,
+    state: &mut AppState,
+    config: &TuiConfig,
+    area: Rect,
+    start_y: i32,
+    vm: &ScreenView,
+) {
+    let mut y = start_y;
+    for item in &vm.active_args {
+        if y >= area.y as i32 + area.height as i32 {
+            break;
+        }
+        let selected =
+            item.order_index == state.selected_arg_index && matches!(state.focus, Focus::Form);
+        let metrics = field_metrics(&item.arg);
+        if y < 0 {
+            y += i32::from(metrics.total_height);
+            continue;
+        }
+
+        let mut label = item.arg.name.clone();
+        if item.arg.required {
+            label.push_str(" *");
+        }
+        let label_rect = Rect::new(area.x, y as u16, area.width, metrics.label_height);
+        if y >= area.y as i32 && y < area.y as i32 + area.height as i32 {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        if item.arg.required { "✓" } else { "•" },
+                        Style::default().fg(config.theme.accent),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(label, styles::label(config, selected)),
+                ])),
+                label_rect,
+            );
+        }
+
+        let input_rect = Rect::new(
+            area.x + 1,
+            (y + i32::from(metrics.label_height)) as u16,
+            area.width.saturating_sub(2),
+            metrics.input_height,
+        );
+        state
+            .layout
+            .form_inputs
+            .insert(item.arg.id.clone(), input_rect);
+        let value = vm
+            .inputs
+            .as_ref()
+            .and_then(|inputs| inputs.values.get(&item.arg.id))
+            .map(|v| match v {
+                ArgValue::Bool(v) => {
+                    if *v {
+                        "[x]".to_string()
+                    } else {
+                        "[ ]".to_string()
+                    }
+                }
+                ArgValue::Text(v) => v.clone(),
+                ArgValue::Enum(idx) => item
+                    .arg
+                    .possible_values
+                    .get(*idx)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .unwrap_or_default();
+        let is_default = !state.is_touched(&item.arg.id)
+            && match (
+                &item.arg.default,
+                vm.inputs
+                    .as_ref()
+                    .and_then(|inputs| inputs.values.get(&item.arg.id)),
+            ) {
+                (Some(def), Some(ArgValue::Text(v))) => v == def,
+                (Some(def), Some(ArgValue::Enum(idx))) => item
+                    .arg
+                    .possible_values
+                    .get(*idx)
+                    .map(|v| v == def)
+                    .unwrap_or(false),
+                (Some(def), Some(ArgValue::Bool(v))) => {
+                    (def == "true" && *v) || (def == "false" && !*v)
+                }
+                _ => false,
+            };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(if selected {
+                Style::default().fg(config.theme.accent)
+            } else {
+                Style::default().fg(config.theme.border)
+            });
+        let fill_style = styles::input(config, selected);
+        let text_style = if is_default {
+            styles::placeholder(config)
+        } else {
+            Style::default().fg(config.theme.text)
+        };
+
+        match item.arg.kind {
+            crate::spec::ArgKind::Flag => {
+                if rect_visible(area, input_rect) {
+                    let input = Paragraph::new(if value.is_empty() {
+                        "[ ]".to_string()
+                    } else {
+                        value
+                    })
+                    .block(block)
+                    .style(fill_style.patch(text_style));
+                    frame.render_widget(input, input_rect);
+                }
+            }
+            crate::spec::ArgKind::Enum => {
+                if rect_visible(area, input_rect) {
+                    let display = if value.is_empty() {
+                        "Select…".to_string()
+                    } else {
+                        format!("{value}  ▾")
+                    };
+                    let input = Paragraph::new(display)
+                        .block(block)
+                        .style(fill_style.patch(text_style));
+                    frame.render_widget(input, input_rect);
+                }
+                if state.enum_open.as_deref() == Some(&item.arg.id) {
+                    let dropdown_height = item.arg.possible_values.len().min(6) as u16;
+                    let dropdown_rect = Rect::new(
+                        area.x,
+                        input_rect.y + input_rect.height,
+                        area.width,
+                        dropdown_height + 2,
+                    );
+                    state.layout.dropdown = Some(dropdown_rect);
+                }
+            }
+            crate::spec::ArgKind::Option | crate::spec::ArgKind::Positional => {
+                if selected {
+                    let textarea = state.textarea_for(&item.arg.id, &value);
+                    if textarea.lines().join("\n") != value {
+                        *textarea = TextArea::new(vec![value.clone()]);
+                    }
+                    textarea.set_block(block);
+                    let base_style = Style::default()
+                        .fg(text_style.fg.unwrap_or(config.theme.text))
+                        .bg(config.theme.input_bg);
+                    textarea.set_style(base_style);
+                    textarea.set_cursor_line_style(base_style);
+                    textarea.set_cursor_style(
+                        Style::default()
+                            .bg(config.theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                    textarea.set_selection_style(
+                        Style::default()
+                            .fg(config.theme.text)
+                            .bg(config.theme.input_bg)
+                            .add_modifier(Modifier::REVERSED),
+                    );
+                    if rect_visible(area, input_rect) {
+                        frame.render_widget(textarea.widget(), input_rect);
+                        place_textarea_cursor(frame, textarea, input_rect);
+                    }
+                } else if rect_visible(area, input_rect) {
+                    let input = Paragraph::new(value)
+                        .block(block)
+                        .style(fill_style.patch(text_style));
+                    frame.render_widget(input, input_rect);
+                }
+            }
+        }
+
+        if selected && rect_visible(area, input_rect) {
+            let bar = Rect::new(area.x, input_rect.y, 1, input_rect.height);
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "│",
+                    Style::default().fg(config.theme.accent),
+                ))),
+                bar,
+            );
+        }
+
+        y += i32::from(metrics.label_height + metrics.input_height + metrics.gap_height);
+        if let Some(help) = item
+            .arg
+            .help
+            .clone()
+            .or_else(|| item.arg.value_hint.clone())
+        {
+            if y >= area.y as i32 + area.height as i32 {
+                break;
+            }
+            let rect = Rect::new(area.x, y as u16, area.width, metrics.help_height.max(1));
+            if y >= area.y as i32 && y < area.y as i32 + area.height as i32 {
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::raw(help))).style(styles::help(config)),
+                    rect,
+                );
+            }
+            y += i32::from(metrics.help_height);
+        }
+    }
+}
+
+fn rect_visible(area: Rect, rect: Rect) -> bool {
+    rect.y < area.y + area.height && rect.y + rect.height > area.y
+}
+
+fn place_textarea_cursor(frame: &mut Frame<'_>, textarea: &TextArea<'_>, area: Rect) {
+    if area.width < 3 || area.height < 3 {
+        return;
+    }
+    let (row, col) = textarea.cursor();
+    let inner_x = area.x.saturating_add(1);
+    let inner_y = area.y.saturating_add(1);
+    let inner_w = area.width.saturating_sub(2);
+    let inner_h = area.height.saturating_sub(2);
+    if inner_w == 0 || inner_h == 0 {
+        return;
+    }
+    let x = inner_x
+        .saturating_add(col as u16)
+        .min(inner_x + inner_w - 1);
+    let y = inner_y
+        .saturating_add(row as u16)
+        .min(inner_y + inner_h - 1);
+    frame.set_cursor_position((x, y));
+}
+
+fn render_help(frame: &mut Frame<'_>, config: &TuiConfig, area: Rect, scroll: u16, help: &str) {
+    let paragraph = Paragraph::new(help.to_string())
+        .style(Style::default().fg(config.theme.text))
+        .scroll((scroll, 0));
+    frame.render_widget(paragraph, area);
+}

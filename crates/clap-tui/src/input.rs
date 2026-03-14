@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use tui_textarea::TextArea;
 
 use crate::spec::{ArgKind, CommandSpec};
+use crate::view::form;
 
 #[derive(Debug, Clone)]
 pub enum Focus {
@@ -161,35 +162,6 @@ impl AppState {
         self.inputs.get(&key)
     }
 
-    pub fn ordered_args(&self) -> Vec<(usize, &crate::spec::ArgSpec)> {
-        let mut positionals = self
-            .current_command()
-            .args
-            .iter()
-            .enumerate()
-            .filter(|(_, arg)| matches!(arg.kind, ArgKind::Positional))
-            .filter(|(_, arg)| !is_help_arg(arg))
-            .collect::<Vec<_>>();
-        positionals.sort_by_key(|(_, arg)| arg.positional_index.unwrap_or(usize::MAX));
-
-        let mut others = self
-            .current_command()
-            .args
-            .iter()
-            .enumerate()
-            .filter(|(_, arg)| !matches!(arg.kind, ArgKind::Positional))
-            .filter(|(_, arg)| !is_help_arg(arg))
-            .collect::<Vec<_>>();
-        others.sort_by_key(|(_, arg)| arg.name.clone());
-
-        positionals.extend(others);
-        positionals
-            .into_iter()
-            .enumerate()
-            .map(|(order_idx, (_, arg))| (order_idx, arg))
-            .collect()
-    }
-
     pub fn visible_tabs(&self) -> Vec<ActiveTab> {
         vec![ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help]
     }
@@ -208,18 +180,10 @@ impl AppState {
     }
 
     pub fn visible_args(&self) -> Vec<(usize, &crate::spec::ArgSpec)> {
-        let args = self.ordered_args();
-        match self.active_tab {
-            ActiveTab::Options => args
-                .into_iter()
-                .filter(|(_, arg)| !matches!(arg.kind, ArgKind::Positional))
-                .collect(),
-            ActiveTab::Arguments => args
-                .into_iter()
-                .filter(|(_, arg)| matches!(arg.kind, ArgKind::Positional))
-                .collect(),
-            ActiveTab::Help => Vec::new(),
-        }
+        form::visible_args(self.current_command(), self.active_tab)
+            .into_iter()
+            .map(|item| (item.order_index, item.arg))
+            .collect()
     }
 
     pub fn ensure_active_tab_visible(&mut self) {
@@ -341,8 +305,4 @@ impl AppState {
             .entry(arg_id.to_string())
             .or_insert_with(|| TextArea::new(vec![initial.to_string()]))
     }
-}
-
-fn is_help_arg(arg: &crate::spec::ArgSpec) -> bool {
-    arg.id == "help" || arg.name == "--help" || arg.name == "-h"
 }
