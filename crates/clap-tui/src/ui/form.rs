@@ -14,6 +14,8 @@ use crate::view::form::{self, field_metrics};
 
 use super::{dropdown, screen::ScreenView, styles};
 
+const TAB_CONTENT_TOP_PADDING: u16 = 1;
+
 pub(crate) fn render_form(
     frame: &mut Frame<'_>,
     state: &mut AppState,
@@ -42,11 +44,12 @@ pub(crate) fn render_form(
     if show_tabs {
         let tabs_rect = Rect::new(inner.x, inner.y, inner.width, 1);
         render_tab_bar(frame, state, config, tabs_rect, vm);
+        let content_offset = 1 + TAB_CONTENT_TOP_PADDING;
         content_area = Rect::new(
             inner.x,
-            inner.y + 1,
+            inner.y.saturating_add(content_offset),
             inner.width,
-            inner.height.saturating_sub(1),
+            inner.height.saturating_sub(content_offset),
         );
     }
     state.layout.form_view = Some(content_area);
@@ -180,9 +183,9 @@ fn render_fields(
         }
 
         let input_rect = Rect::new(
-            area.x + 1,
+            area.x,
             (y + i32::from(metrics.label_height)) as u16,
-            area.width.saturating_sub(2),
+            area.width,
             metrics.input_height,
         );
         state
@@ -315,17 +318,6 @@ fn render_fields(
                     frame.render_widget(input, input_rect);
                 }
             }
-        }
-
-        if selected && rect_visible(area, input_rect) {
-            let bar = Rect::new(area.x, input_rect.y, 1, input_rect.height);
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "│",
-                    Style::default().fg(config.theme.accent),
-                ))),
-                bar,
-            );
         }
 
         y += i32::from(metrics.label_height + metrics.input_height + metrics.gap_height);
