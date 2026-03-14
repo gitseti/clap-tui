@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 
 use crate::config::TuiConfig;
@@ -21,13 +21,15 @@ pub(crate) fn render_sidebar(
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
+    let search_focused = matches!(state.focus, Focus::Search);
+    let sidebar_focused = matches!(state.focus, Focus::Sidebar);
 
     let mut search_style = if state.search.is_empty() {
         styles::placeholder(config)
     } else {
         Style::default().fg(config.theme.text)
     };
-    if matches!(state.focus, Focus::Search) {
+    if search_focused {
         search_style = search_style.add_modifier(Modifier::BOLD);
         if !state.search.is_empty() {
             search_style = search_style.fg(config.theme.accent);
@@ -47,7 +49,11 @@ pub(crate) fn render_sidebar(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("Search")
+            .border_style(styles::panel_border(config, search_focused))
+            .title(Line::from(Span::styled(
+                "Search",
+                styles::panel_title(config, search_focused),
+            )))
             .style(styles::panel(config)),
     );
     frame.render_widget(search, sidebar[0]);
@@ -73,7 +79,11 @@ pub(crate) fn render_sidebar(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title("Commands")
+                .border_style(styles::panel_border(config, sidebar_focused))
+                .title(Line::from(Span::styled(
+                    "Commands",
+                    styles::panel_title(config, sidebar_focused),
+                )))
                 .style(styles::panel(config)),
         )
         .style(
@@ -81,7 +91,11 @@ pub(crate) fn render_sidebar(
                 .fg(config.theme.dim)
                 .bg(config.theme.panel_bg),
         )
-        .highlight_style(styles::list_highlight(config))
+        .highlight_style(if sidebar_focused {
+            styles::list_highlight(config)
+        } else {
+            styles::list_highlight_unfocused(config)
+        })
         .highlight_symbol("> ");
 
     frame.render_stateful_widget(list, sidebar[1], &mut list_state);

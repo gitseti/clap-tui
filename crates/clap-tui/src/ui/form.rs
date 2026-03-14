@@ -23,10 +23,15 @@ pub(crate) fn render_form(
     area: Rect,
     vm: &ScreenView,
 ) {
+    let form_focused = matches!(state.focus, Focus::Form);
     let form_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title("Form")
+        .border_style(styles::panel_border(config, form_focused))
+        .title(Line::from(Span::styled(
+            "Form",
+            styles::panel_title(config, form_focused),
+        )))
         .style(styles::panel(config));
     frame.render_widget(form_block, area);
     state.layout.form = Some(area);

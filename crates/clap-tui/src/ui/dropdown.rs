@@ -125,7 +125,7 @@ pub(crate) fn render_dropdown(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(config.theme.border))
+                .border_style(super::styles::panel_border(config, false))
                 .style(Style::default().bg(config.theme.input_bg)),
         )
         .highlight_style(Style::default().bg(config.theme.focus_bg))

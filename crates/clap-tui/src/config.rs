@@ -10,6 +10,8 @@ pub struct Theme {
     pub accent: Color,
     /// Border color.
     pub border: Color,
+    /// Focused interactive panel border color.
+    pub panel_focus_border: Color,
     /// Error color.
     pub error: Color,
     /// Dimmed text color.
@@ -45,6 +47,7 @@ impl Theme {
                 text: Color::Rgb(236, 241, 246),
                 accent: Color::Rgb(74, 201, 178),
                 border: Color::Rgb(64, 78, 92),
+                panel_focus_border: Color::Rgb(214, 222, 230),
                 error: Color::Rgb(255, 99, 110),
                 dim: Color::Rgb(140, 156, 171),
                 input_bg: Color::Rgb(28, 38, 47),
@@ -58,6 +61,7 @@ impl Theme {
                 text: Color::Rgb(245, 247, 250),
                 accent: Color::Rgb(92, 214, 190),
                 border: Color::Rgb(90, 106, 122),
+                panel_focus_border: Color::Rgb(228, 235, 242),
                 error: Color::Rgb(255, 99, 110),
                 dim: Color::Rgb(175, 188, 202),
                 input_bg: Color::Rgb(26, 34, 42),
@@ -71,6 +75,7 @@ impl Theme {
                 text: Color::Rgb(24, 32, 40),
                 accent: Color::Rgb(34, 149, 132),
                 border: Color::Rgb(180, 188, 196),
+                panel_focus_border: Color::Rgb(114, 126, 138),
                 error: Color::Rgb(199, 58, 71),
                 dim: Color::Rgb(96, 108, 120),
                 input_bg: Color::Rgb(243, 246, 250),

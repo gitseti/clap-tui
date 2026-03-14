@@ -43,7 +43,7 @@ pub(crate) fn render_header(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(config.theme.border))
+            .border_style(styles::panel_border(config, false))
             .style(styles::header(config)),
     );
     frame.render_widget(header, area);

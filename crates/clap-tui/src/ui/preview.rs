@@ -30,7 +30,7 @@ pub(crate) fn render_preview(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(config.theme.border)),
+                .border_style(styles::panel_border(config, false)),
         );
     frame.render_widget(bar, area);
 }

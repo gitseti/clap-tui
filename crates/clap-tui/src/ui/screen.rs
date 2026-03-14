@@ -1,6 +1,5 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
-use ratatui::style::Style;
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::config::TuiConfig;
@@ -72,7 +71,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiCo
     let background = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(config.theme.border))
+        .border_style(styles::panel_border(config, false))
         .style(styles::panel(config));
     frame.render_widget(background, size);
     let inner_size = size.inner(Margin {
