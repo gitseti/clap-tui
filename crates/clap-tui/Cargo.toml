@@ -1,0 +1,24 @@
+[package]
+name = "clap-tui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Auto-generate a TUI from clap commands"
+
+[features]
+default = ["mouse"]
+mouse = []
+tracing = ["dep:tracing"]
+
+[dependencies]
+clap.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+thiserror.workspace = true
+tracing = { version = "0.1", optional = true }
+anyhow.workspace = true
+tui-textarea = "0.4"
+
+[dev-dependencies]
+anyhow.workspace = true
