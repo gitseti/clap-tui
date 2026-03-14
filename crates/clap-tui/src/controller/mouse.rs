@@ -29,6 +29,18 @@ pub(crate) fn handle_mouse_event(
         state.mouse_select = None;
     }
     if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+        if let Some(dropdown) = layout.dropdown {
+            if state.enum_open.is_some() {
+                if contains(dropdown, event.column, event.row) {
+                    if let Some(active) = state.enum_open.clone() {
+                        handle_dropdown_click(event, state, &active);
+                    }
+                } else {
+                    state.enum_open = None;
+                }
+                return None;
+            }
+        }
         if let Some(footer_area) = layout.footer {
             if contains(footer_area, event.column, event.row) {
                 return handle_footer_click(event, state);
@@ -131,14 +143,6 @@ fn handle_form_click(event: event::MouseEvent, state: &mut AppState) {
     if matches!(state.active_tab, crate::input::ActiveTab::Help) {
         return;
     }
-    if let Some(dropdown) = state.layout.dropdown {
-        if contains(dropdown, event.column, event.row) {
-            if let Some(active) = state.enum_open.clone() {
-                handle_dropdown_click(event, state, &active);
-            }
-            return;
-        }
-    }
     let Some(form_view) = state.layout.form_view else {
         return;
     };
@@ -159,8 +163,13 @@ fn handle_form_click(event: event::MouseEvent, state: &mut AppState) {
             state.mark_touched(&hit.arg_id);
         }
         if hit.kind == ArgKind::Enum && hit.in_input {
-            state.enum_open = Some(hit.arg_id.clone());
-            state.enum_scroll = 0;
+            let total = command
+                .args
+                .iter()
+                .find(|arg| arg.id == hit.arg_id)
+                .map(|arg| arg.possible_values.len())
+                .unwrap_or(0);
+            navigation::open_enum_dropdown(state, &hit.arg_id, total);
         }
         if matches!(hit.kind, ArgKind::Option | ArgKind::Positional) {
             let textarea = ensure_textarea_for_displayed(state, &hit.arg_id);

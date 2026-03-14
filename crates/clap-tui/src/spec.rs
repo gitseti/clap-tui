@@ -31,6 +31,13 @@ pub enum ArgKind {
     Enum,
 }
 
+pub(crate) fn enum_value_matches_default(arg: &ArgSpec, index: usize) -> bool {
+    arg.default
+        .as_deref()
+        .zip(arg.possible_values.get(index).map(String::as_str))
+        .is_some_and(|(default, value)| default == value)
+}
+
 impl CommandSpec {
     pub fn from_command(command: &Command) -> Self {
         let mut cmd = command.clone();

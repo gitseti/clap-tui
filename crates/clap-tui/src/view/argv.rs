@@ -165,6 +165,40 @@ mod tests {
     }
 
     #[test]
+    fn untouched_enum_defaults_are_omitted() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.default = Some("blue".to_string());
+        color.possible_values = vec!["red".to_string(), "blue".to_string()];
+        let mut state = app_state(vec![color]);
+        state.ensure_defaults();
+
+        assert_eq!(build_argv(&state), vec!["tool".to_string()]);
+    }
+
+    #[test]
+    fn touched_enum_defaults_are_preserved() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.default = Some("blue".to_string());
+        color.possible_values = vec!["red".to_string(), "blue".to_string()];
+        let mut state = app_state(vec![color]);
+        state.ensure_defaults();
+        state
+            .current_inputs_mut()
+            .values
+            .insert("color".to_string(), ArgValue::Enum(1));
+        state.mark_touched("color");
+
+        assert_eq!(
+            build_argv(&state),
+            vec![
+                "tool".to_string(),
+                "--color".to_string(),
+                "blue".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn multi_value_options_repeat_flag_value_pairs() {
         let mut paths = arg("path", "--path", ArgKind::Option);
         paths.is_multi = true;

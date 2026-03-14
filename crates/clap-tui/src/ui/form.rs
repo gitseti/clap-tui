@@ -9,10 +9,10 @@ use tui_textarea::TextArea;
 
 use crate::config::TuiConfig;
 use crate::input::{ActiveTab, AppState, ArgValue, Focus, TabButtonLayout};
+use crate::spec::{ArgKind, ArgSpec, enum_value_matches_default};
 use crate::view::form::{self, field_metrics};
 
-use super::screen::ScreenView;
-use super::styles;
+use super::{dropdown, screen::ScreenView, styles};
 
 pub(crate) fn render_form(
     frame: &mut Frame<'_>,
@@ -210,25 +210,12 @@ fn render_fields(
                     .unwrap_or_default(),
             })
             .unwrap_or_default();
-        let is_default = !state.is_touched(&item.arg.id)
-            && match (
-                &item.arg.default,
-                vm.inputs
-                    .as_ref()
-                    .and_then(|inputs| inputs.values.get(&item.arg.id)),
-            ) {
-                (Some(def), Some(ArgValue::Text(v))) => v == def,
-                (Some(def), Some(ArgValue::Enum(idx))) => item
-                    .arg
-                    .possible_values
-                    .get(*idx)
-                    .map(|v| v == def)
-                    .unwrap_or(false),
-                (Some(def), Some(ArgValue::Bool(v))) => {
-                    (def == "true" && *v) || (def == "false" && !*v)
-                }
-                _ => false,
-            };
+        let current_value = vm
+            .inputs
+            .as_ref()
+            .and_then(|inputs| inputs.values.get(&item.arg.id));
+        let is_default =
+            value_matches_default(&item.arg, current_value, state.is_touched(&item.arg.id));
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -246,7 +233,7 @@ fn render_fields(
         };
 
         match item.arg.kind {
-            crate::spec::ArgKind::Flag => {
+            ArgKind::Flag => {
                 if rect_visible(area, input_rect) {
                     let input = Paragraph::new(if value.is_empty() {
                         "[ ]".to_string()
@@ -258,30 +245,43 @@ fn render_fields(
                     frame.render_widget(input, input_rect);
                 }
             }
-            crate::spec::ArgKind::Enum => {
+            ArgKind::Enum => {
                 if rect_visible(area, input_rect) {
                     let display = if value.is_empty() {
-                        "Select…".to_string()
+                        "Select…"
                     } else {
-                        format!("{value}  ▾")
+                        value.as_str()
                     };
-                    let input = Paragraph::new(display)
-                        .block(block)
-                        .style(fill_style.patch(text_style));
+                    let chevron_style = if state.enum_open.as_deref() == Some(&item.arg.id) {
+                        Style::default().fg(config.theme.accent)
+                    } else {
+                        styles::placeholder(config)
+                    };
+                    let input = Paragraph::new(enum_display_line(
+                        display,
+                        input_rect.width.saturating_sub(2),
+                        text_style,
+                        chevron_style,
+                    ))
+                    .block(block)
+                    .style(fill_style);
                     frame.render_widget(input, input_rect);
                 }
                 if state.enum_open.as_deref() == Some(&item.arg.id) {
-                    let dropdown_height = item.arg.possible_values.len().min(6) as u16;
-                    let dropdown_rect = Rect::new(
-                        area.x,
-                        input_rect.y + input_rect.height,
-                        area.width,
-                        dropdown_height + 2,
-                    );
-                    state.layout.dropdown = Some(dropdown_rect);
+                    state.layout.dropdown = state
+                        .layout
+                        .form_view
+                        .and_then(|form_view| {
+                            dropdown::dropdown_layout(
+                                form_view,
+                                input_rect,
+                                item.arg.possible_values.len(),
+                            )
+                        })
+                        .map(|layout| layout.rect);
                 }
             }
-            crate::spec::ArgKind::Option | crate::spec::ArgKind::Positional => {
+            ArgKind::Option | ArgKind::Positional => {
                 if selected {
                     let textarea = state.textarea_for(&item.arg.id, &value);
                     if textarea.lines().join("\n") != value {
@@ -352,6 +352,36 @@ fn render_fields(
 
 fn rect_visible(area: Rect, rect: Rect) -> bool {
     rect.y < area.y + area.height && rect.y + rect.height > area.y
+}
+
+fn value_matches_default(arg: &ArgSpec, value: Option<&ArgValue>, is_touched: bool) -> bool {
+    match value {
+        Some(ArgValue::Enum(index)) => !is_touched && enum_value_matches_default(arg, *index),
+        Some(ArgValue::Text(text)) => !is_touched && arg.default.as_deref() == Some(text.as_str()),
+        Some(ArgValue::Bool(enabled)) => {
+            !is_touched
+                && matches!(
+                    (arg.default.as_deref(), *enabled),
+                    (Some("true"), true) | (Some("false"), false)
+                )
+        }
+        None => false,
+    }
+}
+
+fn enum_display_line(
+    value: &str,
+    inner_width: u16,
+    value_style: Style,
+    chevron_style: Style,
+) -> Line<'static> {
+    let value_width = value.chars().count() as u16;
+    let padding = inner_width.saturating_sub(value_width.saturating_add(1));
+    Line::from(vec![
+        Span::styled(value.to_string(), value_style),
+        Span::raw(" ".repeat(padding as usize)),
+        Span::styled("▾", chevron_style),
+    ])
 }
 
 fn place_textarea_cursor(frame: &mut Frame<'_>, textarea: &TextArea<'_>, area: Rect) {

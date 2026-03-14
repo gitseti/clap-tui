@@ -1,4 +1,5 @@
-use crate::input::{ActiveTab, AppState, Focus};
+use crate::input::{ActiveTab, AppState, ArgValue, Focus};
+use crate::ui::dropdown::{MAX_DROPDOWN_ROWS, dropdown_layout};
 use crate::view::command_tree;
 use crate::view::form;
 
@@ -139,7 +140,7 @@ pub(crate) fn activate_form_field(state: &mut AppState) {
                 if state.enum_open.as_deref() == Some(&arg_id) {
                     state.enum_open = None;
                 } else {
-                    state.enum_open = Some(arg_id);
+                    open_enum_dropdown(state, &arg_id, enum_len);
                 }
             }
         }
@@ -147,6 +148,34 @@ pub(crate) fn activate_form_field(state: &mut AppState) {
             state.focus = Focus::Form;
         }
     }
+}
+
+pub(crate) fn open_enum_dropdown(state: &mut AppState, arg_id: &str, total: usize) {
+    if total == 0 {
+        state.enum_open = None;
+        state.enum_scroll = 0;
+        return;
+    }
+
+    state.enum_open = Some(arg_id.to_string());
+    let current = state
+        .current_inputs()
+        .and_then(|inputs| inputs.values.get(arg_id))
+        .and_then(|value| match value {
+            ArgValue::Enum(index) => Some(*index),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let visible_rows = state
+        .layout
+        .form_view
+        .zip(state.layout.form_inputs.get(arg_id).copied())
+        .and_then(|(form_view, input_rect)| dropdown_layout(form_view, input_rect, total))
+        .map(|layout| layout.visible_rows)
+        .unwrap_or(total.min(MAX_DROPDOWN_ROWS as usize));
+    let max_scroll = total.saturating_sub(visible_rows);
+    let centered_scroll = current.saturating_sub(visible_rows / 2);
+    state.enum_scroll = centered_scroll.min(max_scroll);
 }
 
 pub(crate) fn ensure_form_visible(state: &mut AppState) {
@@ -245,8 +274,11 @@ fn toggle_expand(state: &mut AppState, path: &[String], expanded: bool) {
 mod tests {
     use ratatui::layout::Rect;
 
-    use super::{ensure_form_visible, move_sidebar_selection, switch_tab, toggle_help_tab};
-    use crate::input::{ActiveTab, AppState};
+    use super::{
+        ensure_form_visible, move_sidebar_selection, open_enum_dropdown, switch_tab,
+        toggle_help_tab,
+    };
+    use crate::input::{ActiveTab, AppState, ArgValue, Focus};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec};
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
@@ -315,5 +347,67 @@ mod tests {
         ensure_form_visible(&mut state);
 
         assert!(state.form_scroll > 0);
+    }
+
+    #[test]
+    fn opening_dropdown_centers_current_value_when_possible() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.possible_values = (0..10).map(|idx| format!("value-{idx}")).collect();
+        let mut state = AppState::new(command("tool", vec![color], Vec::new()));
+        state.layout.form_view = Some(Rect::new(0, 0, 40, 15));
+        state
+            .layout
+            .form_inputs
+            .insert("color".to_string(), Rect::new(2, 2, 20, 3));
+        state
+            .current_inputs_mut()
+            .values
+            .insert("color".to_string(), ArgValue::Enum(5));
+
+        open_enum_dropdown(&mut state, "color", 10);
+
+        assert_eq!(state.enum_open.as_deref(), Some("color"));
+        assert_eq!(state.enum_scroll, 2);
+    }
+
+    #[test]
+    fn opening_dropdown_clamps_scroll_near_edges() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.possible_values = (0..10).map(|idx| format!("value-{idx}")).collect();
+        let mut state = AppState::new(command("tool", vec![color], Vec::new()));
+        state.layout.form_view = Some(Rect::new(0, 0, 40, 15));
+        state
+            .layout
+            .form_inputs
+            .insert("color".to_string(), Rect::new(2, 2, 20, 3));
+
+        state
+            .current_inputs_mut()
+            .values
+            .insert("color".to_string(), ArgValue::Enum(0));
+        open_enum_dropdown(&mut state, "color", 10);
+        assert_eq!(state.enum_scroll, 0);
+
+        state
+            .current_inputs_mut()
+            .values
+            .insert("color".to_string(), ArgValue::Enum(9));
+        open_enum_dropdown(&mut state, "color", 10);
+        assert_eq!(state.enum_scroll, 4);
+    }
+
+    #[test]
+    fn activating_open_enum_toggles_it_closed() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.possible_values = vec!["red".to_string(), "blue".to_string()];
+        let mut state = AppState::new(command("tool", vec![color], Vec::new()));
+        state.focus = Focus::Form;
+        state.active_tab = ActiveTab::Options;
+        state.selected_arg_index = 0;
+        state.enum_open = Some("color".to_string());
+
+        super::activate_form_field(&mut state);
+
+        assert!(state.enum_open.is_none());
     }
 }

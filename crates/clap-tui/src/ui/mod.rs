@@ -1,4 +1,4 @@
-mod dropdown;
+pub(crate) mod dropdown;
 mod footer;
 mod form;
 mod header;
