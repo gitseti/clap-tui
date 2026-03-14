@@ -2,13 +2,12 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::config::TuiConfig;
 use crate::input::AppState;
 
-use super::screen::ScreenView;
-use super::styles;
+use super::{screen::ScreenView, styles};
 
 pub(crate) fn render_header(
     frame: &mut Frame<'_>,
@@ -24,27 +23,28 @@ pub(crate) fn render_header(
         parts.extend(state.selected_path.iter().cloned());
         parts.join(" > ")
     };
-    let title = Span::styled(
+    let mut lines = Vec::with_capacity(2);
+    let mut title_line = vec![Span::styled(
         vm.command.name.clone(),
         Style::default()
-            .fg(config.theme.accent)
+            .fg(config.theme.text)
             .add_modifier(Modifier::BOLD),
-    );
-    let desc = Span::styled(
-        vm.command.about.clone().unwrap_or_default(),
+    )];
+    if let Some(about) = vm.command.about.as_ref().filter(|about| !about.is_empty()) {
+        title_line.push(Span::raw("  "));
+        title_line.push(Span::styled(
+            about.clone(),
+            Style::default().fg(config.theme.dim),
+        ));
+    }
+    lines.push(Line::from(title_line));
+    lines.push(Line::from(Span::styled(
+        breadcrumb,
         Style::default().fg(config.theme.dim),
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines).style(styles::header(config)),
+        area,
     );
-    let crumb = Span::styled(
-        format!("  |  {breadcrumb}"),
-        Style::default().fg(config.theme.dim),
-    );
-    let line = Line::from(vec![title, Span::raw("  "), desc, crumb]);
-    let header = Paragraph::new(line).style(styles::header(config)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(styles::panel_border(config, false))
-            .style(styles::header(config)),
-    );
-    frame.render_widget(header, area);
 }

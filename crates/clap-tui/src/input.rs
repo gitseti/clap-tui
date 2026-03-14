@@ -54,6 +54,7 @@ pub enum HoverTarget {
     Exit,
     Search,
     Focus,
+    Help,
     Preview,
 }
 

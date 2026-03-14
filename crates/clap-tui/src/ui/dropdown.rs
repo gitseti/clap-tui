@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
@@ -106,9 +106,7 @@ pub(crate) fn render_dropdown(
             let is_selected = index == current_idx;
             let text_style = match (is_selected, is_default) {
                 (true, true) => Style::default().fg(config.theme.dim),
-                (true, false) => Style::default()
-                    .fg(config.theme.text)
-                    .add_modifier(Modifier::BOLD),
+                (true, false) => Style::default().fg(config.theme.selection_fg),
                 (false, true) => Style::default().fg(config.theme.dim),
                 (false, false) => Style::default().fg(config.theme.text),
             };
@@ -126,11 +124,11 @@ pub(crate) fn render_dropdown(
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(super::styles::panel_border(config, false))
-                .style(Style::default().bg(config.theme.input_bg)),
+                .style(Style::default().bg(config.theme.surface_raised)),
         )
-        .highlight_style(Style::default().bg(config.theme.focus_bg))
+        .highlight_style(super::styles::selection(config))
         .highlight_symbol("› ")
-        .style(Style::default().bg(config.theme.input_bg));
+        .style(Style::default().bg(config.theme.surface_raised));
     frame.render_widget(Clear, rect);
     frame.render_stateful_widget(list, rect, &mut list_state);
 
@@ -142,7 +140,7 @@ pub(crate) fn render_dropdown(
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .track_symbol(Some("┃"))
             .thumb_symbol("█")
-            .thumb_style(Style::default().fg(config.theme.border))
+            .thumb_style(Style::default().fg(config.theme.panel_focus_border))
             .track_style(Style::default().fg(config.theme.dim));
         frame.render_stateful_widget(scrollbar, rect, &mut scrollbar_state);
     }

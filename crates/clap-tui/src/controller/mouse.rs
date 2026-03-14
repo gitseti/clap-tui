@@ -345,6 +345,10 @@ fn handle_footer_click(event: event::MouseEvent, state: &mut AppState) -> Option
                     state.focus = Focus::Sidebar;
                     return None;
                 }
+                crate::input::HoverTarget::Help => {
+                    navigation::toggle_help_tab(state);
+                    return None;
+                }
                 crate::input::HoverTarget::Preview => return None,
             }
         }
@@ -444,7 +448,7 @@ mod tests {
                 .is_none()
         );
 
-        handle_form_click(click(1, 2), &mut state);
+        handle_form_click(click(1, 0), &mut state);
 
         assert!(state.is_touched("verbose"));
         assert!(matches!(

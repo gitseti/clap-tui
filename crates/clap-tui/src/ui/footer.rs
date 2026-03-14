@@ -1,6 +1,5 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -17,40 +16,81 @@ pub(crate) fn render_footer(
     area: Rect,
     _vm: &ScreenView,
 ) {
-    let chips = vec![
-        (HoverTarget::Run, "⌃↩ Run"),
-        (HoverTarget::Exit, "⌃C Exit"),
+    let actions = vec![
+        (HoverTarget::Run, "Ctrl+Enter Run"),
+        (HoverTarget::Exit, "Ctrl+C Exit"),
+    ];
+    let hints = vec![
         (HoverTarget::Search, "/ Search"),
         (HoverTarget::Focus, "Tab Focus"),
+        (HoverTarget::Help, "? Help"),
     ];
-    let mut spans = Vec::new();
+
     state.layout.footer_buttons.clear();
-    let mut cursor_x = area.x;
-    for (target, chip) in chips {
+    let action_width = group_width(&actions);
+    let hint_width = group_width(&hints);
+
+    let left_x = area.x;
+    let min_right_x = left_x
+        .saturating_add(action_width)
+        .saturating_add(if action_width > 0 { 1 } else { 0 });
+    let preferred_right_x = area.x.saturating_add(area.width.saturating_sub(hint_width));
+    let right_x = preferred_right_x.max(min_right_x);
+
+    let mut spans = Vec::new();
+    let mut cursor_x = left_x;
+    for (index, (target, chip)) in actions.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+            cursor_x = cursor_x.saturating_add(1);
+        }
         let label = format!(" {chip} ");
-        let width = label.chars().count() as u16;
-        let hovered = state.hover == Some(target);
-        let style = if hovered {
-            Style::default()
-                .fg(config.theme.panel_bg)
-                .bg(config.theme.accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-                .fg(config.theme.accent)
-                .bg(config.theme.pill_bg)
-                .add_modifier(Modifier::BOLD)
+        let rect = Rect::new(cursor_x, area.y, label.chars().count() as u16, 1);
+        state.layout.footer_buttons.push(FooterButtonLayout {
+            target: *target,
+            rect,
+        });
+        let style = match target {
+            HoverTarget::Run => styles::primary_chip(config, state.hover == Some(*target)),
+            HoverTarget::Exit => styles::secondary_chip(config, state.hover == Some(*target)),
+            _ => styles::subtle_chip(config, state.hover == Some(*target)),
         };
         spans.push(Span::styled(label.clone(), style));
-        spans.push(Span::raw(" "));
-
-        let rect = Rect::new(cursor_x, area.y, width, 1);
-        state
-            .layout
-            .footer_buttons
-            .push(FooterButtonLayout { target, rect });
-        cursor_x = cursor_x.saturating_add(width + 1);
+        cursor_x = cursor_x.saturating_add(label.chars().count() as u16);
     }
-    let footer = Paragraph::new(Line::from(spans)).style(styles::panel(config));
-    frame.render_widget(footer, area);
+
+    let gap = right_x.saturating_sub(cursor_x);
+    if gap > 0 {
+        spans.push(Span::raw(" ".repeat(gap as usize)));
+    }
+    cursor_x = right_x;
+
+    for (index, (target, chip)) in hints.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+            cursor_x = cursor_x.saturating_add(1);
+        }
+        let label = format!(" {chip} ");
+        let rect = Rect::new(cursor_x, area.y, label.chars().count() as u16, 1);
+        state.layout.footer_buttons.push(FooterButtonLayout {
+            target: *target,
+            rect,
+        });
+        spans.push(Span::styled(
+            label.clone(),
+            styles::subtle_chip(config, state.hover == Some(*target)),
+        ));
+        cursor_x = cursor_x.saturating_add(label.chars().count() as u16);
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn group_width(items: &[(HoverTarget, &str)]) -> u16 {
+    let labels = items
+        .iter()
+        .map(|(_, chip)| chip.chars().count() as u16 + 2)
+        .sum::<u16>();
+    let gaps = items.len().saturating_sub(1) as u16;
+    labels.saturating_add(gaps)
 }

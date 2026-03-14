@@ -346,7 +346,7 @@ mod tests {
 
         ensure_form_visible(&mut state);
 
-        assert_eq!(state.form_scroll, 6);
+        assert_eq!(state.form_scroll, 5);
     }
 
     #[test]

@@ -3,7 +3,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::config::TuiConfig;
-use crate::input::{ActiveTab, AppState, CommandInputs};
+use crate::input::{ActiveTab, AppState, CommandInputs, Focus};
 use crate::spec::{ArgSpec, CommandSpec};
 use crate::view::argv;
 use crate::view::command_tree::{self, TreeItem};
@@ -60,7 +60,8 @@ impl ScreenView {
 
 pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) {
     let size = frame.area();
-    let sidebar_width = (size.width as u32 * config.layout.sidebar_ratio as u32 / 100) as u16;
+    let mut sidebar_width = (size.width as u32 * config.layout.sidebar_ratio as u32 / 100) as u16;
+    sidebar_width = sidebar_width.clamp(22, 30);
 
     state.ensure_defaults();
     state.ensure_active_tab_visible();
@@ -127,11 +128,35 @@ fn render_main(
     area: Rect,
     vm: &ScreenView,
 ) {
+    let workspace_focused = matches!(state.focus, Focus::Form);
+    let workspace = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(styles::panel_border(config, workspace_focused))
+        .style(styles::panel(config));
+    frame.render_widget(workspace, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let header_height = inner.height.min(2);
+    let body_area = Rect::new(
+        inner.x,
+        inner.y.saturating_add(header_height),
+        inner.width,
+        inner.height.saturating_sub(header_height),
+    );
+
     let main = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
-        .split(area);
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(Rect::new(inner.x, inner.y, inner.width, inner.height));
 
     header::render_header(frame, state, config, main[0], vm);
-    form_ui::render_form(frame, state, config, main[1], vm);
+    form_ui::render_form(frame, state, config, body_area, vm);
 }
