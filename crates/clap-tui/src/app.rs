@@ -151,34 +151,20 @@ fn event_loop<R: Runtime>(
             continue;
         }
 
-        match session.read_event()? {
-            AppEvent::Key(key) => {
-                if let Some(action) =
-                    controller::handle_key_event(key, &state, &frame_snapshot, config)
-                {
-                    let effect = update::apply_action(&action, &mut state, &frame_snapshot);
-                    match handle_effect(effect, &mut state, session) {
-                        ActionOutcome::Continue => {}
-                        ActionOutcome::Exit => return Err(TuiError::Cancelled),
-                        ActionOutcome::Run(argv) => return Ok(argv),
-                    }
-                    needs_redraw = true;
-                }
+        match handle_app_event(
+            session.read_event()?,
+            &mut state,
+            &frame_snapshot,
+            config,
+            session,
+        ) {
+            EventOutcome::Continue {
+                needs_redraw: redraw,
+            } => {
+                needs_redraw |= redraw;
             }
-            AppEvent::Mouse(mouse) => {
-                if let Some(action) =
-                    controller::handle_mouse_event(mouse, &state, &frame_snapshot, config)
-                {
-                    let effect = update::apply_action(&action, &mut state, &frame_snapshot);
-                    match handle_effect(effect, &mut state, session) {
-                        ActionOutcome::Continue => {}
-                        ActionOutcome::Exit => return Err(TuiError::Cancelled),
-                        ActionOutcome::Run(argv) => return Ok(argv),
-                    }
-                    needs_redraw = true;
-                }
-            }
-            _ => {}
+            EventOutcome::Exit => return Err(TuiError::Cancelled),
+            EventOutcome::Run(argv) => return Ok(argv),
         }
     }
 }
@@ -225,12 +211,66 @@ fn handle_effect<R: Runtime>(
     }
 }
 
+fn handle_app_event<R: Runtime>(
+    event: AppEvent,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+    config: &TuiConfig,
+    session: &mut TerminalSession<'_, R>,
+) -> EventOutcome {
+    match event {
+        AppEvent::Key(key) => {
+            if let Some(action) = controller::handle_key_event(key, state, frame_snapshot, config) {
+                let effect = update::apply_action(&action, state, frame_snapshot);
+                match handle_effect(effect, state, session) {
+                    ActionOutcome::Continue => EventOutcome::Continue { needs_redraw: true },
+                    ActionOutcome::Exit => EventOutcome::Exit,
+                    ActionOutcome::Run(argv) => EventOutcome::Run(argv),
+                }
+            } else {
+                EventOutcome::Continue {
+                    needs_redraw: false,
+                }
+            }
+        }
+        AppEvent::Mouse(mouse) => {
+            if let Some(action) =
+                controller::handle_mouse_event(mouse, state, frame_snapshot, config)
+            {
+                let effect = update::apply_action(&action, state, frame_snapshot);
+                match handle_effect(effect, state, session) {
+                    ActionOutcome::Continue => EventOutcome::Continue { needs_redraw: true },
+                    ActionOutcome::Exit => EventOutcome::Exit,
+                    ActionOutcome::Run(argv) => EventOutcome::Run(argv),
+                }
+            } else {
+                EventOutcome::Continue {
+                    needs_redraw: false,
+                }
+            }
+        }
+        AppEvent::Resize { .. } => EventOutcome::Continue { needs_redraw: true },
+        AppEvent::FocusGained
+        | AppEvent::FocusLost
+        | AppEvent::Paste(_)
+        | AppEvent::Unsupported => EventOutcome::Continue {
+            needs_redraw: false,
+        },
+    }
+}
+
 fn render_frame(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) -> FrameSnapshot {
     ui::render(frame, state, config)
 }
 
 enum ActionOutcome {
     Continue,
+    Exit,
+    Run(Vec<String>),
+}
+
+enum EventOutcome {
+    Continue { needs_redraw: bool },
     Exit,
     Run(Vec<String>),
 }
@@ -290,7 +330,11 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use super::{ActionOutcome, TerminalSession, event_loop, handle_effect};
+    use super::{
+        ActionOutcome, EventOutcome, TerminalSession, event_loop, handle_app_event, handle_effect,
+        redraw_timeout,
+    };
+    use crate::frame_snapshot::FrameSnapshot;
     use crate::input::AppState;
     use crate::runtime::{AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, Runtime};
     use crate::spec::CommandSpec;
@@ -426,5 +470,43 @@ mod tests {
         let toast = state.notifications.toast.as_ref().expect("toast");
         assert_eq!(toast.message, "Clipboard unavailable");
         assert!(toast.is_error);
+    }
+
+    #[test]
+    fn resize_event_requests_redraw() {
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        let mut state = app_state();
+
+        let outcome = handle_app_event(
+            AppEvent::Resize {
+                width: 120,
+                height: 40,
+            },
+            &mut state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+            &mut session,
+        );
+
+        assert!(matches!(
+            outcome,
+            EventOutcome::Continue { needs_redraw: true }
+        ));
+    }
+
+    #[test]
+    fn toast_timeout_behavior_is_unchanged() {
+        let mut state = app_state();
+        state.notifications.show_toast(
+            "Copied command to clipboard",
+            Duration::from_millis(250),
+            false,
+        );
+
+        let timeout = redraw_timeout(&state);
+
+        assert!(timeout > Duration::ZERO);
+        assert!(timeout <= Duration::from_millis(250));
     }
 }
