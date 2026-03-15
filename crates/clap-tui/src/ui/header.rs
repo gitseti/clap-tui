@@ -5,22 +5,22 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::config::TuiConfig;
-use crate::input::AppState;
+use crate::spec::CommandPath;
 
 use super::{screen::ScreenView, styles};
 
 pub(crate) fn render_header(
     frame: &mut Frame<'_>,
-    state: &mut AppState,
+    selected_path: &CommandPath,
     config: &TuiConfig,
     area: Rect,
-    vm: &ScreenView,
+    vm: &ScreenView<'_>,
 ) {
-    let breadcrumb = if state.command.selected_path.is_empty() {
+    let breadcrumb = if selected_path.is_empty() {
         vm.command.name.clone()
     } else {
         let mut parts = vec![vm.command.name.clone()];
-        parts.extend(state.command.selected_path.iter().cloned());
+        parts.extend(selected_path.iter().cloned());
         parts.join(" > ")
     };
     let mut lines = Vec::with_capacity(2);

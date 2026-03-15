@@ -1,4 +1,5 @@
 use crate::input::{ActiveTab, AppState, ArgValue, Focus};
+use crate::spec::{ArgSpec, CommandPath, SelectionError};
 use crate::ui::dropdown::{MAX_DROPDOWN_ROWS, dropdown_layout};
 use crate::view::command_tree;
 use crate::view::form;
@@ -9,147 +10,135 @@ pub(crate) fn switch_tab(state: &mut AppState, tab: ActiveTab) {
         .into_iter()
         .find(|candidate| *candidate == tab)
         .unwrap_or(ActiveTab::Options);
-    if target == state.command.active_tab {
+    if target == state.ui.active_tab {
         return;
     }
-    state.command.active_tab = target;
-    if state.command.active_tab != ActiveTab::Help {
-        state.command.last_non_help_tab = state.command.active_tab;
+    state.ui.active_tab = target;
+    if state.ui.active_tab != ActiveTab::Help {
+        state.ui.last_non_help_tab = state.ui.active_tab;
         let command = state.current_command().clone();
-        let args = form::visible_args(&command, state.command.active_tab);
+        let args = form::visible_args(&command, state.ui.active_tab);
         state.ensure_selected_arg_visible(&visible_args(&args));
     }
-    state.interaction.form_scroll = 0;
-    state.interaction.enum_open = None;
-    state.interaction.mouse_select = None;
+    reset_transient_form_ui(state);
 }
 
 pub(crate) fn cycle_tabs(state: &mut AppState) {
     let tabs = AppState::visible_tabs();
     let current = tabs
         .iter()
-        .position(|tab| *tab == state.command.active_tab)
+        .position(|tab| *tab == state.ui.active_tab)
         .unwrap_or(0);
-    let next = (current + 1) % tabs.len();
-    switch_tab(state, tabs[next]);
+    switch_tab(state, tabs[(current + 1) % tabs.len()]);
 }
 
 pub(crate) fn toggle_help_tab(state: &mut AppState) {
-    if state.command.active_tab == ActiveTab::Help {
+    if state.ui.active_tab == ActiveTab::Help {
         let tabs = AppState::visible_tabs();
-        let mut target = state.command.last_non_help_tab;
+        let mut target = state.ui.last_non_help_tab;
         if !tabs.contains(&target) {
             target = tabs[0];
         }
         switch_tab(state, target);
     } else {
-        state.command.last_non_help_tab = state.command.active_tab;
+        state.ui.last_non_help_tab = state.ui.active_tab;
         switch_tab(state, ActiveTab::Help);
     }
 }
 
 pub(crate) fn move_sidebar_selection(state: &mut AppState, delta: isize) {
     let items = command_tree::tree_items(
-        &state.command.root,
-        &state.command.expanded,
-        &state.command.search,
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
     );
     if items.is_empty() {
         return;
     }
     let current_index = items
         .iter()
-        .position(|item| item.path == state.command.selected_path)
+        .position(|item| item.path == *state.selected_path())
         .unwrap_or(0);
     let next_index = current_index
         .saturating_add_signed(delta)
         .min(items.len() - 1);
-    if state.command.selected_path != items[next_index].path {
-        state
-            .command
-            .selected_path
-            .clone_from(&items[next_index].path);
-        let command = state.current_command().clone();
-        let args = form::visible_args(&command, state.command.active_tab);
-        state.focus_first_tab(&visible_args(&args));
+    if *state.selected_path() != items[next_index].path {
+        select_command(state, items[next_index].path.as_slice());
     }
 }
 
 pub(crate) fn move_form_selection(state: &mut AppState, delta: isize) {
-    if matches!(state.command.active_tab, ActiveTab::Help) {
+    if matches!(state.ui.active_tab, ActiveTab::Help) {
         return;
     }
     let command = state.current_command().clone();
-    let args = form::visible_args(&command, state.command.active_tab);
+    let args = form::visible_args(&command, state.ui.active_tab);
     if args.is_empty() {
         return;
     }
     let current_pos = args
         .iter()
-        .position(|item| item.order_index == state.command.selected_arg_index)
+        .position(|item| item.order_index == state.ui.selected_arg_index)
         .unwrap_or(0);
     let next_pos = current_pos.saturating_add_signed(delta).min(args.len() - 1);
-    state.command.selected_arg_index = args[next_pos].order_index;
+    state.ui.selected_arg_index = args[next_pos].order_index;
     ensure_form_visible(state);
 }
 
 pub(crate) fn select_sidebar(state: &mut AppState) {
     let items = command_tree::tree_items(
-        &state.command.root,
-        &state.command.expanded,
-        &state.command.search,
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
     );
     if let Some(item) = items
         .iter()
-        .find(|item| item.path == state.command.selected_path)
+        .find(|item| item.path == *state.selected_path())
+        .filter(|item| item.has_children)
     {
-        if item.has_children {
-            toggle_expand(state, &item.path, item.expanded);
-        }
+        toggle_expand(state, &item.path, item.expanded);
     }
 }
 
 pub(crate) fn collapse_selected(state: &mut AppState) {
     let items = command_tree::tree_items(
-        &state.command.root,
-        &state.command.expanded,
-        &state.command.search,
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
     );
     if let Some(item) = items
         .iter()
-        .find(|item| item.path == state.command.selected_path)
+        .find(|item| item.path == *state.selected_path())
+        .filter(|item| item.has_children && item.expanded)
     {
-        if item.has_children && item.expanded {
-            toggle_expand(state, &item.path, true);
-        }
+        toggle_expand(state, &item.path, true);
     }
 }
 
 pub(crate) fn expand_selected(state: &mut AppState) {
     let items = command_tree::tree_items(
-        &state.command.root,
-        &state.command.expanded,
-        &state.command.search,
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
     );
     if let Some(item) = items
         .iter()
-        .find(|item| item.path == state.command.selected_path)
+        .find(|item| item.path == *state.selected_path())
+        .filter(|item| item.has_children && !item.expanded)
     {
-        if item.has_children && !item.expanded {
-            toggle_expand(state, &item.path, false);
-        }
+        toggle_expand(state, &item.path, false);
     }
 }
 
 pub(crate) fn activate_form_field(state: &mut AppState) {
-    if matches!(state.command.active_tab, ActiveTab::Help) {
+    if matches!(state.ui.active_tab, ActiveTab::Help) {
         return;
     }
     let command = state.current_command().clone();
-    let args = form::visible_args(&command, state.command.active_tab);
+    let args = form::visible_args(&command, state.ui.active_tab);
     let Some(item) = args
         .iter()
-        .find(|item| item.order_index == state.command.selected_arg_index)
+        .find(|item| item.order_index == state.ui.selected_arg_index)
     else {
         return;
     };
@@ -158,113 +147,103 @@ pub(crate) fn activate_form_field(state: &mut AppState) {
         state.toggle_flag(&arg.id);
         state.mark_touched(&arg.id);
     } else if arg.uses_choice_input() {
-        if arg.possible_values.is_empty()
-            || state.interaction.enum_open.as_deref() == Some(arg.id.as_str())
-        {
-            state.interaction.enum_open = None;
+        if arg.choices.is_empty() || state.ui.dropdown_open.as_deref() == Some(arg.id.as_str()) {
+            state.ui.dropdown_open = None;
         } else {
-            open_enum_dropdown(state, &arg.id, arg.possible_values.len());
+            open_enum_dropdown(state, &arg.id, arg.choices.len());
         }
     } else {
-        state.interaction.focus = Focus::Form;
+        state.ui.focus = Focus::Form;
     }
 }
 
 pub(crate) fn open_enum_dropdown(state: &mut AppState, arg_id: &str, total: usize) {
     if total == 0 {
-        state.interaction.enum_open = None;
-        state.interaction.enum_scroll = 0;
+        state.ui.dropdown_open = None;
+        state.ui.dropdown_scroll = 0;
         return;
     }
 
-    state.interaction.enum_open = Some(arg_id.to_string());
+    state.ui.dropdown_open = Some(arg_id.to_string());
     let current = state
         .current_inputs()
         .and_then(|inputs| inputs.values.get(arg_id))
         .and_then(|value| match value {
-            ArgValue::Enum(index) => Some(*index),
+            ArgValue::Choice(selected) => state
+                .current_command()
+                .args
+                .iter()
+                .find(|arg| arg.id == arg_id)
+                .and_then(|arg| arg.choices.iter().position(|choice| choice == selected)),
             _ => None,
         })
         .unwrap_or(0);
     let visible_rows = state
+        .frame
         .layout
         .form_view
-        .zip(state.layout.form_inputs.get(arg_id).copied())
+        .zip(state.frame.layout.form_inputs.get(arg_id).copied())
         .and_then(|(form_view, input_rect)| dropdown_layout(form_view, input_rect, total))
         .map_or(total.min(usize::from(MAX_DROPDOWN_ROWS)), |layout| {
             layout.visible_rows
         });
     let max_scroll = total.saturating_sub(visible_rows);
-    let centered_scroll = current.saturating_sub(visible_rows / 2);
-    state.interaction.enum_scroll = centered_scroll.min(max_scroll);
+    state.ui.dropdown_scroll = current.saturating_sub(visible_rows / 2).min(max_scroll);
 }
 
 pub(crate) fn ensure_form_visible(state: &mut AppState) {
-    if matches!(state.command.active_tab, ActiveTab::Help) {
+    if matches!(state.ui.active_tab, ActiveTab::Help) {
         return;
     }
-    let Some(form_area) = state.layout.form_view else {
+    let Some(form_area) = state.frame.layout.form_view else {
         return;
     };
     let command = state.current_command().clone();
-    let args = form::visible_args(&command, state.command.active_tab);
+    let args = form::visible_args(&command, state.ui.active_tab);
     let Some((input_top, input_bottom)) =
-        form::field_content_bounds(&args, state.command.selected_arg_index)
+        form::field_content_bounds(&args, state.ui.selected_arg_index)
     else {
         return;
     };
-    let visible_top = state.interaction.form_scroll;
-    let visible_bottom = state
-        .interaction
-        .form_scroll
-        .saturating_add(form_area.height);
+    let visible_top = state.form_scroll();
+    let visible_bottom = visible_top.saturating_add(form_area.height);
 
     if input_top < visible_top {
-        state.interaction.form_scroll = input_top;
+        state.ui.form_scroll = input_top;
     } else if input_bottom > visible_bottom {
-        let delta = input_bottom.saturating_sub(visible_bottom);
-        state.interaction.form_scroll = state.interaction.form_scroll.saturating_add(delta);
+        state.ui.form_scroll = state
+            .ui
+            .form_scroll
+            .saturating_add(input_bottom.saturating_sub(visible_bottom));
     }
-    state.interaction.form_scroll = state
-        .interaction
-        .form_scroll
-        .min(state.interaction.form_scroll_max);
+    state.clamp_form_scroll();
 }
 
 pub(crate) fn scroll_form(state: &mut AppState, delta: i16) {
     if delta.is_negative() {
-        state.interaction.form_scroll = state
-            .interaction
-            .form_scroll
-            .saturating_sub(delta.unsigned_abs());
+        state.ui.form_scroll = state.ui.form_scroll.saturating_sub(delta.unsigned_abs());
     } else {
-        state.interaction.form_scroll = state
-            .interaction
-            .form_scroll
-            .saturating_add(delta.unsigned_abs());
+        state.ui.form_scroll = state.ui.form_scroll.saturating_add(delta.unsigned_abs());
     }
-    state.interaction.form_scroll = state
-        .interaction
-        .form_scroll
-        .min(state.interaction.form_scroll_max);
+    state.clamp_form_scroll();
 }
 
 pub(crate) fn scroll_enum(state: &mut AppState, delta: i16) {
     if delta.is_negative() {
-        state.interaction.enum_scroll = state
-            .interaction
-            .enum_scroll
+        state.ui.dropdown_scroll = state
+            .ui
+            .dropdown_scroll
             .saturating_sub(usize::from(delta.unsigned_abs()));
     } else {
-        state.interaction.enum_scroll = state
-            .interaction
-            .enum_scroll
+        state.ui.dropdown_scroll = state
+            .ui
+            .dropdown_scroll
             .saturating_add(usize::from(delta.unsigned_abs()));
     }
 }
 
 pub(crate) fn ensure_enum_visible(state: &mut AppState, index: usize, total: usize) {
-    let Some(dropdown) = state.layout.dropdown else {
+    let Some(dropdown) = state.frame.layout.dropdown else {
         return;
     };
     let visible = usize::from(dropdown.height.saturating_sub(2));
@@ -272,52 +251,55 @@ pub(crate) fn ensure_enum_visible(state: &mut AppState, index: usize, total: usi
         return;
     }
     let max_scroll = total.saturating_sub(visible);
-    if index < state.interaction.enum_scroll {
-        state.interaction.enum_scroll = index;
-    } else if index >= state.interaction.enum_scroll + visible {
-        state.interaction.enum_scroll = index.saturating_sub(visible - 1);
+    if index < state.ui.dropdown_scroll {
+        state.ui.dropdown_scroll = index;
+    } else if index >= state.ui.dropdown_scroll + visible {
+        state.ui.dropdown_scroll = index.saturating_sub(visible - 1);
     }
-    state.interaction.enum_scroll = state.interaction.enum_scroll.min(max_scroll);
+    state.ui.dropdown_scroll = state.ui.dropdown_scroll.min(max_scroll);
 }
 
 pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
-    let path = if start.contains("::") {
-        start.split("::").map(str::to_string).collect::<Vec<_>>()
-    } else {
-        start
-            .split_whitespace()
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    if path.is_empty() {
-        return;
-    }
-
-    state.command.selected_path = path;
-    let command = state.current_command().clone();
-    let args = form::visible_args(&command, state.command.active_tab);
-    state.focus_first_tab(&visible_args(&args));
-
-    let mut prefix = vec![state.command.root.name.clone()];
-    state.command.expanded.insert(prefix.join("::"));
-    for part in &state.command.selected_path {
-        prefix.push(part.clone());
-        state.command.expanded.insert(prefix.join("::"));
+    match state.select_command_by_search_path(start) {
+        Ok(()) => {
+            let command = state.current_command().clone();
+            let args = form::visible_args(&command, state.ui.active_tab);
+            state.focus_first_tab(&visible_args(&args));
+        }
+        Err(SelectionError::UnknownPath) => {
+            state.show_toast(
+                format!("Unknown start command: {start}"),
+                std::time::Duration::from_secs(2),
+                false,
+            );
+        }
     }
 }
 
-fn toggle_expand(state: &mut AppState, path: &[String], expanded: bool) {
-    let mut full_path = vec![state.command.root.name.clone()];
-    full_path.extend(path.iter().cloned());
-    let key = full_path.join("::");
+fn select_command(state: &mut AppState, path: &[String]) {
+    if state.select_command_path(path).is_ok() {
+        let command = state.current_command().clone();
+        let args = form::visible_args(&command, state.ui.active_tab);
+        state.focus_first_tab(&visible_args(&args));
+    }
+}
+
+fn toggle_expand(state: &mut AppState, path: &CommandPath, expanded: bool) {
+    let key = path.to_key(&state.domain.root.name);
     if expanded {
-        state.command.expanded.remove(&key);
+        state.domain.expanded.remove(&key);
     } else {
-        state.command.expanded.insert(key);
+        state.domain.expanded.insert(key);
     }
 }
 
-fn visible_args<'a>(args: &[form::OrderedArg<'a>]) -> Vec<(usize, &'a crate::spec::ArgSpec)> {
+fn reset_transient_form_ui(state: &mut AppState) {
+    state.ui.form_scroll = 0;
+    state.ui.dropdown_open = None;
+    state.ui.mouse_select = None;
+}
+
+fn visible_args<'a>(args: &[form::OrderedArg<'a>]) -> Vec<(usize, &'a ArgSpec)> {
     args.iter()
         .map(|item| (item.order_index, item.arg))
         .collect()
@@ -325,26 +307,22 @@ fn visible_args<'a>(args: &[form::OrderedArg<'a>]) -> Vec<(usize, &'a crate::spe
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::Rect;
+    use crate::input::AppState;
+    use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
 
-    use super::{
-        ensure_form_visible, move_sidebar_selection, open_enum_dropdown, switch_tab,
-        toggle_help_tab,
-    };
-    use crate::input::{ActiveTab, AppState, ArgValue, Focus};
-    use crate::spec::{ArgKind, ArgSpec, CommandSpec};
+    use super::{apply_start_command, move_sidebar_selection};
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
         ArgSpec {
             id: id.to_string(),
-            name: name.to_string(),
+            display_name: name.to_string(),
             help: None,
             required: false,
             kind,
-            default: None,
-            possible_values: Vec::new(),
-            positional_index: None,
-            is_multi: false,
+            default_values: Vec::new(),
+            choices: Vec::new(),
+            position: None,
+            value_cardinality: ValueCardinality::One,
             value_hint: None,
         }
     }
@@ -360,7 +338,41 @@ mod tests {
     }
 
     #[test]
-    fn moving_sidebar_selection_updates_selected_path() {
+    fn valid_start_command_selects_resolved_path() {
+        let root = command(
+            "tool",
+            vec![arg("verbose", "--verbose", ArgKind::Flag)],
+            vec![command("build", Vec::new(), vec![command("release", Vec::new(), Vec::new())])],
+        );
+        let mut state = AppState::new(root);
+
+        apply_start_command(&mut state, "build::release");
+
+        assert_eq!(
+            state.selected_path().as_slice(),
+            &["build".to_string(), "release".to_string()]
+        );
+        assert_eq!(state.current_command().name, "release");
+        assert_eq!(state.domain.command_path_key(), "tool::build::release");
+    }
+
+    #[test]
+    fn invalid_start_command_keeps_root_selected_and_does_not_create_orphan_form_state() {
+        let root = command("tool", vec![arg("verbose", "--verbose", ArgKind::Flag)], Vec::new());
+        let mut state = AppState::new(root);
+
+        apply_start_command(&mut state, "missing");
+
+        assert!(state.selected_path().is_empty());
+        assert_eq!(state.current_command().name, "tool");
+        assert!(state.current_inputs().is_none());
+        let toast = state.notifications.toast.as_ref().expect("toast");
+        assert_eq!(toast.message, "Unknown start command: missing");
+        assert!(!toast.is_error);
+    }
+
+    #[test]
+    fn sidebar_selection_always_resolves_to_valid_command() {
         let root = command(
             "tool",
             Vec::new(),
@@ -370,135 +382,23 @@ mod tests {
 
         move_sidebar_selection(&mut state, 1);
 
-        assert_eq!(state.command.selected_path, vec!["build".to_string()]);
+        assert_eq!(state.current_command().name, "build");
+        assert!(state
+            .domain
+            .root
+            .resolve_path(state.selected_path().as_slice())
+            .is_some());
     }
 
     #[test]
-    fn tab_switching_preserves_last_non_help_tab() {
-        let root = command("tool", Vec::new(), Vec::new());
+    fn selecting_invalid_command_path_is_rejected() {
+        let root = command("tool", Vec::new(), vec![command("build", Vec::new(), Vec::new())]);
         let mut state = AppState::new(root);
-        state.command.active_tab = ActiveTab::Arguments;
 
-        toggle_help_tab(&mut state);
-        assert_eq!(state.command.active_tab, ActiveTab::Help);
+        let result = state.select_command_path(&["missing".to_string()]);
 
-        toggle_help_tab(&mut state);
-        assert_eq!(state.command.active_tab, ActiveTab::Arguments);
-    }
-
-    #[test]
-    fn ensure_form_visible_scrolls_selected_field_into_view() {
-        let option_one = arg("a", "--a", ArgKind::Option);
-        let mut option_two = arg("b", "--b", ArgKind::Option);
-        option_two.help = Some("second".to_string());
-        let root = command("tool", vec![option_one, option_two], Vec::new());
-        let mut state = AppState::new(root);
-        state.layout.form_view = Some(Rect::new(0, 0, 30, 4));
-        state.interaction.form_scroll_max = 10;
-        state.command.active_tab = ActiveTab::Options;
-        state.command.selected_arg_index = 1;
-
-        ensure_form_visible(&mut state);
-
-        assert!(state.interaction.form_scroll > 0);
-    }
-
-    #[test]
-    fn opening_dropdown_centers_current_value_when_possible() {
-        let mut color = arg("color", "--color", ArgKind::Enum);
-        color.possible_values = vec![
-            "red".to_string(),
-            "green".to_string(),
-            "blue".to_string(),
-            "yellow".to_string(),
-            "purple".to_string(),
-            "orange".to_string(),
-        ];
-        let root = command("tool", vec![color], Vec::new());
-        let mut state = AppState::new(root);
-        state.layout.form_view = Some(Rect::new(0, 0, 40, 10));
-        state
-            .layout
-            .form_inputs
-            .insert("color".to_string(), Rect::new(0, 2, 20, 3));
-        state
-            .current_inputs_mut()
-            .values
-            .insert("color".to_string(), ArgValue::Enum(3));
-
-        open_enum_dropdown(&mut state, "color", 6);
-
-        assert_eq!(state.interaction.enum_open.as_deref(), Some("color"));
-        assert_eq!(state.interaction.enum_scroll, 2);
-    }
-
-    #[test]
-    fn opening_dropdown_clamps_scroll_near_edges() {
-        let mut color = arg("color", "--color", ArgKind::Enum);
-        color.possible_values = vec![
-            "red".to_string(),
-            "green".to_string(),
-            "blue".to_string(),
-            "yellow".to_string(),
-        ];
-        let root = command("tool", vec![color], Vec::new());
-        let mut state = AppState::new(root);
-        state.layout.form_view = Some(Rect::new(0, 0, 40, 7));
-        state
-            .layout
-            .form_inputs
-            .insert("color".to_string(), Rect::new(0, 2, 20, 3));
-        state
-            .current_inputs_mut()
-            .values
-            .insert("color".to_string(), ArgValue::Enum(0));
-
-        open_enum_dropdown(&mut state, "color", 4);
-        assert_eq!(state.interaction.enum_scroll, 0);
-
-        state
-            .current_inputs_mut()
-            .values
-            .insert("color".to_string(), ArgValue::Enum(3));
-        open_enum_dropdown(&mut state, "color", 4);
-        assert_eq!(state.interaction.enum_scroll, 0);
-    }
-
-    #[test]
-    fn activating_open_enum_toggles_it_closed() {
-        let mut color = arg("color", "--color", ArgKind::Enum);
-        color.possible_values = vec!["red".to_string(), "blue".to_string()];
-        let root = command("tool", vec![color], Vec::new());
-        let mut state = AppState::new(root);
-        state.command.active_tab = ActiveTab::Options;
-        state.interaction.focus = Focus::Form;
-        state.command.selected_arg_index = 0;
-        state.layout.form_view = Some(Rect::new(0, 0, 40, 10));
-        state
-            .layout
-            .form_inputs
-            .insert("color".to_string(), Rect::new(0, 2, 20, 3));
-
-        super::activate_form_field(&mut state);
-        assert_eq!(state.interaction.enum_open.as_deref(), Some("color"));
-
-        super::activate_form_field(&mut state);
-        assert!(state.interaction.enum_open.is_none());
-    }
-
-    #[test]
-    fn switch_tab_keeps_selection_valid() {
-        let mut positional = arg("path", "path", ArgKind::Positional);
-        positional.positional_index = Some(1);
-        let option = arg("target", "--target", ArgKind::Option);
-        let root = command("tool", vec![positional, option], Vec::new());
-        let mut state = AppState::new(root);
-        state.command.active_tab = ActiveTab::Arguments;
-        state.command.selected_arg_index = 0;
-
-        switch_tab(&mut state, ActiveTab::Options);
-
-        assert_eq!(state.command.active_tab, ActiveTab::Options);
-        assert_eq!(state.command.selected_arg_index, 1);
+        assert!(result.is_err());
+        assert!(state.selected_path().is_empty());
+        assert_eq!(state.current_command().name, "tool");
     }
 }

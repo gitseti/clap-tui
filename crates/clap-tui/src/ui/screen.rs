@@ -1,64 +1,59 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::widgets::{Block, BorderType, Borders};
+use std::collections::HashSet;
 
 use crate::config::TuiConfig;
-use crate::input::{ActiveTab, AppState, CommandInputs, Focus};
-use crate::spec::{ArgSpec, CommandSpec};
-use crate::view::argv;
+use crate::input::{ActiveTab, AppState, CommandFormState, Focus, FrameLayout, FrameState, UiState};
+use crate::spec::{CommandPath, CommandSpec};
+use crate::view::argv::build_argv;
 use crate::view::command_tree::{self, TreeItem};
 use crate::view::form;
 
 use super::{dropdown, footer, form as form_ui, header, preview, sidebar, styles, toast};
 
 #[derive(Debug, Clone)]
-pub(crate) struct ScreenArg {
-    pub(crate) order_index: usize,
-    pub(crate) arg: ArgSpec,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ScreenView {
-    pub(crate) command: CommandSpec,
+pub(crate) struct ScreenView<'a> {
+    pub(crate) command: &'a CommandSpec,
     pub(crate) tree_items: Vec<TreeItem>,
-    pub(crate) visible_tabs: Vec<ActiveTab>,
-    pub(crate) active_args: Vec<ScreenArg>,
+    pub(crate) visible_tabs: [ActiveTab; 3],
+    pub(crate) active_args: Vec<form::OrderedArg<'a>>,
     pub(crate) preview_argv: Vec<String>,
-    pub(crate) inputs: Option<CommandInputs>,
+    pub(crate) inputs: Option<&'a CommandFormState>,
 }
 
-impl ScreenView {
-    pub(crate) fn build(state: &AppState) -> Self {
-        let command = state.current_command().clone();
-        let active_args = form::visible_args(&command, state.command.active_tab)
-            .into_iter()
-            .map(|item| ScreenArg {
-                order_index: item.order_index,
-                arg: item.arg.clone(),
-            })
-            .collect();
+impl<'a> ScreenView<'a> {
+    pub(crate) fn build(
+        command: &'a CommandSpec,
+        root: &CommandSpec,
+        expanded: &HashSet<String>,
+        search_query: &str,
+        active_tab: ActiveTab,
+        inputs: Option<&'a CommandFormState>,
+        preview_argv: Vec<String>,
+    ) -> Self {
         Self {
             command,
-            tree_items: command_tree::tree_items(
-                &state.command.root,
-                &state.command.expanded,
-                &state.command.search,
-            ),
-            visible_tabs: AppState::visible_tabs().to_vec(),
-            active_args,
-            preview_argv: argv::build_argv(state),
-            inputs: state.current_inputs().cloned(),
+            tree_items: command_tree::tree_items(root, expanded, search_query),
+            visible_tabs: AppState::visible_tabs(),
+            active_args: form::visible_args(command, active_tab),
+            preview_argv,
+            inputs,
         }
     }
+}
 
-    pub(crate) fn ordered_active_args(&self) -> Vec<form::OrderedArg<'_>> {
-        self.active_args
-            .iter()
-            .map(|item| form::OrderedArg {
-                order_index: item.order_index,
-                arg: &item.arg,
-            })
-            .collect()
+pub(crate) fn prepare(state: &mut AppState) {
+    state.ensure_defaults();
+    let current_command = state.current_command().clone();
+    let active_args = form::visible_args(&current_command, state.ui.active_tab);
+    let visible = active_args
+        .iter()
+        .map(|item| (item.order_index, item.arg))
+        .collect::<Vec<_>>();
+    state.ensure_active_tab_visible(&visible);
+    if state.ui.active_tab != ActiveTab::Help {
+        state.ensure_selected_arg_visible(&visible);
     }
 }
 
@@ -69,17 +64,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiCo
             .unwrap_or(size.width);
     sidebar_width = sidebar_width.clamp(22, 30);
 
-    state.ensure_defaults();
-    let current_command = state.current_command().clone();
-    let active_args = form::visible_args(&current_command, state.command.active_tab);
-    let visible = active_args
-        .iter()
-        .map(|item| (item.order_index, item.arg))
-        .collect::<Vec<_>>();
-    state.ensure_active_tab_visible(&visible);
-    if state.command.active_tab != ActiveTab::Help {
-        state.ensure_selected_arg_visible(&visible);
-    }
+    let mut frame_layout = FrameLayout::default();
 
     let background = Block::default()
         .borders(Borders::ALL)
@@ -120,27 +105,53 @@ pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiCo
     let sidebar_area = root[0];
     let main_area = root[1];
 
-    state.layout.sidebar = Some(sidebar_area);
-    state.layout.preview = Some(preview_area);
-    state.layout.footer = Some(footer_area);
+    frame_layout.sidebar = Some(sidebar_area);
+    frame_layout.preview = Some(preview_area);
+    frame_layout.footer = Some(footer_area);
 
-    let vm = ScreenView::build(state);
-    render_main(frame, state, config, main_area, &vm);
-    sidebar::render_sidebar(frame, state, config, sidebar_area, &vm);
-    dropdown::render_dropdown(frame, state, config, Rect::default(), &vm);
-    preview::render_preview(frame, state, config, preview_area, &vm);
-    footer::render_footer(frame, state, config, footer_area, &vm);
+    let preview_argv = build_argv(state);
+    let active_tab = state.ui.active_tab;
+    let search_query = state.ui.search_query.clone();
+    let selected_path = state.selected_path().clone();
+    let domain = &state.domain;
+    let vm = ScreenView::build(
+        domain.current_command(),
+        &domain.root,
+        &domain.expanded,
+        &search_query,
+        active_tab,
+        domain.current_form(),
+        preview_argv,
+    );
+    render_main(
+        frame,
+        &mut state.ui,
+        &mut state.frame,
+        &selected_path,
+        config,
+        main_area,
+        &vm,
+        &mut frame_layout,
+    );
+    sidebar::render_sidebar(frame, &state.ui, &selected_path, config, sidebar_area, &vm, &mut frame_layout);
+    dropdown::render_dropdown(frame, &state.ui, &state.frame, &state.domain, config, Rect::default(), &vm);
+    preview::render_preview(frame, &state.ui, config, preview_area, &vm);
+    footer::render_footer(frame, &state.ui, config, footer_area, &vm, &mut frame_layout);
     toast::render_toast(frame, state, config, size);
+    state.frame.layout = frame_layout;
 }
 
 fn render_main(
     frame: &mut Frame<'_>,
-    state: &mut AppState,
+    ui: &mut UiState,
+    frame_state: &mut FrameState,
+    selected_path: &CommandPath,
     config: &TuiConfig,
     area: Rect,
-    vm: &ScreenView,
+    vm: &ScreenView<'_>,
+    frame_layout: &mut FrameLayout,
 ) {
-    let workspace_focused = matches!(state.interaction.focus, Focus::Form);
+    let workspace_focused = matches!(ui.focus, Focus::Form);
     let workspace = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -169,6 +180,6 @@ fn render_main(
         .constraints([Constraint::Length(header_height), Constraint::Min(0)])
         .split(Rect::new(inner.x, inner.y, inner.width, inner.height));
 
-    header::render_header(frame, state, config, main[0], vm);
-    form_ui::render_form(frame, state, config, body_area, vm);
+    header::render_header(frame, selected_path, config, main[0], vm);
+    form_ui::render_form(frame, ui, frame_state, selected_path, config, body_area, vm, frame_layout);
 }

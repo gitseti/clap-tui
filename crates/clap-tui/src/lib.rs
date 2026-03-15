@@ -6,9 +6,11 @@
 //! Auto-generate a TUI from a `clap` command definition.
 
 mod app;
+mod argv_serializer;
 mod config;
 mod controller;
 mod error;
+mod form_editor;
 mod input;
 mod runtime;
 mod spec;

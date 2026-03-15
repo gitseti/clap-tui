@@ -35,7 +35,7 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
         .filter(|arg| arg.is_positional())
         .filter(|arg| !is_help_arg(arg))
         .collect::<Vec<_>>();
-    positionals.sort_by_key(|arg| arg.positional_index.unwrap_or(usize::MAX));
+    positionals.sort_by_key(|arg| arg.position.unwrap_or(usize::MAX));
 
     let mut others = command
         .args
@@ -43,7 +43,7 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
         .filter(|arg| !arg.is_positional())
         .filter(|arg| !is_help_arg(arg))
         .collect::<Vec<_>>();
-    others.sort_by_key(|arg| arg.name.clone());
+    others.sort_by_key(|arg| arg.display_name.clone());
 
     positionals.extend(others);
     positionals
@@ -76,7 +76,7 @@ pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
     };
     let input_height = if arg.is_flag() || arg.uses_choice_input() {
         1
-    } else if arg.is_multi {
+    } else if arg.accepts_multiple_values() {
         5
     } else {
         3
@@ -149,7 +149,7 @@ pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> 
 }
 
 fn is_help_arg(arg: &ArgSpec) -> bool {
-    arg.id == "help" || arg.name == "--help" || arg.name == "-h"
+    arg.id == "help" || arg.display_name == "--help" || arg.display_name == "-h"
 }
 
 #[cfg(test)]
@@ -164,14 +164,14 @@ mod tests {
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
         ArgSpec {
             id: id.to_string(),
-            name: name.to_string(),
+            display_name: name.to_string(),
             help: None,
             required: false,
             kind,
-            default: None,
-            possible_values: Vec::new(),
-            positional_index: None,
-            is_multi: false,
+            default_values: Vec::new(),
+            choices: Vec::new(),
+            position: None,
+            value_cardinality: crate::spec::ValueCardinality::One,
             value_hint: None,
         }
     }
@@ -193,13 +193,13 @@ mod tests {
             arg("path", "path", ArgKind::Positional),
             arg("alpha", "--alpha", ArgKind::Option),
         ];
-        source[1].positional_index = Some(1);
+        source[1].position = Some(1);
         let command = command(source);
 
         let ordered = ordered_args(&command);
         let names = ordered
             .into_iter()
-            .map(|item| item.arg.name.clone())
+            .map(|item| item.arg.display_name.clone())
             .collect::<Vec<_>>();
 
         assert_eq!(names, vec!["path", "--alpha", "--verbose"]);
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn visible_args_follow_active_tab() {
         let mut positional = arg("path", "path", ArgKind::Positional);
-        positional.positional_index = Some(1);
+        positional.position = Some(1);
         let option = arg("target", "--target", ArgKind::Option);
         let command = command(vec![positional, option]);
 
@@ -234,7 +234,7 @@ mod tests {
     fn field_metrics_match_single_and_multi_line_fields() {
         let single = arg("target", "--target", ArgKind::Option);
         let mut multi = arg("paths", "--path", ArgKind::Option);
-        multi.is_multi = true;
+        multi.value_cardinality = crate::spec::ValueCardinality::Many;
         multi.help = Some("paths".to_string());
         let mut flag = arg("verbose", "--verbose", ArgKind::Flag);
         flag.help = Some("toggle".to_string());
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn field_bounds_and_hit_testing_share_same_geometry() {
         let mut positional = arg("path", "path", ArgKind::Positional);
-        positional.positional_index = Some(1);
+        positional.position = Some(1);
         positional.help = Some("required".to_string());
         let command = command(vec![positional]);
         let visible = visible_args(&command, ActiveTab::Arguments);

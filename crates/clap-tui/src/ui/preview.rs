@@ -1,45 +1,65 @@
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::config::TuiConfig;
-use crate::input::AppState;
+use crate::input::{HoverTarget, UiState};
 
 use super::screen::ScreenView;
 use super::styles;
 
+struct PreviewWidget<'a> {
+    config: &'a TuiConfig,
+    argv: &'a [String],
+    hovered: bool,
+}
+
+impl<'a> Widget for PreviewWidget<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let border_style = if self.hovered {
+            Style::default()
+                .fg(self.config.theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(self.config.theme.divider)
+        };
+        let preview_bg = if self.hovered {
+            self.config.theme.surface_raised
+        } else {
+            self.config.theme.preview_bg
+        };
+        let bar = Paragraph::new(command_preview_line(self.config, self.argv, self.hovered))
+            .style(Style::default().bg(preview_bg))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(border_style)
+                    .style(Style::default().bg(preview_bg)),
+            );
+        Widget::render(bar, area, buf);
+    }
+}
+
 pub(crate) fn render_preview(
     frame: &mut Frame<'_>,
-    state: &mut AppState,
+    ui: &UiState,
     config: &TuiConfig,
     area: Rect,
-    vm: &ScreenView,
+    vm: &ScreenView<'_>,
 ) {
-    let hovered = state.interaction.hover == Some(crate::input::HoverTarget::Preview);
-    let border_style = if hovered {
-        Style::default()
-            .fg(config.theme.accent)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(config.theme.divider)
-    };
-    let preview_bg = if hovered {
-        config.theme.surface_raised
-    } else {
-        config.theme.preview_bg
-    };
-    let bar = Paragraph::new(command_preview_line(config, &vm.preview_argv, hovered))
-        .style(Style::default().bg(preview_bg))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(border_style)
-                .style(Style::default().bg(preview_bg)),
-        );
-    frame.render_widget(bar, area);
+    let hovered = ui.hover == Some(HoverTarget::Preview);
+    frame.render_widget(
+        PreviewWidget {
+            config,
+            argv: &vm.preview_argv,
+            hovered,
+        },
+        area,
+    );
 }
 
 fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: bool) -> Line<'a> {

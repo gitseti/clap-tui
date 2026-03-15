@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
-use crate::spec::CommandSpec;
+use crate::spec::{CommandPath, CommandSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TreeItem {
     pub(crate) label: String,
-    pub(crate) path: Vec<String>,
+    pub(crate) path: CommandPath,
     pub(crate) has_children: bool,
     pub(crate) indent: usize,
     pub(crate) expanded: bool,
@@ -72,9 +72,9 @@ fn build_tree_items_inner(
         };
         let label = format!("{indent}{caret} {}", cmd.name);
         let display_path = if depth == 0 {
-            Vec::new()
+            CommandPath::default()
         } else {
-            path[1..].to_vec()
+            CommandPath::from(path[1..].to_vec())
         };
         items.push(TreeItem {
             label,
@@ -102,7 +102,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::tree_items;
-    use crate::spec::{ArgSpec, CommandSpec};
+    use crate::spec::{ArgSpec, CommandPath, CommandSpec};
 
     fn command(name: &str, about: Option<&str>, subcommands: Vec<CommandSpec>) -> CommandSpec {
         CommandSpec {
@@ -150,9 +150,9 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                Vec::<String>::new(),
-                vec!["release".to_string()],
-                vec!["release".to_string(), "deploy".to_string()],
+                CommandPath::default(),
+                vec!["release".to_string()].into(),
+                vec!["release".to_string(), "deploy".to_string()].into(),
             ]
         );
     }
@@ -166,6 +166,6 @@ mod tests {
         let items = tree_items(&root, &expanded, "");
 
         assert_eq!(items.len(), 2);
-        assert_eq!(items[1].path, vec!["build".to_string()]);
+        assert_eq!(items[1].path, vec!["build".to_string()].into());
     }
 }

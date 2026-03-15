@@ -132,6 +132,7 @@ fn event_loop<R: Runtime>(
 
     loop {
         state.clear_expired_toast();
+        ui::prepare(&mut state);
         session.draw(|frame| render_frame(frame, &mut state, config))?;
 
         if !session.poll_event(Duration::from_millis(200))? {

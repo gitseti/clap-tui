@@ -1,15 +1,16 @@
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
-    ScrollbarState,
+    ScrollbarState, StatefulWidget,
 };
 
 use crate::config::TuiConfig;
-use crate::input::AppState;
-use crate::spec::enum_value_matches_default;
+use crate::input::{DomainState, FrameState, UiState};
+use crate::spec::choice_value_matches_default;
 
 use super::screen::ScreenView;
 
@@ -19,6 +20,83 @@ pub(crate) const MAX_DROPDOWN_ROWS: u16 = 6;
 pub(crate) struct DropdownLayout {
     pub(crate) rect: Rect,
     pub(crate) visible_rows: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DropdownItem {
+    label: String,
+    text_style: Style,
+}
+
+#[derive(Debug, Clone)]
+struct DropdownView {
+    rect: Rect,
+    items: Vec<DropdownItem>,
+    selected_index: Option<usize>,
+    scroll_position: usize,
+    visible_rows: usize,
+    total_rows: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DropdownWidgetState {
+    selected_index: Option<usize>,
+    scroll_position: usize,
+    visible_rows: usize,
+    total_rows: usize,
+}
+
+struct DropdownWidget<'a> {
+    config: &'a TuiConfig,
+    items: &'a [DropdownItem],
+}
+
+impl<'a> StatefulWidget for DropdownWidget<'a> {
+    type State = DropdownWidgetState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let mut list_state = ListState::default();
+        list_state.select(state.selected_index);
+
+        let list_items = self
+            .items
+            .iter()
+            .map(|item| {
+                let line = Line::from(Span::styled(item.label.clone(), item.text_style));
+                ListItem::new(line)
+            })
+            .collect::<Vec<_>>();
+
+        let list = List::new(list_items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(super::styles::panel_border(self.config, false))
+                    .style(Style::default().bg(self.config.theme.surface_raised)),
+            )
+            .highlight_style(super::styles::selection(self.config))
+            .highlight_symbol("› ")
+            .style(Style::default().bg(self.config.theme.surface_raised));
+
+        StatefulWidget::render(list, area, buf, &mut list_state);
+
+        if state.total_rows > state.visible_rows && state.visible_rows > 0 {
+            let scroll_steps = state
+                .total_rows
+                .saturating_sub(state.visible_rows)
+                .saturating_add(1);
+            let mut scrollbar_state = ScrollbarState::new(scroll_steps)
+                .position(state.scroll_position)
+                .viewport_content_length(state.visible_rows);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .track_symbol(Some("┃"))
+                .thumb_symbol("█")
+                .thumb_style(Style::default().fg(self.config.theme.panel_focus_border))
+                .track_style(Style::default().fg(self.config.theme.dim));
+            StatefulWidget::render(scrollbar, area, buf, &mut scrollbar_state);
+        }
+    }
 }
 
 pub(crate) fn dropdown_layout(
@@ -68,84 +146,90 @@ pub(crate) fn dropdown_layout(
 
 pub(crate) fn render_dropdown(
     frame: &mut Frame<'_>,
-    state: &mut AppState,
+    ui: &UiState,
+    frame_state: &FrameState,
+    domain: &DomainState,
     config: &TuiConfig,
     _area: Rect,
-    _vm: &ScreenView,
+    _vm: &ScreenView<'_>,
 ) {
-    let Some(arg_id) = state.interaction.enum_open.clone() else {
+    let Some(view) = build_dropdown_view(ui, frame_state, domain, config) else {
         return;
     };
-    let Some(rect) = state.layout.dropdown else {
-        return;
+    let mut widget_state = DropdownWidgetState {
+        selected_index: view.selected_index,
+        scroll_position: view.scroll_position,
+        visible_rows: view.visible_rows,
+        total_rows: view.total_rows,
     };
-    let Some(arg) = state.current_command().args.iter().find(|a| a.id == arg_id) else {
-        return;
+    let widget = DropdownWidget {
+        config,
+        items: &view.items,
     };
-    let is_touched = state.is_touched(&arg.id);
-    let total = arg.possible_values.len();
-    let visible = rect.height.saturating_sub(2) as usize;
-    let start = state
-        .interaction
-        .enum_scroll
-        .min(total.saturating_sub(visible));
-    let end = (start + visible).min(total);
-    let current_idx = state
-        .current_inputs()
+
+    frame.render_widget(Clear, view.rect);
+    frame.render_stateful_widget(widget, view.rect, &mut widget_state);
+}
+
+fn build_dropdown_view(
+    ui: &UiState,
+    frame_state: &FrameState,
+    domain: &DomainState,
+    config: &TuiConfig,
+) -> Option<DropdownView> {
+    let arg_id = ui.dropdown_open.as_ref()?;
+    let rect = frame_state.layout.dropdown?;
+    let arg = domain.current_command().args.iter().find(|arg| &arg.id == arg_id)?;
+
+    let is_touched = domain
+        .current_form()
+        .is_some_and(|form| form.touched.contains(&arg.id));
+    let total_rows = arg.choices.len();
+    let visible_rows = rect.height.saturating_sub(2) as usize;
+    let scroll_position = ui.dropdown_scroll.min(total_rows.saturating_sub(visible_rows));
+    let selected_row = domain
+        .current_form()
         .and_then(|inputs| inputs.values.get(&arg.id))
         .and_then(|value| match value {
-            crate::input::ArgValue::Enum(idx) => Some(*idx),
+            crate::input::ArgValue::Choice(selected) => {
+                arg.choices.iter().position(|choice| choice == selected)
+            }
             _ => None,
         })
         .unwrap_or(0);
+    let selected_index = (selected_row >= scroll_position
+        && selected_row < scroll_position.saturating_add(visible_rows))
+    .then_some(selected_row - scroll_position);
+
     let items = arg
-        .possible_values
+        .choices
         .iter()
         .enumerate()
-        .skip(start)
-        .take(visible)
+        .skip(scroll_position)
+        .take(visible_rows)
         .map(|(index, value)| {
-            let is_default = !is_touched && enum_value_matches_default(arg, index);
-            let is_selected = index == current_idx;
+            let is_default = !is_touched && choice_value_matches_default(arg, value);
+            let is_selected = index == selected_row;
             let text_style = match (is_selected, is_default) {
                 (true, false) => Style::default().fg(config.theme.selection_fg),
                 (_, true) => Style::default().fg(config.theme.dim),
                 (false, false) => Style::default().fg(config.theme.text),
             };
-            let line = Line::from(Span::styled(value.clone(), text_style));
-            ListItem::new(line)
+            DropdownItem {
+                label: value.clone(),
+                text_style,
+            }
         })
-        .collect::<Vec<_>>();
-    let mut list_state = ListState::default();
-    if current_idx >= start && current_idx < end {
-        list_state.select(Some(current_idx - start));
-    }
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(super::styles::panel_border(config, false))
-                .style(Style::default().bg(config.theme.surface_raised)),
-        )
-        .highlight_style(super::styles::selection(config))
-        .highlight_symbol("› ")
-        .style(Style::default().bg(config.theme.surface_raised));
-    frame.render_widget(Clear, rect);
-    frame.render_stateful_widget(list, rect, &mut list_state);
+        .collect();
 
-    if total > visible && visible > 0 {
-        let scroll_steps = total.saturating_sub(visible).saturating_add(1);
-        let mut scrollbar_state = ScrollbarState::new(scroll_steps)
-            .position(state.interaction.enum_scroll)
-            .viewport_content_length(visible);
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .track_symbol(Some("┃"))
-            .thumb_symbol("█")
-            .thumb_style(Style::default().fg(config.theme.panel_focus_border))
-            .track_style(Style::default().fg(config.theme.dim));
-        frame.render_stateful_widget(scrollbar, rect, &mut scrollbar_state);
-    }
+    Some(DropdownView {
+        rect,
+        items,
+        selected_index,
+        scroll_position,
+        visible_rows,
+        total_rows,
+    })
 }
 
 #[cfg(test)]
