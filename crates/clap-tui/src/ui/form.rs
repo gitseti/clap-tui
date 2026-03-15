@@ -1,10 +1,9 @@
 use ratatui::Frame;
-use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget,
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
 };
 
 use crate::config::TuiConfig;
@@ -18,6 +17,9 @@ use crate::view::form::{self, field_metrics};
 use super::{dropdown, screen::ScreenView, styles};
 
 const TAB_CONTENT_TOP_PADDING: u16 = 1;
+const TAB_PADDING_LEFT: &str = " ";
+const TAB_PADDING_RIGHT: &str = " ";
+const TAB_DIVIDER: &str = "│";
 
 pub(crate) fn populate_layout(
     ui: &UiState,
@@ -213,17 +215,24 @@ pub(crate) fn render_form(
 
 fn layout_tab_bar(area: Rect, vm: &ScreenView<'_>) -> Vec<TabButtonLayout> {
     let mut cursor_x = area.x;
+    let right = area.x.saturating_add(area.width);
     vm.visible_tabs
         .iter()
-        .map(|tab| {
-            let label = format!(" {} ", tab_label(*tab));
-            let width = u16::try_from(label.chars().count()).unwrap_or(area.width);
+        .enumerate()
+        .filter_map(|(index, tab)| {
+            let width = tab_render_width(*tab);
             let layout = TabButtonLayout {
                 tab: *tab,
-                rect: Rect::new(cursor_x, area.y, width, 1),
+                rect: intersect_rects(Rect::new(cursor_x, area.y, width, 1), area)?,
             };
-            cursor_x = cursor_x.saturating_add(width + 1);
-            layout
+            cursor_x = cursor_x.saturating_add(width);
+            if index + 1 < vm.visible_tabs.len() {
+                cursor_x = cursor_x.saturating_add(tab_divider_width());
+            }
+            if cursor_x >= right {
+                return Some(layout);
+            }
+            Some(layout)
         })
         .collect()
 }
@@ -235,78 +244,7 @@ fn render_tab_bar(
     area: Rect,
     vm: &ScreenView<'_>,
 ) {
-    let view = build_tab_bar_view(ui, config, vm);
-    frame.render_widget(TabBarWidget { view: &view }, area);
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TabBarItem {
-    tab: ActiveTab,
-    label: String,
-    style: Style,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TabBarView {
-    items: Vec<TabBarItem>,
-}
-
-struct TabBarWidget<'a> {
-    view: &'a TabBarView,
-}
-
-impl Widget for TabBarWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let line = Line::from(
-            self.view
-                .items
-                .iter()
-                .enumerate()
-                .flat_map(|(index, item)| {
-                    let mut spans = Vec::with_capacity(2);
-                    spans.push(Span::styled(item.label.clone(), item.style));
-                    if index + 1 < self.view.items.len() {
-                        spans.push(Span::raw(" "));
-                    }
-                    spans
-                })
-                .collect::<Vec<_>>(),
-        );
-        Widget::render(Paragraph::new(line), area, buf);
-    }
-}
-
-fn build_tab_bar_view(ui: &UiState, config: &TuiConfig, vm: &ScreenView<'_>) -> TabBarView {
-    TabBarView {
-        items: vm
-            .visible_tabs
-            .iter()
-            .map(|tab| {
-                let active = *tab == ui.active_tab;
-                let hovered = ui.hover_tab == Some(*tab);
-                let style = if active {
-                    Style::default()
-                        .fg(config.theme.panel_bg)
-                        .bg(config.theme.accent)
-                        .add_modifier(Modifier::BOLD)
-                } else if hovered {
-                    Style::default()
-                        .fg(config.theme.text)
-                        .bg(config.theme.surface_raised)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(config.theme.dim)
-                        .bg(config.theme.surface_raised)
-                };
-                TabBarItem {
-                    tab: *tab,
-                    label: format!(" {} ", tab_label(*tab)),
-                    style,
-                }
-            })
-            .collect(),
-    }
+    frame.render_widget(build_tabs(ui, config, vm), area);
 }
 
 fn tab_label(tab: ActiveTab) -> &'static str {
@@ -315,6 +253,59 @@ fn tab_label(tab: ActiveTab) -> &'static str {
         ActiveTab::Arguments => "Arguments",
         ActiveTab::Help => "Help",
     }
+}
+
+fn tab_title(ui: &UiState, config: &TuiConfig, tab: ActiveTab) -> Line<'static> {
+    let style = if ui.hover_tab == Some(tab) && ui.active_tab != tab {
+        Style::default()
+            .fg(config.theme.text)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    Line::from(Span::styled(tab_label(tab).to_string(), style))
+}
+
+fn selected_tab_index(ui: &UiState, vm: &ScreenView<'_>) -> usize {
+    vm.visible_tabs
+        .iter()
+        .position(|tab| *tab == ui.active_tab)
+        .unwrap_or_default()
+}
+
+fn build_tabs<'a>(ui: &UiState, config: &TuiConfig, vm: &'a ScreenView<'a>) -> Tabs<'static> {
+    let titles = vm
+        .visible_tabs
+        .iter()
+        .map(|tab| tab_title(ui, config, *tab))
+        .collect::<Vec<_>>();
+    Tabs::new(titles)
+        .select(selected_tab_index(ui, vm))
+        .style(Style::default().fg(config.theme.dim))
+        .highlight_style(
+            Style::default()
+                .fg(config.theme.panel_bg)
+                .bg(config.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
+        .divider(Span::raw(TAB_DIVIDER))
+        .padding(TAB_PADDING_LEFT, TAB_PADDING_RIGHT)
+}
+
+fn tab_render_width(tab: ActiveTab) -> u16 {
+    usize_to_u16(
+        TAB_PADDING_LEFT.chars().count()
+            + tab_label(tab).chars().count()
+            + TAB_PADDING_RIGHT.chars().count(),
+    )
+}
+
+fn tab_divider_width() -> u16 {
+    usize_to_u16(TAB_DIVIDER.chars().count())
+}
+
+fn usize_to_u16(width: usize) -> u16 {
+    u16::try_from(width).unwrap_or(u16::MAX)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -572,9 +563,14 @@ fn field_help_text(arg: &ArgSpec) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::style::Modifier;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::{Modifier, Style};
+    use ratatui::widgets::Widget;
 
-    use super::{build_tab_bar_view, populate_layout, text_input_is_truncated};
+    use super::{
+        build_tabs, populate_layout, selected_tab_index, tab_render_width, tab_title,
+        text_input_is_truncated,
+    };
     use crate::config::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, Focus, UiState};
@@ -625,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_bar_view_keeps_expected_labels_and_order() {
+    fn tab_titles_keep_expected_labels_and_order() {
         let command = command();
         let vm = ScreenView {
             command: &command,
@@ -636,18 +632,17 @@ mod tests {
             inputs: None,
         };
 
-        let view = build_tab_bar_view(&ui_state(), &TuiConfig::default(), &vm);
-        let labels = view
-            .items
+        let labels = vm
+            .visible_tabs
             .iter()
-            .map(|item| item.label.as_str())
+            .map(|tab| tab_title(&ui_state(), &TuiConfig::default(), *tab).to_string())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels, vec![" Options ", " Arguments ", " Help "]);
+        assert_eq!(labels, vec!["Options", "Arguments", "Help"]);
     }
 
     #[test]
-    fn tab_bar_view_maps_active_and_hovered_styles() {
+    fn selected_tab_index_follows_active_tab() {
         let command = command();
         let vm = ScreenView {
             command: &command,
@@ -658,20 +653,32 @@ mod tests {
             inputs: None,
         };
         let mut ui = ui_state();
+        ui.active_tab = ActiveTab::Help;
+
+        assert_eq!(selected_tab_index(&ui, &vm), 2);
+    }
+
+    #[test]
+    fn hovered_unselected_tab_title_is_bold() {
+        let mut ui = ui_state();
         ui.hover_tab = Some(ActiveTab::Arguments);
 
-        let view = build_tab_bar_view(&ui, &TuiConfig::default(), &vm);
+        let title = tab_title(&ui, &TuiConfig::default(), ActiveTab::Arguments);
+        let span = title.spans.first().expect("tab title span");
 
-        assert!(view.items[0].style.add_modifier.contains(Modifier::BOLD));
-        assert!(view.items[1].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(
-            view.items[0].style.bg,
-            Some(TuiConfig::default().theme.accent)
-        );
-        assert_eq!(
-            view.items[1].style.bg,
-            Some(TuiConfig::default().theme.surface_raised)
-        );
+        assert!(span.style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(span.style.fg, Some(TuiConfig::default().theme.text));
+    }
+
+    #[test]
+    fn hovered_selected_tab_title_uses_default_style() {
+        let mut ui = ui_state();
+        ui.hover_tab = Some(ActiveTab::Options);
+
+        let title = tab_title(&ui, &TuiConfig::default(), ActiveTab::Options);
+        let span = title.spans.first().expect("tab title span");
+
+        assert_eq!(span.style, Style::default());
     }
 
     #[test]
@@ -699,6 +706,73 @@ mod tests {
             snapshot.layout.form_view,
             Some(ratatui::layout::Rect::new(2, 5, 40, 10))
         );
+        assert_eq!(
+            snapshot.layout.form_tabs[0].rect,
+            ratatui::layout::Rect::new(2, 3, tab_render_width(ActiveTab::Options), 1)
+        );
+        assert_eq!(
+            snapshot.layout.form_tabs[1].rect.x,
+            2 + tab_render_width(ActiveTab::Options) + 1
+        );
+    }
+
+    #[test]
+    fn layout_phase_clips_tab_geometry_to_visible_area() {
+        let command = command();
+        let vm = ScreenView {
+            command: &command,
+            tree_items: Vec::new(),
+            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
+            active_args: Vec::new(),
+            preview_argv: Vec::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+
+        populate_layout(
+            &ui_state(),
+            ratatui::layout::Rect::new(2, 3, 12, 6),
+            &vm,
+            &mut snapshot,
+        );
+
+        assert_eq!(snapshot.layout.form_tabs.len(), 2);
+        assert_eq!(
+            snapshot.layout.form_tabs[0].rect,
+            ratatui::layout::Rect::new(2, 3, 9, 1)
+        );
+        assert_eq!(
+            snapshot.layout.form_tabs[1].rect,
+            ratatui::layout::Rect::new(12, 3, 2, 1)
+        );
+    }
+
+    #[test]
+    fn tabs_render_with_stock_padding_and_dividers() {
+        let command = command();
+        let vm = ScreenView {
+            command: &command,
+            tree_items: Vec::new(),
+            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
+            active_args: Vec::new(),
+            preview_argv: Vec::new(),
+            inputs: None,
+        };
+        let area = ratatui::layout::Rect::new(0, 0, 32, 1);
+        let mut buffer = Buffer::empty(area);
+
+        Widget::render(
+            build_tabs(&ui_state(), &TuiConfig::default(), &vm),
+            area,
+            &mut buffer,
+        );
+
+        assert_eq!(buffer[(0, 0)].symbol(), " ");
+        assert_eq!(buffer[(1, 0)].symbol(), "O");
+        assert_eq!(buffer[(8, 0)].symbol(), " ");
+        assert_eq!(buffer[(9, 0)].symbol(), "│");
+        assert_eq!(buffer[(10, 0)].symbol(), " ");
+        assert_eq!(buffer[(11, 0)].symbol(), "A");
     }
 
     #[test]
