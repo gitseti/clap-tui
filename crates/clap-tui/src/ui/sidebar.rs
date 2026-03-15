@@ -12,6 +12,47 @@ use crate::spec::CommandPath;
 use super::screen::ScreenView;
 use super::styles;
 
+pub(crate) fn populate_layout(area: Rect, vm: &ScreenView<'_>, frame_layout: &mut FrameLayout) {
+    frame_layout.sidebar = Some(area);
+    let inner = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let sidebar = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    frame_layout.search = Some(sidebar[0]);
+    frame_layout.sidebar_items.clear();
+    let list_area = sidebar[2];
+    let content_y = list_area.y;
+    let content_x = list_area.x;
+    let content_height = usize::from(list_area.height);
+    for (index, item) in vm.tree_items.iter().take(content_height).enumerate() {
+        let row_y = content_y.saturating_add(u16::try_from(index).unwrap_or(list_area.height));
+        let row_rect = Rect::new(content_x, row_y, list_area.width, 1);
+        let caret = if item.has_children {
+            let caret_x = content_x
+                .saturating_add(u16::try_from(item.indent).unwrap_or(0))
+                .saturating_add(2);
+            Some(Rect::new(caret_x, row_y, 1, 1))
+        } else {
+            None
+        };
+        frame_layout.sidebar_items.push(SidebarItemLayout {
+            path: item.path.clone(),
+            row: row_rect,
+            caret,
+            has_children: item.has_children,
+        });
+    }
+}
+
 pub(crate) fn render_sidebar(
     frame: &mut Frame<'_>,
     ui: &UiState,
@@ -19,7 +60,7 @@ pub(crate) fn render_sidebar(
     config: &TuiConfig,
     area: Rect,
     vm: &ScreenView<'_>,
-    frame_layout: &mut FrameLayout,
+    frame_layout: &FrameLayout,
 ) {
     let search_focused = matches!(ui.focus, Focus::Search);
     let sidebar_focused = matches!(ui.focus, Focus::Sidebar);
@@ -68,22 +109,16 @@ pub(crate) fn render_sidebar(
         config.theme.input_bg
     }));
     frame.render_widget(search, sidebar[0]);
-    frame_layout.search = Some(sidebar[0]);
-
     frame.render_widget(
         Paragraph::new("─".repeat(sidebar[1].width as usize))
             .style(Style::default().fg(config.theme.divider)),
         sidebar[1],
     );
 
-    frame_layout.sidebar_items.clear();
-    let list_area = sidebar[2];
-    let content_y = list_area.y;
-    let content_x = list_area.x;
-    let content_height = usize::from(list_area.height);
-    for (index, item) in vm.tree_items.iter().take(content_height).enumerate() {
-        let row_y = content_y.saturating_add(u16::try_from(index).unwrap_or(list_area.height));
-        let row_rect = Rect::new(content_x, row_y, list_area.width, 1);
+    for layout in &frame_layout.sidebar_items {
+        let Some(item) = vm.tree_items.iter().find(|item| item.path == layout.path) else {
+            continue;
+        };
         let selected = item.path == *selected_path;
         let row_style = if selected {
             if sidebar_focused {
@@ -113,21 +148,6 @@ pub(crate) fn render_sidebar(
             Span::raw(" "),
             Span::styled(item.label.clone(), row_style),
         ]);
-        frame.render_widget(Paragraph::new(line).style(row_style), row_rect);
-
-        let caret = if item.has_children {
-            let caret_x = content_x
-                .saturating_add(u16::try_from(item.indent).unwrap_or(0))
-                .saturating_add(2);
-            Some(Rect::new(caret_x, row_y, 1, 1))
-        } else {
-            None
-        };
-        frame_layout.sidebar_items.push(SidebarItemLayout {
-            path: item.path.clone(),
-            row: row_rect,
-            caret,
-            has_children: item.has_children,
-        });
+        frame.render_widget(Paragraph::new(line).style(row_style), layout.row);
     }
 }

@@ -1,21 +1,18 @@
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
-use tui_textarea::CursorMove;
-
+use crate::controller::navigation;
 use crate::form_editor::{self, EditResult};
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, Focus, HoverTarget, MouseSelection};
+use crate::runtime::{AppKeyCode, AppKeyEvent, AppMouseEvent};
 use crate::view::{argv, command_tree, form};
-
-use crate::controller::navigation;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Action {
     Exit,
     Run,
     CopyPreview,
-    SearchInput(KeyEvent),
-    ChoiceInput { arg_id: String, key: KeyEvent },
-    FormTextInput(KeyEvent),
+    SearchInput(AppKeyEvent),
+    ChoiceInput { arg_id: String, key: AppKeyEvent },
+    FormTextInput(AppKeyEvent),
     ToggleFocus,
     ToggleHelp,
     CycleTabs,
@@ -27,14 +24,14 @@ pub(crate) enum Action {
     SelectSidebar,
     ActivateFormField,
     UpdateHover { x: u16, y: u16 },
-    UpdateMouseSelection(MouseEvent),
+    UpdateMouseSelection(AppMouseEvent),
     ClearMouseSelection,
     CloseDropdown,
     ClickDropdownChoice { arg_id: String, row: u16 },
     ClickFooter(HoverTarget),
     ClickSidebar { x: u16, y: u16 },
     SwitchTab(ActiveTab),
-    ClickForm(MouseEvent),
+    ClickForm(AppMouseEvent),
     ScrollDropdown(i16),
     ScrollForm(i16),
 }
@@ -48,24 +45,79 @@ pub(crate) enum Effect {
 }
 
 pub(crate) fn apply_action(
-    action: Action,
+    action: &Action,
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
-    let effect = match action {
+    let effect = if matches!(action, Action::Exit | Action::Run | Action::CopyPreview) {
+        apply_command_action(action, state)
+    } else if matches!(
+        action,
+        Action::SearchInput(_)
+            | Action::ToggleFocus
+            | Action::ToggleHelp
+            | Action::CycleTabs
+            | Action::FocusSearch
+            | Action::CloseDropdown
+            | Action::ClickFooter(_)
+            | Action::SwitchTab(_)
+    ) {
+        apply_global_action(action, state)
+    } else if matches!(
+        action,
+        Action::MoveSidebarSelection(_)
+            | Action::CollapseSelected
+            | Action::ExpandSelected
+            | Action::SelectSidebar
+            | Action::ClickSidebar { .. }
+    ) {
+        apply_sidebar_action(action, state, frame_snapshot)
+    } else if matches!(
+        action,
+        Action::ChoiceInput { .. }
+            | Action::FormTextInput(_)
+            | Action::MoveFormSelection(_)
+            | Action::ActivateFormField
+            | Action::ClickDropdownChoice { .. }
+            | Action::ClickForm(_)
+            | Action::ScrollDropdown(_)
+            | Action::ScrollForm(_)
+    ) {
+        apply_form_action(action, state, frame_snapshot)
+    } else {
+        apply_mouse_action(action, state, frame_snapshot)
+    };
+    normalize_state(state);
+    effect
+}
+
+pub(crate) fn normalize_state(state: &mut AppState) {
+    state.domain.ensure_defaults();
+    let current_command = state.domain.current_command().clone();
+    let active_args = form::visible_args(&current_command, state.ui.active_tab);
+    let visible = active_args
+        .iter()
+        .map(|item| (item.order_index, item.arg))
+        .collect::<Vec<_>>();
+    state.ui.ensure_active_tab_visible(&visible);
+    if state.ui.active_tab != ActiveTab::Help {
+        state.ui.ensure_selected_arg_visible(&visible);
+    }
+}
+
+fn apply_command_action(action: &Action, state: &mut AppState) -> Effect {
+    match action {
         Action::Exit => Effect::Exit,
         Action::Run => Effect::Run(argv::build_argv(state)),
         Action::CopyPreview => Effect::CopyToClipboard(argv::build_argv(state).join(" ")),
+        _ => Effect::None,
+    }
+}
+
+fn apply_global_action(action: &Action, state: &mut AppState) -> Effect {
+    match action {
         Action::SearchInput(key) => {
-            handle_search_input(key, state);
-            Effect::None
-        }
-        Action::ChoiceInput { arg_id, key } => {
-            handle_choice_input(key, state, frame_snapshot, &arg_id);
-            Effect::None
-        }
-        Action::FormTextInput(key) => {
-            handle_form_text_input(key, state);
+            apply_search_input(*key, state);
             Effect::None
         }
         Action::ToggleFocus => {
@@ -87,102 +139,88 @@ pub(crate) fn apply_action(
             state.ui.focus = Focus::Search;
             Effect::None
         }
-        Action::MoveSidebarSelection(delta) => {
-            navigation::move_sidebar_selection(state, delta);
-            Effect::None
-        }
-        Action::MoveFormSelection(delta) => {
-            navigation::move_form_selection(state, frame_snapshot, delta);
-            Effect::None
-        }
-        Action::CollapseSelected => {
-            navigation::collapse_selected(state);
-            Effect::None
-        }
-        Action::ExpandSelected => {
-            navigation::expand_selected(state);
-            Effect::None
-        }
-        Action::SelectSidebar => {
-            navigation::select_sidebar(state);
-            Effect::None
-        }
-        Action::ActivateFormField => {
-            navigation::activate_form_field(state, frame_snapshot);
-            Effect::None
-        }
-        Action::UpdateHover { x, y } => {
-            update_hover(state, frame_snapshot, x, y);
-            Effect::None
-        }
-        Action::UpdateMouseSelection(event) => {
-            update_mouse_selection(state, frame_snapshot, event);
-            Effect::None
-        }
-        Action::ClearMouseSelection => {
-            state.ui.mouse_select = None;
-            Effect::None
-        }
         Action::CloseDropdown => {
             state.ui.dropdown_open = None;
             Effect::None
         }
-        Action::ClickDropdownChoice { arg_id, row } => {
-            handle_dropdown_click(row, state, frame_snapshot, &arg_id);
-            Effect::None
-        }
-        Action::ClickFooter(target) => handle_footer_click(target, state),
-        Action::ClickSidebar { x, y } => {
-            handle_sidebar_click(x, y, state, frame_snapshot);
-            Effect::None
-        }
+        Action::ClickFooter(target) => apply_footer_click(*target, state),
         Action::SwitchTab(tab) => {
-            navigation::switch_tab(state, tab);
+            navigation::switch_tab(state, *tab);
             Effect::None
         }
-        Action::ClickForm(event) => {
-            handle_form_click(event, state, frame_snapshot);
-            Effect::None
-        }
-        Action::ScrollDropdown(delta) => {
-            navigation::scroll_enum(state, delta);
-            Effect::None
-        }
-        Action::ScrollForm(delta) => {
-            navigation::scroll_form(state, frame_snapshot, delta);
-            Effect::None
-        }
-    };
-    normalize_state(state);
-    effect
-}
-
-pub(crate) fn normalize_state(state: &mut AppState) {
-    state.domain.ensure_defaults();
-    let current_command = state.domain.current_command().clone();
-    let active_args = form::visible_args(&current_command, state.ui.active_tab);
-    let visible = active_args
-        .iter()
-        .map(|item| (item.order_index, item.arg))
-        .collect::<Vec<_>>();
-    state.ui.ensure_active_tab_visible(&visible);
-    if state.ui.active_tab != ActiveTab::Help {
-        state.ui.ensure_selected_arg_visible(&visible);
+        _ => Effect::None,
     }
 }
 
-fn handle_search_input(key: KeyEvent, state: &mut AppState) {
+fn apply_sidebar_action(
+    action: &Action,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) -> Effect {
+    match action {
+        Action::MoveSidebarSelection(delta) => navigation::move_sidebar_selection(state, *delta),
+        Action::CollapseSelected => navigation::collapse_selected(state),
+        Action::ExpandSelected => navigation::expand_selected(state),
+        Action::SelectSidebar => navigation::select_sidebar(state),
+        Action::ClickSidebar { x, y } => apply_sidebar_click(*x, *y, state, frame_snapshot),
+        _ => {}
+    }
+    Effect::None
+}
+
+fn apply_form_action(
+    action: &Action,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) -> Effect {
+    match action {
+        Action::ChoiceInput { arg_id, key } => {
+            apply_choice_input(*key, state, frame_snapshot, arg_id);
+        }
+        Action::FormTextInput(key) => apply_form_text_input(*key, state),
+        Action::MoveFormSelection(delta) => {
+            navigation::move_form_selection(state, frame_snapshot, *delta);
+        }
+        Action::ActivateFormField => navigation::activate_form_field(state, frame_snapshot),
+        Action::ClickDropdownChoice { arg_id, row } => {
+            apply_dropdown_click(*row, state, frame_snapshot, arg_id);
+        }
+        Action::ClickForm(event) => apply_form_click(*event, state, frame_snapshot),
+        Action::ScrollDropdown(delta) => navigation::scroll_enum(state, *delta),
+        Action::ScrollForm(delta) => navigation::scroll_form(state, frame_snapshot, *delta),
+        _ => {}
+    }
+    Effect::None
+}
+
+fn apply_mouse_action(
+    action: &Action,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) -> Effect {
+    match action {
+        Action::UpdateHover { x, y } => apply_hover_update(state, frame_snapshot, *x, *y),
+        Action::UpdateMouseSelection(event) => {
+            apply_mouse_selection(state, frame_snapshot, *event);
+        }
+        Action::ClearMouseSelection => state.ui.mouse_select = None,
+        _ => {}
+    }
+    Effect::None
+}
+
+fn apply_search_input(key: AppKeyEvent, state: &mut AppState) {
     match key.code {
-        KeyCode::Esc | KeyCode::Enter => state.ui.focus = Focus::Sidebar,
-        KeyCode::Backspace => {
+        AppKeyCode::Esc | AppKeyCode::Enter => state.ui.focus = Focus::Sidebar,
+        AppKeyCode::Backspace => {
             state.ui.search_query.pop();
         }
-        KeyCode::Char(c) => state.ui.search_query.push(c),
+        AppKeyCode::Char(c) => state.ui.search_query.push(c),
         _ => {}
     }
 }
 
-fn handle_form_text_input(key: KeyEvent, state: &mut AppState) {
+fn apply_form_text_input(key: AppKeyEvent, state: &mut AppState) {
     if matches!(state.ui.active_tab, ActiveTab::Help) {
         return;
     }
@@ -204,8 +242,8 @@ fn handle_form_text_input(key: KeyEvent, state: &mut AppState) {
     );
 }
 
-fn handle_choice_input(
-    key: KeyEvent,
+fn apply_choice_input(
+    key: AppKeyEvent,
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
     arg_id: &str,
@@ -218,7 +256,7 @@ fn handle_choice_input(
     let len = arg.choices.len();
 
     match key.code {
-        KeyCode::Up => {
+        AppKeyCode::Up => {
             if len == 0 {
                 return;
             }
@@ -238,7 +276,7 @@ fn handle_choice_input(
             state.domain.mark_touched(&arg.id);
             navigation::ensure_enum_visible(state, frame_snapshot, next, len);
         }
-        KeyCode::Down => {
+        AppKeyCode::Down => {
             state.domain.cycle_choice(&arg.id, &arg.choices);
             let current = state
                 .domain
@@ -254,17 +292,17 @@ fn handle_choice_input(
             state.domain.mark_touched(&arg.id);
             navigation::ensure_enum_visible(state, frame_snapshot, current, len);
         }
-        KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
+        AppKeyCode::Esc | AppKeyCode::Enter | AppKeyCode::Char(' ') => {
             state.ui.dropdown_open = None;
         }
         _ => {}
     }
 }
 
-fn update_mouse_selection(
+fn apply_mouse_selection(
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
-    event: MouseEvent,
+    event: AppMouseEvent,
 ) {
     let Some(mut selection) = state.ui.mouse_select.take() else {
         return;
@@ -283,28 +321,28 @@ fn update_mouse_selection(
             .find(|arg| arg.id == selection.arg_id)
             .cloned();
         if let Some(arg) = arg {
-            let displayed = form_editor::displayed_text(state, &arg);
-            let selected_path = state.domain.selected_path().clone();
-            let textarea =
-                form_editor::ensure_editor(&mut state.ui, &selected_path, &arg, &displayed);
             if !selection.active {
-                textarea.move_cursor(CursorMove::Jump(selection.anchor_row, selection.anchor_col));
-                textarea.start_selection();
+                form_editor::start_selection(
+                    state,
+                    &arg,
+                    selection.anchor_row,
+                    selection.anchor_col,
+                );
                 selection.active = true;
             }
-            textarea.move_cursor(CursorMove::Jump(row, col));
+            form_editor::set_cursor_from_click(state, &arg, row, col);
         }
     }
     state.ui.mouse_select = Some(selection);
 }
 
-fn handle_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &FrameSnapshot) {
+fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &FrameSnapshot) {
     let Some((path, caret_hit, has_children)) = frame_snapshot
         .sidebar_item_at(x, y)
         .map(|item| {
             (
                 item.path.clone(),
-                frame_snapshot.sidebar_caret_contains(item, x, y),
+                FrameSnapshot::sidebar_caret_contains(item, x, y),
                 item.has_children,
             )
         })
@@ -312,16 +350,16 @@ fn handle_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &F
         return;
     };
 
-    if *state.domain.selected_path() != path {
-        if state.domain.select_command_path(path.as_slice()).is_ok() {
-            let command = state.domain.current_command().clone();
-            let args = form::visible_args(&command, state.ui.active_tab);
-            let visible = args
-                .iter()
-                .map(|item| (item.order_index, item.arg))
-                .collect::<Vec<_>>();
-            state.ui.focus_first_tab(&visible);
-        }
+    if *state.domain.selected_path() != path
+        && state.domain.select_command_path(path.as_slice()).is_ok()
+    {
+        let command = state.domain.current_command().clone();
+        let args = form::visible_args(&command, state.ui.active_tab);
+        let visible = args
+            .iter()
+            .map(|item| (item.order_index, item.arg))
+            .collect::<Vec<_>>();
+        state.ui.focus_first_tab(&visible);
     }
     if caret_hit && has_children {
         let items = command_tree::tree_items(
@@ -340,7 +378,7 @@ fn handle_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &F
     state.ui.focus = Focus::Sidebar;
 }
 
-fn handle_form_click(event: MouseEvent, state: &mut AppState, frame_snapshot: &FrameSnapshot) {
+fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: &FrameSnapshot) {
     if matches!(state.ui.active_tab, ActiveTab::Help) {
         return;
     }
@@ -366,44 +404,40 @@ fn handle_form_click(event: MouseEvent, state: &mut AppState, frame_snapshot: &F
                 .map_or(0, |arg| arg.choices.len());
             navigation::open_enum_dropdown(state, frame_snapshot, &hit.arg_id, total);
         }
-        if hit.accepts_text_input {
-            if let Some(arg) = command.args.iter().find(|arg| arg.id == hit.arg_id).cloned() {
-                let displayed = form_editor::displayed_text(state, &arg);
-                let selected_path = state.domain.selected_path().clone();
-                let textarea =
-                    form_editor::ensure_editor(&mut state.ui, &selected_path, &arg, &displayed);
-                textarea.cancel_selection();
-                state.ui.mouse_select = None;
-                if let Some((row, col)) = frame_snapshot.input_position_from_point(
-                    &hit.arg_id,
-                    event.column,
-                    event.row,
-                    false,
-                ) {
-                    state.ui.mouse_select = Some(MouseSelection {
-                        arg_id: hit.arg_id.clone(),
-                        anchor_row: row,
-                        anchor_col: col,
-                        active: false,
-                    });
-                }
-                if let Some((row, col)) = frame_snapshot.input_position_from_point(
-                    &hit.arg_id,
-                    event.column,
-                    event.row,
-                    false,
-                ) {
-                    form_editor::set_cursor_from_click(state, &arg, row, col);
-                } else if hit.in_label {
-                    form_editor::set_cursor_from_click(state, &arg, 0, 0);
-                }
+        if hit.accepts_text_input
+            && let Some(arg) = command.args.iter().find(|arg| arg.id == hit.arg_id).cloned()
+        {
+            form_editor::clear_selection(state, &arg);
+            state.ui.mouse_select = None;
+            if let Some((row, col)) = frame_snapshot.input_position_from_point(
+                &hit.arg_id,
+                event.column,
+                event.row,
+                false,
+            ) {
+                state.ui.mouse_select = Some(MouseSelection {
+                    arg_id: hit.arg_id.clone(),
+                    anchor_row: row,
+                    anchor_col: col,
+                    active: false,
+                });
+            }
+            if let Some((row, col)) = frame_snapshot.input_position_from_point(
+                &hit.arg_id,
+                event.column,
+                event.row,
+                false,
+            ) {
+                form_editor::set_cursor_from_click(state, &arg, row, col);
+            } else if hit.in_label {
+                form_editor::set_cursor_from_click(state, &arg, 0, 0);
             }
         }
         navigation::ensure_form_visible(state, frame_snapshot);
     }
 }
 
-fn handle_dropdown_click(
+fn apply_dropdown_click(
     row: u16,
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
@@ -413,16 +447,16 @@ fn handle_dropdown_click(
     let Some(arg) = command.args.iter().find(|arg| arg.id == arg_id) else {
         return;
     };
-    if let Some(index) = frame_snapshot.dropdown_choice_index(row, state.ui.dropdown_scroll) {
-        if let Some(choice) = arg.choices.get(index) {
-            state.domain.set_choice_value(&arg.id, choice.clone());
-            state.ui.dropdown_open = None;
-            state.domain.mark_touched(&arg.id);
-        }
+    if let Some(index) = frame_snapshot.dropdown_choice_index(row, state.ui.dropdown_scroll)
+        && let Some(choice) = arg.choices.get(index)
+    {
+        state.domain.set_choice_value(&arg.id, choice.clone());
+        state.ui.dropdown_open = None;
+        state.domain.mark_touched(&arg.id);
     }
 }
 
-fn handle_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
+fn apply_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
     match target {
         HoverTarget::Run => Effect::Run(argv::build_argv(state)),
         HoverTarget::Exit => Effect::Exit,
@@ -442,10 +476,116 @@ fn handle_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
     }
 }
 
-fn update_hover(state: &mut AppState, frame_snapshot: &FrameSnapshot, x: u16, y: u16) {
+fn apply_hover_update(state: &mut AppState, frame_snapshot: &FrameSnapshot, x: u16, y: u16) {
     state.ui.hover = frame_snapshot.footer_target_at(x, y);
     if state.ui.hover.is_none() && frame_snapshot.preview_contains(x, y) {
         state.ui.hover = Some(HoverTarget::Preview);
     }
     state.ui.hover_tab = frame_snapshot.tab_at(x, y);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::frame_snapshot::FrameSnapshot;
+    use crate::runtime::{AppKeyModifiers, AppMouseButton, AppMouseEventKind};
+    use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
+
+    use super::{Action, Effect, apply_action};
+    use crate::input::MouseSelection;
+    use crate::runtime::{AppKeyCode, AppKeyEvent, AppMouseEvent};
+
+    fn command(args: Vec<ArgSpec>) -> CommandSpec {
+        CommandSpec {
+            name: "tool".to_string(),
+            about: None,
+            help: String::new(),
+            args,
+            subcommands: Vec::new(),
+        }
+    }
+
+    fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
+        ArgSpec {
+            id: id.to_string(),
+            display_name: name.to_string(),
+            help: None,
+            required: false,
+            kind,
+            default_values: Vec::new(),
+            choices: Vec::new(),
+            position: None,
+            value_cardinality: ValueCardinality::One,
+            value_hint: None,
+        }
+    }
+
+    #[test]
+    fn search_reducer_appends_and_exits_search_mode() {
+        let mut state = crate::input::AppState::new(command(Vec::new()));
+        state.ui.focus = crate::input::Focus::Search;
+        let snapshot = FrameSnapshot::default();
+
+        let action = Action::SearchInput(AppKeyEvent::new(
+            AppKeyCode::Char('b'),
+            AppKeyModifiers::default(),
+        ));
+        let effect = apply_action(
+            &action,
+            &mut state,
+            &snapshot,
+        );
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.search_query, "b");
+
+        let action = Action::SearchInput(AppKeyEvent::new(
+            AppKeyCode::Esc,
+            AppKeyModifiers::default(),
+        ));
+        let effect = apply_action(
+            &action,
+            &mut state,
+            &snapshot,
+        );
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, crate::input::Focus::Sidebar));
+    }
+
+    #[test]
+    fn mouse_selection_reducer_starts_editor_selection_on_drag() {
+        let mut path = arg("path", "path", ArgKind::Positional);
+        path.position = Some(1);
+        let mut state = crate::input::AppState::new(command(vec![path]));
+        state.ui.mouse_select = Some(MouseSelection {
+            arg_id: "path".to_string(),
+            anchor_row: 0,
+            anchor_col: 0,
+            active: false,
+        });
+        let mut snapshot = FrameSnapshot::default();
+        snapshot
+            .layout
+            .form_inputs
+            .insert("path".to_string(), ratatui::layout::Rect::new(0, 0, 12, 3));
+
+        let action = Action::UpdateMouseSelection(AppMouseEvent {
+            kind: AppMouseEventKind::Drag(AppMouseButton::Left),
+            column: 2,
+            row: 1,
+            modifiers: AppKeyModifiers::default(),
+        });
+        let effect = apply_action(
+            &action,
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.mouse_select.as_ref().is_some_and(|selection| selection.active));
+        let editor = state
+            .ui
+            .editors
+            .editor(state.domain.selected_path(), "path")
+            .expect("editor");
+        assert_eq!(editor.selection_anchor(), Some(crate::editor_state::TextPosition::default()));
+    }
 }

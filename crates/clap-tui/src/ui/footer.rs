@@ -52,7 +52,7 @@ struct FooterWidget<'a> {
     view: &'a FooterView,
 }
 
-impl<'a> Widget for FooterWidget<'a> {
+impl Widget for FooterWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         Widget::render(Line::from(footer_spans(self.config, self.view)), area, buf);
     }
@@ -64,15 +64,16 @@ pub(crate) fn render_footer(
     config: &TuiConfig,
     area: Rect,
     _vm: &ScreenView<'_>,
-    frame_layout: &mut FrameLayout,
+    _frame_layout: &FrameLayout,
 ) {
     let view = build_footer_view(ui, area);
-    let button_layouts = layout_footer_buttons(area, &view);
-
-    frame_layout.footer_buttons.clear();
-    frame_layout.footer_buttons.extend(button_layouts);
-
     frame.render_widget(FooterWidget { config, view: &view }, area);
+}
+
+pub(crate) fn populate_layout(ui: &UiState, area: Rect, frame_layout: &mut FrameLayout) {
+    let view = build_footer_view(ui, area);
+    frame_layout.footer = Some(area);
+    frame_layout.footer_buttons = layout_footer_buttons(area, &view);
 }
 
 fn build_footer_view(ui: &UiState, area: Rect) -> FooterView {

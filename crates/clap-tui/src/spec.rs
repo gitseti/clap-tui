@@ -269,9 +269,8 @@ fn arg_to_model(arg: &Arg) -> Option<ArgModel> {
     let action = arg.get_action();
     let value_cardinality = match arg.get_num_args() {
         Some(num_args) if num_args.max_values() > 1 => ValueCardinality::Many,
-        Some(_) => ValueCardinality::One,
         None if matches!(action, ArgAction::SetTrue | ArgAction::SetFalse) => ValueCardinality::None,
-        None => ValueCardinality::One,
+        Some(_) | None => ValueCardinality::One,
     };
     let value_hint = match arg.get_value_hint() {
         clap::ValueHint::Unknown => None,

@@ -1,17 +1,16 @@
-use crossterm::event::{self, MouseButton, MouseEventKind};
-
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
+use crate::runtime::{AppMouseButton, AppMouseEvent, AppMouseEventKind};
 use crate::update::Action;
 
 pub(crate) fn handle_mouse_event(
-    event: event::MouseEvent,
+    event: AppMouseEvent,
     state: &AppState,
     frame_snapshot: &FrameSnapshot,
     _config: &TuiConfig,
 ) -> Option<Action> {
-    if let MouseEventKind::Moved = event.kind {
+    if let AppMouseEventKind::Moved = event.kind {
         return state.ui.mouse_select.as_ref().map_or(
             Some(Action::UpdateHover {
                 x: event.column,
@@ -20,15 +19,15 @@ pub(crate) fn handle_mouse_event(
             |_| Some(Action::UpdateMouseSelection(event)),
         );
     }
-    if let MouseEventKind::Drag(MouseButton::Left) = event.kind
+    if let AppMouseEventKind::Drag(AppMouseButton::Left) = event.kind
         && state.ui.mouse_select.is_some()
     {
         return Some(Action::UpdateMouseSelection(event));
     }
-    if let MouseEventKind::Up(MouseButton::Left) = event.kind {
+    if let AppMouseEventKind::Up(AppMouseButton::Left) = event.kind {
         return Some(Action::ClearMouseSelection);
     }
-    if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+    if let AppMouseEventKind::Down(AppMouseButton::Left) = event.kind {
         if state.ui.dropdown_open.is_some() && frame_snapshot.dropdown_visible_rows().is_some() {
             if frame_snapshot.dropdown_contains(event.column, event.row) {
                 return state
@@ -39,9 +38,8 @@ pub(crate) fn handle_mouse_event(
                         arg_id,
                         row: event.row,
                     });
-            } else {
-                return Some(Action::CloseDropdown);
             }
+            return Some(Action::CloseDropdown);
         }
         if let Some(target) = frame_snapshot.footer_target_at(event.column, event.row) {
             return Some(Action::ClickFooter(target));
@@ -67,15 +65,15 @@ pub(crate) fn handle_mouse_event(
     }
     if frame_snapshot.dropdown_contains(event.column, event.row) && state.ui.dropdown_open.is_some() {
         match event.kind {
-            MouseEventKind::ScrollDown => return Some(Action::ScrollDropdown(1)),
-            MouseEventKind::ScrollUp => return Some(Action::ScrollDropdown(-1)),
+            AppMouseEventKind::ScrollDown => return Some(Action::ScrollDropdown(1)),
+            AppMouseEventKind::ScrollUp => return Some(Action::ScrollDropdown(-1)),
             _ => {}
         }
     }
-    if let MouseEventKind::ScrollDown = event.kind {
+    if let AppMouseEventKind::ScrollDown = event.kind {
         return Some(Action::ScrollForm(2));
     }
-    if let MouseEventKind::ScrollUp = event.kind {
+    if let AppMouseEventKind::ScrollUp = event.kind {
         return Some(Action::ScrollForm(-2));
     }
     None
@@ -83,7 +81,6 @@ pub(crate) fn handle_mouse_event(
 
 #[cfg(test)]
 mod tests {
-    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
 
     use super::handle_mouse_event;
@@ -92,6 +89,7 @@ mod tests {
         FooterButtonLayout, FrameSnapshot, SidebarItemLayout, TabButtonLayout,
     };
     use crate::input::{ActiveTab, AppState, Focus, HoverTarget};
+    use crate::runtime::{AppKeyModifiers, AppMouseButton, AppMouseEvent, AppMouseEventKind};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::update::{Effect, apply_action};
 
@@ -120,21 +118,21 @@ mod tests {
         }
     }
 
-    fn click(column: u16, row: u16) -> MouseEvent {
-        MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
+    fn click(column: u16, row: u16) -> AppMouseEvent {
+        AppMouseEvent {
+            kind: AppMouseEventKind::Down(AppMouseButton::Left),
             column,
             row,
-            modifiers: KeyModifiers::empty(),
+            modifiers: AppKeyModifiers::default(),
         }
     }
 
-    fn scroll(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
-        MouseEvent {
+    fn scroll(kind: AppMouseEventKind, column: u16, row: u16) -> AppMouseEvent {
+        AppMouseEvent {
             kind,
             column,
             row,
-            modifiers: KeyModifiers::empty(),
+            modifiers: AppKeyModifiers::default(),
         }
     }
 
@@ -150,7 +148,7 @@ mod tests {
 
         let action = handle_mouse_event(click(1, 1), &state, &frame_snapshot, &TuiConfig::default())
             .expect("click action");
-        let effect = apply_action(action, &mut state, &frame_snapshot);
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
         assert_eq!(effect, Effect::None);
 
         assert_eq!(state.ui.selected_arg_index, 0);
@@ -166,7 +164,7 @@ mod tests {
 
         let action = handle_mouse_event(click(1, 0), &state, &frame_snapshot, &TuiConfig::default())
             .expect("toggle action");
-        let effect = apply_action(action, &mut state, &frame_snapshot);
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
         assert_eq!(effect, Effect::None);
 
         assert!(state.domain.is_touched("verbose"));
@@ -191,7 +189,7 @@ mod tests {
         let run_action =
             handle_mouse_event(click(1, 20), &state, &frame_snapshot, &TuiConfig::default())
                 .expect("run action");
-        let run_effect = apply_action(run_action, &mut state, &frame_snapshot);
+        let run_effect = apply_action(&run_action, &mut state, &frame_snapshot);
         assert_eq!(run_effect, Effect::Run(vec!["tool".to_string()]));
 
         let search_action = handle_mouse_event(
@@ -201,7 +199,7 @@ mod tests {
             &TuiConfig::default(),
         )
         .expect("search action");
-        let search_effect = apply_action(search_action, &mut state, &frame_snapshot);
+        let search_effect = apply_action(&search_action, &mut state, &frame_snapshot);
         assert_eq!(search_effect, Effect::None);
         assert!(matches!(state.ui.focus, Focus::Search));
     }
@@ -219,7 +217,7 @@ mod tests {
         let action =
             handle_mouse_event(click(1, 0), &state, &frame_snapshot, &TuiConfig::default())
                 .expect("tab action");
-        let effect = apply_action(action, &mut state, &frame_snapshot);
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
 
         assert_eq!(effect, Effect::None);
         assert_eq!(state.ui.active_tab, ActiveTab::Help);
@@ -238,7 +236,7 @@ mod tests {
         let action =
             handle_mouse_event(click(1, 7), &state, &frame_snapshot, &TuiConfig::default())
                 .expect("dropdown action");
-        let effect = apply_action(action, &mut state, &frame_snapshot);
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
@@ -263,13 +261,13 @@ mod tests {
         state.ui.form_scroll = 4;
 
         let action = handle_mouse_event(
-            scroll(MouseEventKind::ScrollDown, 1, 6),
+            scroll(AppMouseEventKind::ScrollDown, 1, 6),
             &state,
             &frame_snapshot,
             &TuiConfig::default(),
         )
         .expect("scroll action");
-        let effect = apply_action(action, &mut state, &frame_snapshot);
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
 
         assert_eq!(effect, Effect::None);
         assert_eq!(state.ui.dropdown_scroll, 1);
@@ -314,7 +312,7 @@ mod tests {
         let action =
             handle_mouse_event(click(2, 1), &state, &frame_snapshot, &TuiConfig::default())
                 .expect("sidebar action");
-        let effect = apply_action(action, &mut state, &frame_snapshot);
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
 
         assert_eq!(effect, Effect::None);
         assert_eq!(state.domain.selected_path().as_slice(), &["build".to_string()]);

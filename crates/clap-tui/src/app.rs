@@ -2,7 +2,6 @@ use std::error::Error as StdError;
 use std::time::Duration;
 
 use clap::{Command, CommandFactory, Parser};
-use crossterm::event::Event;
 use ratatui::Frame;
 
 use crate::config::TuiConfig;
@@ -10,7 +9,7 @@ use crate::controller;
 use crate::error::TuiError;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
-use crate::runtime::{CrosstermRuntime, Runtime};
+use crate::runtime::{AppEvent, CrosstermRuntime, Runtime};
 use crate::spec::CommandSpec;
 use crate::ui;
 use crate::update::{self, Effect};
@@ -153,10 +152,10 @@ fn event_loop<R: Runtime>(
         }
 
         match session.read_event()? {
-            Event::Key(key) => {
+            AppEvent::Key(key) => {
                 if let Some(action) = controller::handle_key_event(key, &state, &frame_snapshot, config)
                 {
-                    let effect = update::apply_action(action, &mut state, &frame_snapshot);
+                    let effect = update::apply_action(&action, &mut state, &frame_snapshot);
                     match handle_effect(effect, &mut state, session) {
                         ActionOutcome::Continue => {}
                         ActionOutcome::Exit => return Err(TuiError::Cancelled),
@@ -165,14 +164,14 @@ fn event_loop<R: Runtime>(
                     needs_redraw = true;
                 }
             }
-            Event::Mouse(mouse) => {
+            AppEvent::Mouse(mouse) => {
                 if let Some(action) = controller::handle_mouse_event(
                     mouse,
                     &state,
                     &frame_snapshot,
                     config,
                 ) {
-                    let effect = update::apply_action(action, &mut state, &frame_snapshot);
+                    let effect = update::apply_action(&action, &mut state, &frame_snapshot);
                     match handle_effect(effect, &mut state, session) {
                         ActionOutcome::Continue => {}
                         ActionOutcome::Exit => return Err(TuiError::Cancelled),
@@ -266,7 +265,7 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
         self.runtime.poll_event(timeout)
     }
 
-    fn read_event(&mut self) -> Result<Event, TuiError> {
+    fn read_event(&mut self) -> Result<AppEvent, TuiError> {
         self.runtime.read_event()
     }
 
@@ -289,26 +288,25 @@ mod tests {
     use std::time::Duration;
 
     use clap::{Arg, ArgAction, Command};
-    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     use super::{ActionOutcome, TerminalSession, event_loop, handle_effect};
     use crate::input::AppState;
-    use crate::runtime::Runtime;
+    use crate::runtime::{AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, Runtime};
     use crate::spec::CommandSpec;
     use crate::update::Effect;
     use crate::{TuiConfig, TuiError};
 
     #[derive(Debug)]
     struct TestRuntime {
-        events: VecDeque<Event>,
+        events: VecDeque<AppEvent>,
         clipboard_result: Result<(), String>,
         copied_text: Option<String>,
     }
 
     impl TestRuntime {
-        fn with_events(events: impl IntoIterator<Item = Event>) -> Self {
+        fn with_events(events: impl IntoIterator<Item = AppEvent>) -> Self {
             Self {
                 events: events.into_iter().collect(),
                 clipboard_result: Ok(()),
@@ -330,7 +328,7 @@ mod tests {
             Ok(!self.events.is_empty())
         }
 
-        fn read_event(&mut self) -> Result<Event, TuiError> {
+        fn read_event(&mut self) -> Result<AppEvent, TuiError> {
             Ok(self.events.pop_front().expect("queued event"))
         }
 
@@ -351,9 +349,13 @@ mod tests {
 
     #[test]
     fn event_loop_returns_cancelled_on_ctrl_c() {
-        let mut runtime = TestRuntime::with_events([Event::Key(KeyEvent::new(
-            KeyCode::Char('c'),
-            KeyModifiers::CONTROL,
+        let mut runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('c'),
+            AppKeyModifiers {
+                control: true,
+                alt: false,
+                shift: false,
+            },
         ))]);
         let terminal = runtime.init_terminal().expect("terminal");
         let mut session = TerminalSession::new(&mut runtime, terminal);
@@ -365,9 +367,13 @@ mod tests {
 
     #[test]
     fn event_loop_returns_built_argv_on_ctrl_enter() {
-        let mut runtime = TestRuntime::with_events([Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::CONTROL,
+        let mut runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Enter,
+            AppKeyModifiers {
+                control: true,
+                alt: false,
+                shift: false,
+            },
         ))]);
         let terminal = runtime.init_terminal().expect("terminal");
         let mut session = TerminalSession::new(&mut runtime, terminal);

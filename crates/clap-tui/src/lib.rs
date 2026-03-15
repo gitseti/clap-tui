@@ -23,4 +23,7 @@ mod view;
 pub use app::TuiApp;
 pub use config::{Keymap, LayoutConfig, Theme, ThemePreset, TuiConfig};
 pub use error::TuiError;
-pub use runtime::{CrosstermRuntime, Runtime};
+pub use runtime::{
+    AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, AppMouseButton, AppMouseEvent,
+    AppMouseEventKind, CrosstermRuntime, Runtime,
+};

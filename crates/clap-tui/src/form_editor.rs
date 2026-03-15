@@ -1,7 +1,7 @@
-use crossterm::event::{KeyCode, KeyEvent};
-use tui_textarea::{CursorMove, TextArea};
-
+use crate::editor_state::TextEditor;
 use crate::input::{AppState, ArgValue, UiState};
+use crate::runtime::AppKeyCode;
+use crate::runtime::AppKeyEvent;
 use crate::spec::{ArgModel, CommandPath};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,19 +22,32 @@ pub(crate) fn displayed_text(state: &AppState, arg: &ArgModel) -> String {
     String::new()
 }
 
+pub(crate) fn editor_for_render(
+    ui: &UiState,
+    command_key: &CommandPath,
+    arg: &ArgModel,
+    displayed: &str,
+) -> TextEditor {
+    ui.editors
+        .editor(command_key, &arg.id)
+        .filter(|editor| editor.text() == displayed)
+        .cloned()
+        .unwrap_or_else(|| TextEditor::from_displayed(displayed))
+}
+
 pub(crate) fn ensure_editor<'a>(
     ui: &'a mut UiState,
     command_key: &CommandPath,
     arg: &ArgModel,
     displayed: &str,
-) -> &'a mut TextArea<'static> {
+) -> &'a mut TextEditor {
     ui.editors.ensure_editor(command_key, &arg.id, displayed)
 }
 
 pub(crate) fn apply_key_to_text_field(
     state: &mut AppState,
     arg: &ArgModel,
-    key: KeyEvent,
+    key: AppKeyEvent,
 ) -> EditResult {
     let displayed = displayed_text(state, arg);
     let command_key = state.domain.selected_path().clone();
@@ -43,14 +56,16 @@ pub(crate) fn apply_key_to_text_field(
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     if has_default && !is_touched {
         match key.code {
-            KeyCode::Char(_) | KeyCode::Backspace => *textarea = TextArea::new(vec![String::new()]),
+            AppKeyCode::Char(_) | AppKeyCode::Backspace => {
+                *textarea = TextEditor::from_displayed("");
+            }
             _ => {}
         }
     }
-    if !textarea.input(key) {
+    if !textarea.apply_key(key) {
         return EditResult::Ignored;
     }
-    let text = textarea.lines().join("\n");
+    let text = textarea.text();
     if text.is_empty() && has_default {
         state.domain.current_form_mut().values.remove(&arg.id);
         state.domain.clear_touched(&arg.id);
@@ -61,9 +76,23 @@ pub(crate) fn apply_key_to_text_field(
     EditResult::Handled
 }
 
+pub(crate) fn clear_selection(state: &mut AppState, arg: &ArgModel) {
+    let displayed = displayed_text(state, arg);
+    let command_key = state.domain.selected_path().clone();
+    let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    textarea.cancel_selection();
+}
+
+pub(crate) fn start_selection(state: &mut AppState, arg: &ArgModel, row: u16, col: u16) {
+    let displayed = displayed_text(state, arg);
+    let command_key = state.domain.selected_path().clone();
+    let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    textarea.start_selection(row, col);
+}
+
 pub(crate) fn set_cursor_from_click(state: &mut AppState, arg: &ArgModel, row: u16, col: u16) {
     let displayed = displayed_text(state, arg);
     let command_key = state.domain.selected_path().clone();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
-    textarea.move_cursor(CursorMove::Jump(row, col));
+    textarea.move_cursor_to(row, col);
 }

@@ -8,6 +8,7 @@ pub(crate) struct OrderedArg<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct FieldMetrics {
     pub(crate) label_height: u16,
     pub(crate) description_height: u16,
@@ -17,6 +18,7 @@ pub(crate) struct FieldMetrics {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct FormHit {
     pub(crate) order_index: usize,
     pub(crate) arg_id: String,
@@ -69,11 +71,7 @@ pub(crate) fn visible_args(command: &CommandSpec, active_tab: ActiveTab) -> Vec<
 
 pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
     let label_height = u16::from(!arg.is_flag());
-    let description_height = if arg.help.is_some() || arg.value_hint.is_some() {
-        1
-    } else {
-        0
-    };
+    let description_height = u16::from(arg.help.is_some() || arg.value_hint.is_some());
     let input_height = if arg.is_flag() || arg.uses_choice_input() {
         1
     } else if arg.accepts_multiple_values() {

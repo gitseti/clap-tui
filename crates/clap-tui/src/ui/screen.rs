@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::layout::Rect;
 use ratatui::widgets::{Block, BorderType, Borders};
 use std::collections::HashSet;
 
@@ -11,7 +11,7 @@ use crate::view::argv::build_argv;
 use crate::view::command_tree::{self, TreeItem};
 use crate::view::form;
 
-use super::{dropdown, footer, form as form_ui, header, preview, sidebar, styles, toast};
+use super::{dropdown, footer, form as form_ui, header, layout, preview, sidebar, styles, toast};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScreenView<'a> {
@@ -46,12 +46,6 @@ impl<'a> ScreenView<'a> {
 
 pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) -> FrameSnapshot {
     let size = frame.area();
-    let mut sidebar_width =
-        u16::try_from(u32::from(size.width) * u32::from(config.layout.sidebar_ratio) / 100)
-            .unwrap_or(size.width);
-    sidebar_width = sidebar_width.clamp(22, 30);
-
-    let mut frame_snapshot = FrameSnapshot::default();
 
     let background = Block::default()
         .borders(Borders::ALL)
@@ -59,103 +53,70 @@ pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiCo
         .border_style(styles::panel_border(config, false))
         .style(styles::panel(config));
     frame.render_widget(background, size);
-    let inner_size = size.inner(Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
-
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(3),
-            Constraint::Length(3),
-            Constraint::Length(1),
-        ])
-        .split(inner_size);
-
-    let body_area = vertical[0];
-    let preview_area = vertical[1];
-    let footer_area = vertical[2];
-
-    let root = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(
-                sidebar_width
-                    .max(20)
-                    .min(body_area.width.saturating_sub(20)),
-            ),
-            Constraint::Min(20),
-        ])
-        .split(body_area);
-
-    let sidebar_area = root[0];
-    let main_area = root[1];
-
-    frame_snapshot.layout.sidebar = Some(sidebar_area);
-    frame_snapshot.layout.preview = Some(preview_area);
-    frame_snapshot.layout.footer = Some(footer_area);
-
     let preview_argv = build_argv(state);
-    let (domain, ui) = (&state.domain, &mut state.ui);
-    let selected_path = domain.selected_path();
+    let selected_path = state.domain.selected_path().clone();
     let vm = ScreenView::build(
-        domain.current_command(),
-        &domain.root,
-        &domain.expanded,
-        &ui.search_query,
-        ui.active_tab,
-        domain.current_form(),
+        state.domain.current_command(),
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
+        state.ui.active_tab,
+        state.domain.current_form(),
         preview_argv,
     );
+    let screen_layout = layout::build_screen_layout(&state.ui, config, size, &vm);
+    let frame_snapshot = screen_layout.snapshot.clone();
     render_main(
         frame,
-        ui,
-        selected_path,
+        &state.ui,
+        &selected_path,
         config,
-        main_area,
+        screen_layout.areas.main,
+        screen_layout.areas.header,
         &vm,
-        &mut frame_snapshot,
+        &frame_snapshot,
     );
     sidebar::render_sidebar(
         frame,
-        ui,
-        selected_path,
+        &state.ui,
+        &selected_path,
         config,
-        sidebar_area,
+        screen_layout.areas.sidebar,
         &vm,
-        &mut frame_snapshot.layout,
+        &frame_snapshot.layout,
     );
     dropdown::render_dropdown(
         frame,
-        ui,
+        &state.ui,
         &frame_snapshot,
-        domain,
+        &state.domain,
         config,
         Rect::default(),
         &vm,
     );
-    preview::render_preview(frame, ui, config, preview_area, &vm);
+    preview::render_preview(frame, &state.ui, config, screen_layout.areas.preview, &vm);
     footer::render_footer(
         frame,
-        ui,
+        &state.ui,
         config,
-        footer_area,
+        screen_layout.areas.footer,
         &vm,
-        &mut frame_snapshot.layout,
+        &frame_snapshot.layout,
     );
     toast::render_toast(frame, state, config, size);
     frame_snapshot
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_main(
     frame: &mut Frame<'_>,
-    ui: &mut UiState,
+    ui: &UiState,
     selected_path: &CommandPath,
     config: &TuiConfig,
     area: Rect,
+    header_area: Rect,
     vm: &ScreenView<'_>,
-    frame_snapshot: &mut FrameSnapshot,
+    frame_snapshot: &FrameSnapshot,
 ) {
     let workspace_focused = matches!(ui.focus, Focus::Form);
     let workspace = Block::default()
@@ -164,28 +125,10 @@ fn render_main(
         .border_style(styles::panel_border(config, workspace_focused))
         .style(styles::panel(config));
     frame.render_widget(workspace, area);
-
-    let inner = area.inner(Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
-    if inner.height == 0 || inner.width == 0 {
+    if header_area.height == 0 || header_area.width == 0 {
         return;
     }
 
-    let header_height = inner.height.min(2);
-    let body_area = Rect::new(
-        inner.x,
-        inner.y.saturating_add(header_height),
-        inner.width,
-        inner.height.saturating_sub(header_height),
-    );
-
-    let main = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
-        .split(Rect::new(inner.x, inner.y, inner.width, inner.height));
-
-    header::render_header(frame, selected_path, config, main[0], vm);
-    form_ui::render_form(frame, ui, selected_path, config, body_area, vm, frame_snapshot);
+    header::render_header(frame, selected_path, config, header_area, vm);
+    form_ui::render_form(frame, ui, selected_path, config, vm, frame_snapshot);
 }

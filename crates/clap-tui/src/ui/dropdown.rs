@@ -52,7 +52,7 @@ struct DropdownWidget<'a> {
     items: &'a [DropdownItem],
 }
 
-impl<'a> StatefulWidget for DropdownWidget<'a> {
+impl StatefulWidget for DropdownWidget<'_> {
     type State = DropdownWidgetState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {

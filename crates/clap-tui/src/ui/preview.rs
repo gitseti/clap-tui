@@ -17,7 +17,7 @@ struct PreviewWidget<'a> {
     hovered: bool,
 }
 
-impl<'a> Widget for PreviewWidget<'a> {
+impl Widget for PreviewWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let border_style = if self.hovered {
             Style::default()

@@ -1,21 +1,20 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, Focus};
+use crate::runtime::{AppKeyCode, AppKeyEvent};
 use crate::update::Action;
 use crate::view::form;
 
 pub(crate) fn handle_key_event(
-    key: KeyEvent,
+    key: AppKeyEvent,
     state: &AppState,
     _frame_snapshot: &FrameSnapshot,
     config: &TuiConfig,
 ) -> Option<Action> {
-    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+    if key.code == AppKeyCode::Char('c') && key.modifiers.control {
         return Some(Action::Exit);
     }
-    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL) {
+    if key.code == AppKeyCode::Enter && key.modifiers.control {
         return Some(Action::Run);
     }
     if matches!(state.ui.focus, Focus::Search) {
@@ -24,7 +23,11 @@ pub(crate) fn handle_key_event(
     if let Some(active_choice) = state.ui.dropdown_open.as_ref() {
         if matches!(
             key.code,
-            KeyCode::Up | KeyCode::Down | KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ')
+            AppKeyCode::Up
+                | AppKeyCode::Down
+                | AppKeyCode::Esc
+                | AppKeyCode::Enter
+                | AppKeyCode::Char(' ')
         ) {
             return Some(Action::ChoiceInput {
                 arg_id: active_choice.clone(),
@@ -37,42 +40,42 @@ pub(crate) fn handle_key_event(
     }
 
     match key.code {
-        KeyCode::Tab => Some(Action::ToggleFocus),
-        KeyCode::Char(c) if c == config.keymap.help => Some(Action::ToggleHelp),
-        KeyCode::F(1) => Some(Action::ToggleHelp),
-        KeyCode::BackTab => {
+        AppKeyCode::Tab => Some(Action::ToggleFocus),
+        AppKeyCode::Char(c) if c == config.keymap.help => Some(Action::ToggleHelp),
+        AppKeyCode::F(1) => Some(Action::ToggleHelp),
+        AppKeyCode::BackTab => {
             if matches!(state.ui.focus, Focus::Form) {
                 Some(Action::CycleTabs)
             } else {
                 None
             }
         }
-        KeyCode::Char(c) if c == config.keymap.search => Some(Action::FocusSearch),
-        KeyCode::Up => match state.ui.focus {
+        AppKeyCode::Char(c) if c == config.keymap.search => Some(Action::FocusSearch),
+        AppKeyCode::Up => match state.ui.focus {
             Focus::Sidebar => Some(Action::MoveSidebarSelection(-1)),
             Focus::Form => Some(Action::MoveFormSelection(-1)),
             Focus::Search => None,
         },
-        KeyCode::Down => match state.ui.focus {
+        AppKeyCode::Down => match state.ui.focus {
             Focus::Sidebar => Some(Action::MoveSidebarSelection(1)),
             Focus::Form => Some(Action::MoveFormSelection(1)),
             Focus::Search => None,
         },
-        KeyCode::Left => {
+        AppKeyCode::Left => {
             if matches!(state.ui.focus, Focus::Sidebar) {
                 Some(Action::CollapseSelected)
             } else {
                 None
             }
         }
-        KeyCode::Right => {
+        AppKeyCode::Right => {
             if matches!(state.ui.focus, Focus::Sidebar) {
                 Some(Action::ExpandSelected)
             } else {
                 None
             }
         }
-        KeyCode::Enter => {
+        AppKeyCode::Enter => {
             if matches!(state.ui.focus, Focus::Sidebar) {
                 Some(Action::SelectSidebar)
             } else if matches!(state.ui.focus, Focus::Form) {
@@ -81,7 +84,7 @@ pub(crate) fn handle_key_event(
                 None
             }
         }
-        KeyCode::Char(' ') => {
+        AppKeyCode::Char(' ') => {
             if matches!(state.ui.focus, Focus::Form) {
                 Some(Action::ActivateFormField)
             } else {
@@ -92,7 +95,7 @@ pub(crate) fn handle_key_event(
     }
 }
 
-fn is_form_text_input(key: KeyEvent, state: &AppState, config: &TuiConfig) -> bool {
+fn is_form_text_input(key: AppKeyEvent, state: &AppState, config: &TuiConfig) -> bool {
     let command = state.domain.current_command().clone();
     let args = form::visible_args(&command, state.ui.active_tab);
     let Some(item) = args
@@ -106,8 +109,8 @@ fn is_form_text_input(key: KeyEvent, state: &AppState, config: &TuiConfig) -> bo
     }
 
     match key.code {
-        KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Enter => false,
-        KeyCode::Char(c) if c == config.keymap.search => return false,
+        AppKeyCode::Tab | AppKeyCode::Up | AppKeyCode::Down | AppKeyCode::Enter => false,
+        AppKeyCode::Char(c) if c == config.keymap.search => false,
         _ => true,
     }
 }

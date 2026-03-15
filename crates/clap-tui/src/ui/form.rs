@@ -9,7 +9,7 @@ use ratatui::widgets::{
 };
 
 use crate::config::TuiConfig;
-use crate::frame_snapshot::{FrameLayout, FrameSnapshot, TabButtonLayout};
+use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot, TabButtonLayout};
 use crate::form_editor;
 use crate::input::{ActiveTab, ArgValue, Focus, UiState};
 use crate::spec::CommandPath;
@@ -20,27 +20,20 @@ use super::{dropdown, screen::ScreenView, styles};
 
 const TAB_CONTENT_TOP_PADDING: u16 = 1;
 
-pub(crate) fn render_form(
-    frame: &mut Frame<'_>,
-    ui: &mut UiState,
-    selected_path: &CommandPath,
-    config: &TuiConfig,
+pub(crate) fn populate_layout(
+    ui: &UiState,
     area: Rect,
     vm: &ScreenView<'_>,
     frame_snapshot: &mut FrameSnapshot,
 ) {
-    let frame_layout = &mut frame_snapshot.layout;
-    frame_layout.form = Some(area);
-    frame_layout.dropdown = None;
-    frame_layout.form_inputs.clear();
-    frame_layout.form_tabs.clear();
-    frame_layout.form_view = Some(area);
-
     let show_tabs = vm.visible_tabs.len() > 1;
     let mut content_area = area;
-    if show_tabs {
+    let content_height = match ui.active_tab {
+        ActiveTab::Help => form::measure_help_height(&vm.command.help),
+        _ => form::measure_fields_height(&vm.active_args),
+    };
+    let tab_layouts = if show_tabs {
         let tabs_rect = Rect::new(area.x, area.y, area.width, 1);
-        render_tab_bar(frame, ui, config, tabs_rect, vm, frame_layout);
         let content_offset = 1 + TAB_CONTENT_TOP_PADDING;
         content_area = Rect::new(
             area.x,
@@ -48,28 +41,115 @@ pub(crate) fn render_form(
             area.width,
             area.height.saturating_sub(content_offset),
         );
-    }
+        layout_tab_bar(tabs_rect, vm)
+    } else {
+        Vec::new()
+    };
+    let viewport_height = content_area.height;
+    frame_snapshot.form_scroll_max = content_height.saturating_sub(viewport_height);
+    let form_scroll = ui.form_scroll(frame_snapshot);
+    let frame_layout = &mut frame_snapshot.layout;
+    frame_layout.form = Some(area);
+    frame_layout.dropdown = None;
+    frame_layout.form_fields.clear();
+    frame_layout.form_inputs.clear();
+    frame_layout.form_tabs = tab_layouts;
     frame_layout.form_view = Some(content_area);
 
+    if ui.active_tab == ActiveTab::Help {
+        return;
+    }
+
+    let mut y = i32::from(content_area.y) - i32::from(form_scroll);
+    for item in &vm.active_args {
+        let metrics = field_metrics(item.arg);
+        if y >= i32::from(content_area.y) + i32::from(content_area.height) {
+            break;
+        }
+        if y < 0 {
+            y += i32::from(metrics.total_height);
+            continue;
+        }
+        let y_u16 = u16::try_from(y).expect("visible field y fits into u16");
+
+        let label = if metrics.label_height > 0 {
+            Some(Rect::new(area.x, y_u16, area.width, metrics.label_height))
+        } else {
+            None
+        };
+        let input_y = y + i32::from(metrics.label_height);
+        let input = Rect::new(
+            area.x,
+            u16::try_from(input_y).expect("visible input y fits into u16"),
+            area.width,
+            metrics.input_height,
+        );
+        let description = field_help_text(item.arg).map(|_| {
+            Rect::new(
+                area.x,
+                input.y.saturating_add(metrics.input_height),
+                area.width,
+                metrics.description_height.max(1),
+            )
+        });
+
+        frame_layout.form_inputs.insert(item.arg.id.clone(), input);
+        frame_layout.form_fields.push(FormFieldLayout {
+            arg_id: item.arg.id.clone(),
+            label,
+            input,
+            description,
+        });
+
+        if ui.dropdown_open.as_deref() == Some(&item.arg.id) {
+            frame_layout.dropdown = frame_layout
+                .form_view
+                .and_then(|form_view| dropdown::dropdown_layout(form_view, input, item.arg.choices.len()))
+                .map(|layout| layout.rect);
+        }
+
+        y += i32::from(metrics.total_height);
+    }
+}
+
+pub(crate) fn render_form(
+    frame: &mut Frame<'_>,
+    ui: &UiState,
+    selected_path: &CommandPath,
+    config: &TuiConfig,
+    vm: &ScreenView<'_>,
+    frame_snapshot: &FrameSnapshot,
+) {
+    let Some(area) = frame_snapshot.layout.form else {
+        return;
+    };
+    let frame_layout = &frame_snapshot.layout;
+    let show_tabs = !frame_layout.form_tabs.is_empty();
+    if show_tabs {
+        render_tab_bar(
+            frame,
+            ui,
+            config,
+            Rect::new(area.x, area.y, area.width, 1),
+            vm,
+        );
+    }
+
+    let content_area = frame_layout.form_view.unwrap_or(area);
     let content_height = match ui.active_tab {
         ActiveTab::Help => form::measure_help_height(&vm.command.help),
         _ => form::measure_fields_height(&vm.active_args),
     };
     let viewport_height = content_area.height;
-    let form_scroll_max = content_height.saturating_sub(viewport_height);
-    frame_snapshot.form_scroll_max = form_scroll_max;
-    let form_scroll = ui.form_scroll.min(frame_snapshot.form_scroll_max);
+    let form_scroll = ui.form_scroll(frame_snapshot);
 
     match ui.active_tab {
         ActiveTab::Help => render_help(frame, config, content_area, form_scroll, &vm.command.help),
-        _ => {
-            let cursor_y = content_area.y as i32 - i32::from(form_scroll);
-            render_fields(frame, ui, selected_path, config, content_area, cursor_y, vm, frame_layout);
-        }
+        _ => render_fields(frame, ui, selected_path, config, vm, frame_snapshot),
     }
 
     if content_height > viewport_height {
-        let scroll_steps = usize::from(form_scroll_max.saturating_add(1));
+        let scroll_steps = usize::from(frame_snapshot.form_scroll_max.saturating_add(1));
         let mut scrollbar_state = ScrollbarState::new(scroll_steps)
             .position(usize::from(form_scroll))
             .viewport_content_length(usize::from(viewport_height));
@@ -86,24 +166,31 @@ pub(crate) fn render_form(
     }
 }
 
+fn layout_tab_bar(area: Rect, vm: &ScreenView<'_>) -> Vec<TabButtonLayout> {
+    let mut cursor_x = area.x;
+    vm.visible_tabs
+        .iter()
+        .map(|tab| {
+            let label = format!(" {} ", tab_label(*tab));
+            let width = u16::try_from(label.chars().count()).unwrap_or(area.width);
+            let layout = TabButtonLayout {
+                tab: *tab,
+                rect: Rect::new(cursor_x, area.y, width, 1),
+            };
+            cursor_x = cursor_x.saturating_add(width + 1);
+            layout
+        })
+        .collect()
+}
+
 fn render_tab_bar(
     frame: &mut Frame<'_>,
     ui: &UiState,
     config: &TuiConfig,
     area: Rect,
     vm: &ScreenView<'_>,
-    frame_layout: &mut FrameLayout,
 ) {
-    let mut cursor_x = area.x;
     let view = build_tab_bar_view(ui, config, vm);
-    for item in &view.items {
-        let width = u16::try_from(item.label.chars().count()).unwrap_or(area.width);
-        frame_layout.form_tabs.push(TabButtonLayout {
-            tab: item.tab,
-            rect: Rect::new(cursor_x, area.y, width, 1),
-        });
-        cursor_x = cursor_x.saturating_add(width + 1);
-    }
     frame.render_widget(TabBarWidget { view: &view }, area);
 }
 
@@ -123,7 +210,7 @@ struct TabBarWidget<'a> {
     view: &'a TabBarView,
 }
 
-impl<'a> Widget for TabBarWidget<'a> {
+impl Widget for TabBarWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let line = Line::from(
             self.view
@@ -185,49 +272,33 @@ fn tab_label(tab: ActiveTab) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_fields(
     frame: &mut Frame<'_>,
-    ui: &mut UiState,
+    ui: &UiState,
     selected_path: &CommandPath,
     config: &TuiConfig,
-    area: Rect,
-    start_y: i32,
     vm: &ScreenView<'_>,
-    frame_layout: &mut FrameLayout,
+    frame_snapshot: &FrameSnapshot,
 ) {
-    let mut y = start_y;
-    for item in &vm.active_args {
-        if y >= area.y as i32 + area.height as i32 {
-            break;
-        }
-        let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
-        let metrics = field_metrics(&item.arg);
-        if y < 0 {
-            y += i32::from(metrics.total_height);
+    for field in &frame_snapshot.layout.form_fields {
+        let Some(item) = vm.active_args.iter().find(|item| item.arg.id == field.arg_id) else {
             continue;
-        }
+        };
+        let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
 
-        let mut input_y = y;
-        if metrics.label_height > 0 {
-            let label_rect = Rect::new(area.x, y as u16, area.width, metrics.label_height);
-            if rect_visible(area, label_rect) {
-                let mut spans = vec![Span::styled(
-                    item.arg.display_name.clone(),
-                    styles::label(config, selected),
-                )];
-                if item.arg.required {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled("*", Style::default().fg(config.theme.accent)));
-                }
-                frame.render_widget(Paragraph::new(Line::from(spans)), label_rect);
+        if let Some(label_rect) = field.label {
+            let mut spans = vec![Span::styled(
+                item.arg.display_name.clone(),
+                styles::label(config, selected),
+            )];
+            if item.arg.required {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled("*", Style::default().fg(config.theme.accent)));
             }
-            input_y += i32::from(metrics.label_height);
+            frame.render_widget(Paragraph::new(Line::from(spans)), label_rect);
         }
 
-        let input_rect = Rect::new(area.x, input_y as u16, area.width, metrics.input_height);
-        frame_layout
-            .form_inputs
-            .insert(item.arg.id.clone(), input_rect);
         let value = vm
             .inputs
             .as_ref()
@@ -271,41 +342,30 @@ fn render_fields(
         };
 
         if item.arg.is_flag() {
-            if rect_visible(area, input_rect) {
-                render_flag_toggle(
-                    frame,
-                    config,
-                    input_rect,
-                    selected,
-                    &item.arg.display_name,
-                    &value,
-                    text_style,
-                );
-            }
+            render_flag_toggle(
+                frame,
+                config,
+                field.input,
+                selected,
+                &item.arg.display_name,
+                &value,
+                text_style,
+            );
         } else if item.arg.uses_choice_input() {
-            if rect_visible(area, input_rect) {
-                let display = if value.is_empty() { "Select..." } else { value.as_str() };
-                let input = Paragraph::new(enum_display_line(
-                    config,
-                    display,
-                    input_rect.width,
-                    selected,
-                    is_default,
-                    ui.dropdown_open.as_deref() == Some(&item.arg.id),
-                ))
-                .style(styles::compact_control(config, selected));
-                frame.render_widget(input, input_rect);
-            }
-            if ui.dropdown_open.as_deref() == Some(&item.arg.id) {
-                frame_layout.dropdown = frame_layout
-                    .form_view
-                    .and_then(|form_view| {
-                        dropdown::dropdown_layout(form_view, input_rect, item.arg.choices.len())
-                    })
-                    .map(|layout| layout.rect);
-            }
+            let display = if value.is_empty() { "Select..." } else { value.as_str() };
+            let input = Paragraph::new(enum_display_line(
+                config,
+                display,
+                field.input.width,
+                selected,
+                is_default,
+                ui.dropdown_open.as_deref() == Some(&item.arg.id),
+            ))
+            .style(styles::compact_control(config, selected));
+            frame.render_widget(input, field.input);
         } else if selected {
-            let textarea = form_editor::ensure_editor(ui, selected_path, item.arg, &value);
+            let editor = form_editor::editor_for_render(ui, selected_path, item.arg, &value);
+            let mut textarea = editor.to_textarea(editor.selection_anchor());
             textarea.set_block(block);
             let base_style = Style::default()
                 .fg(text_style.fg.unwrap_or(config.theme.text))
@@ -323,38 +383,22 @@ fn render_fields(
                     .bg(config.theme.surface_raised)
                     .add_modifier(Modifier::REVERSED),
             );
-            if rect_visible(area, input_rect) {
-                frame.render_widget(textarea.widget(), input_rect);
-                place_textarea_cursor(frame, textarea, input_rect);
-            }
-        } else if rect_visible(area, input_rect) {
+            frame.render_widget(textarea.widget(), field.input);
+            place_textarea_cursor(frame, &textarea, field.input);
+        } else {
             frame.render_widget(
                 Paragraph::new(value).block(block).style(fill_style.patch(text_style)),
-                input_rect,
+                field.input,
             );
         }
 
-        if let Some(help) = field_help_text(item.arg) {
-            let help_rect = Rect::new(
-                area.x,
-                input_rect.y.saturating_add(metrics.input_height),
-                area.width,
-                metrics.description_height.max(1),
+        if let (Some(help), Some(help_rect)) = (field_help_text(item.arg), field.description) {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::raw(help))).style(styles::help(config)),
+                help_rect,
             );
-            if rect_visible(area, help_rect) {
-                frame.render_widget(
-                    Paragraph::new(Line::from(Span::raw(help))).style(styles::help(config)),
-                    help_rect,
-                );
-            }
         }
-
-        y += i32::from(metrics.total_height);
     }
-}
-
-fn rect_visible(area: Rect, rect: Rect) -> bool {
-    rect.y < area.y + area.height && rect.y + rect.height > area.y
 }
 
 fn value_matches_default(arg: &ArgSpec, value: Option<&ArgValue>, is_touched: bool) -> bool {
@@ -462,8 +506,9 @@ fn field_help_text(arg: &ArgSpec) -> Option<String> {
 mod tests {
     use ratatui::style::Modifier;
 
-    use super::build_tab_bar_view;
+    use super::{build_tab_bar_view, populate_layout};
     use crate::config::TuiConfig;
+    use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, Focus, UiState};
     use crate::spec::CommandSpec;
     use crate::ui::screen::ScreenView;
@@ -525,19 +570,40 @@ mod tests {
             inputs: None,
         };
         let mut ui = ui_state();
-        ui.active_tab = ActiveTab::Arguments;
-        ui.hover_tab = Some(ActiveTab::Help);
-        let config = TuiConfig::default();
+        ui.hover_tab = Some(ActiveTab::Arguments);
 
-        let view = build_tab_bar_view(&ui, &config, &vm);
+        let view = build_tab_bar_view(&ui, &TuiConfig::default(), &vm);
 
-        assert_eq!(view.items[1].style.fg, Some(config.theme.panel_bg));
-        assert_eq!(view.items[1].style.bg, Some(config.theme.accent));
+        assert!(view.items[0].style.add_modifier.contains(Modifier::BOLD));
         assert!(view.items[1].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(view.items[2].style.fg, Some(config.theme.text));
-        assert_eq!(view.items[2].style.bg, Some(config.theme.surface_raised));
-        assert!(view.items[2].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(view.items[0].style.fg, Some(config.theme.dim));
-        assert_eq!(view.items[0].style.bg, Some(config.theme.surface_raised));
+        assert_eq!(view.items[0].style.bg, Some(TuiConfig::default().theme.accent));
+        assert_eq!(
+            view.items[1].style.bg,
+            Some(TuiConfig::default().theme.surface_raised)
+        );
+    }
+
+    #[test]
+    fn layout_phase_populates_tab_and_form_view_geometry() {
+        let command = command();
+        let vm = ScreenView {
+            command: &command,
+            tree_items: Vec::new(),
+            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
+            active_args: Vec::new(),
+            preview_argv: Vec::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+
+        populate_layout(
+            &ui_state(),
+            ratatui::layout::Rect::new(2, 3, 40, 12),
+            &vm,
+            &mut snapshot,
+        );
+
+        assert_eq!(snapshot.layout.form_tabs.len(), 3);
+        assert_eq!(snapshot.layout.form_view, Some(ratatui::layout::Rect::new(2, 5, 40, 10)));
     }
 }

@@ -14,6 +14,7 @@ pub struct FrameLayout {
     pub footer: Option<Rect>,
     pub dropdown: Option<Rect>,
     pub sidebar_items: Vec<SidebarItemLayout>,
+    pub form_fields: Vec<FormFieldLayout>,
     pub form_inputs: HashMap<String, Rect>,
     pub form_view: Option<Rect>,
     pub form_tabs: Vec<TabButtonLayout>,
@@ -54,7 +55,7 @@ impl FrameSnapshot {
             .find(|item| contains(item.row, x, y))
     }
 
-    pub fn sidebar_caret_contains(&self, item: &SidebarItemLayout, x: u16, y: u16) -> bool {
+    pub fn sidebar_caret_contains(item: &SidebarItemLayout, x: u16, y: u16) -> bool {
         item.caret.is_some_and(|caret| contains(caret, x, y))
     }
 
@@ -221,4 +222,12 @@ pub struct SidebarItemLayout {
 pub struct TabButtonLayout {
     pub tab: ActiveTab,
     pub rect: Rect,
+}
+
+#[derive(Debug, Clone)]
+pub struct FormFieldLayout {
+    pub arg_id: String,
+    pub label: Option<Rect>,
+    pub input: Rect,
+    pub description: Option<Rect>,
 }
