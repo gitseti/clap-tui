@@ -8,5 +8,4 @@ mod sidebar;
 mod styles;
 mod toast;
 
-pub(crate) use screen::prepare;
 pub(crate) use screen::render;

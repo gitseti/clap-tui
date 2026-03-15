@@ -11,12 +11,12 @@ pub(crate) enum EditResult {
 }
 
 pub(crate) fn displayed_text(state: &AppState, arg: &ArgModel) -> String {
-    if let Some(inputs) = state.current_inputs() {
+    if let Some(inputs) = state.domain.current_form() {
         if let Some(ArgValue::Text(text)) = inputs.values.get(&arg.id) {
             return text.clone();
         }
     }
-    if arg.default_value().is_some() && !state.is_touched(&arg.id) {
+    if arg.default_value().is_some() && !state.domain.is_touched(&arg.id) {
         return arg.default_value().unwrap_or_default().to_string();
     }
     String::new()
@@ -28,15 +28,7 @@ pub(crate) fn ensure_editor<'a>(
     arg: &ArgModel,
     displayed: &str,
 ) -> &'a mut TextArea<'static> {
-    let key = command_key.storage_key();
-    let editors = ui.textareas.entry(key).or_default();
-    let textarea = editors
-        .entry(arg.id.clone())
-        .or_insert_with(|| TextArea::new(vec![displayed.to_string()]));
-    if textarea.lines().join("\n") != displayed {
-        *textarea = TextArea::new(vec![displayed.to_string()]);
-    }
-    textarea
+    ui.editors.ensure_editor(command_key, &arg.id, displayed)
 }
 
 pub(crate) fn apply_key_to_text_field(
@@ -45,8 +37,8 @@ pub(crate) fn apply_key_to_text_field(
     key: KeyEvent,
 ) -> EditResult {
     let displayed = displayed_text(state, arg);
-    let command_key = state.selected_path().clone();
-    let is_touched = state.is_touched(&arg.id);
+    let command_key = state.domain.selected_path().clone();
+    let is_touched = state.domain.is_touched(&arg.id);
     let has_default = arg.default_value().is_some();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     if has_default && !is_touched {
@@ -60,18 +52,18 @@ pub(crate) fn apply_key_to_text_field(
     }
     let text = textarea.lines().join("\n");
     if text.is_empty() && has_default {
-        state.current_inputs_mut().values.remove(&arg.id);
-        state.clear_touched(&arg.id);
+        state.domain.current_form_mut().values.remove(&arg.id);
+        state.domain.clear_touched(&arg.id);
     } else {
-        state.set_text_value(&arg.id, text);
-        state.mark_touched(&arg.id);
+        state.domain.set_text_value(&arg.id, text);
+        state.domain.mark_touched(&arg.id);
     }
     EditResult::Handled
 }
 
 pub(crate) fn set_cursor_from_click(state: &mut AppState, arg: &ArgModel, row: u16, col: u16) {
     let displayed = displayed_text(state, arg);
-    let command_key = state.selected_path().clone();
+    let command_key = state.domain.selected_path().clone();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     textarea.move_cursor(CursorMove::Jump(row, col));
 }

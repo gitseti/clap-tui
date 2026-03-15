@@ -293,4 +293,22 @@ mod tests {
         assert!(description_hit.in_description);
         assert!(!description_hit.in_input);
     }
+
+    #[test]
+    fn hit_testing_offsets_follow_preceding_multiline_field_height() {
+        let mut multi = arg("paths", "--path", ArgKind::Option);
+        multi.value_cardinality = crate::spec::ValueCardinality::Many;
+        multi.help = Some("multiple paths".to_string());
+        let mut flag = arg("verbose", "--verbose", ArgKind::Flag);
+        flag.help = Some("Enable verbose output".to_string());
+        let command = command(vec![multi, flag]);
+        let visible = visible_args(&command, ActiveTab::Options);
+
+        assert_eq!(field_content_bounds(&visible, 1), Some((8, 9)));
+
+        let second_input = hit_test_form_content(&visible, 8).expect("second field input");
+        assert_eq!(second_input.arg_id, "verbose");
+        assert!(second_input.in_input);
+        assert!(second_input.is_flag);
+    }
 }

@@ -9,7 +9,8 @@ use ratatui::widgets::{
 };
 
 use crate::config::TuiConfig;
-use crate::input::{DomainState, FrameState, UiState};
+use crate::frame_snapshot::FrameSnapshot;
+use crate::input::{DomainState, UiState};
 use crate::spec::choice_value_matches_default;
 
 use super::screen::ScreenView;
@@ -147,13 +148,13 @@ pub(crate) fn dropdown_layout(
 pub(crate) fn render_dropdown(
     frame: &mut Frame<'_>,
     ui: &UiState,
-    frame_state: &FrameState,
+    frame_snapshot: &FrameSnapshot,
     domain: &DomainState,
     config: &TuiConfig,
     _area: Rect,
     _vm: &ScreenView<'_>,
 ) {
-    let Some(view) = build_dropdown_view(ui, frame_state, domain, config) else {
+    let Some(view) = build_dropdown_view(ui, frame_snapshot, domain, config) else {
         return;
     };
     let mut widget_state = DropdownWidgetState {
@@ -173,12 +174,12 @@ pub(crate) fn render_dropdown(
 
 fn build_dropdown_view(
     ui: &UiState,
-    frame_state: &FrameState,
+    frame_snapshot: &FrameSnapshot,
     domain: &DomainState,
     config: &TuiConfig,
 ) -> Option<DropdownView> {
     let arg_id = ui.dropdown_open.as_ref()?;
-    let rect = frame_state.layout.dropdown?;
+    let rect = frame_snapshot.layout.dropdown?;
     let arg = domain.current_command().args.iter().find(|arg| &arg.id == arg_id)?;
 
     let is_touched = domain
@@ -280,5 +281,13 @@ mod tests {
         let roomy_layout = dropdown_layout(roomy_form, input_rect, 20).expect("layout");
         assert_eq!(roomy_layout.visible_rows, MAX_DROPDOWN_ROWS as usize);
         assert_eq!(roomy_layout.rect.height, MAX_DROPDOWN_ROWS + 2);
+    }
+
+    #[test]
+    fn dropdown_returns_none_when_neither_side_has_room_for_rows() {
+        let form_view = Rect::new(0, 0, 40, 3);
+        let input_rect = Rect::new(2, 1, 20, 1);
+
+        assert_eq!(dropdown_layout(form_view, input_rect, 2), None);
     }
 }

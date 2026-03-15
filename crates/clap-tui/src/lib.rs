@@ -9,12 +9,15 @@ mod app;
 mod argv_serializer;
 mod config;
 mod controller;
+mod editor_state;
 mod error;
+mod frame_snapshot;
 mod form_editor;
 mod input;
 mod runtime;
 mod spec;
 mod ui;
+mod update;
 mod view;
 
 pub use app::TuiApp;

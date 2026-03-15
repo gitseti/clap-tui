@@ -4,7 +4,8 @@ use ratatui::widgets::{Block, BorderType, Borders};
 use std::collections::HashSet;
 
 use crate::config::TuiConfig;
-use crate::input::{ActiveTab, AppState, CommandFormState, Focus, FrameLayout, FrameState, UiState};
+use crate::frame_snapshot::FrameSnapshot;
+use crate::input::{ActiveTab, AppState, CommandFormState, Focus, UiState};
 use crate::spec::{CommandPath, CommandSpec};
 use crate::view::argv::build_argv;
 use crate::view::command_tree::{self, TreeItem};
@@ -35,7 +36,7 @@ impl<'a> ScreenView<'a> {
         Self {
             command,
             tree_items: command_tree::tree_items(root, expanded, search_query),
-            visible_tabs: AppState::visible_tabs(),
+            visible_tabs: UiState::visible_tabs(),
             active_args: form::visible_args(command, active_tab),
             preview_argv,
             inputs,
@@ -43,28 +44,14 @@ impl<'a> ScreenView<'a> {
     }
 }
 
-pub(crate) fn prepare(state: &mut AppState) {
-    state.ensure_defaults();
-    let current_command = state.current_command().clone();
-    let active_args = form::visible_args(&current_command, state.ui.active_tab);
-    let visible = active_args
-        .iter()
-        .map(|item| (item.order_index, item.arg))
-        .collect::<Vec<_>>();
-    state.ensure_active_tab_visible(&visible);
-    if state.ui.active_tab != ActiveTab::Help {
-        state.ensure_selected_arg_visible(&visible);
-    }
-}
-
-pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) {
+pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) -> FrameSnapshot {
     let size = frame.area();
     let mut sidebar_width =
         u16::try_from(u32::from(size.width) * u32::from(config.layout.sidebar_ratio) / 100)
             .unwrap_or(size.width);
     sidebar_width = sidebar_width.clamp(22, 30);
 
-    let mut frame_layout = FrameLayout::default();
+    let mut frame_snapshot = FrameSnapshot::default();
 
     let background = Block::default()
         .borders(Borders::ALL)
@@ -105,51 +92,70 @@ pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiCo
     let sidebar_area = root[0];
     let main_area = root[1];
 
-    frame_layout.sidebar = Some(sidebar_area);
-    frame_layout.preview = Some(preview_area);
-    frame_layout.footer = Some(footer_area);
+    frame_snapshot.layout.sidebar = Some(sidebar_area);
+    frame_snapshot.layout.preview = Some(preview_area);
+    frame_snapshot.layout.footer = Some(footer_area);
 
     let preview_argv = build_argv(state);
-    let active_tab = state.ui.active_tab;
-    let search_query = state.ui.search_query.clone();
-    let selected_path = state.selected_path().clone();
-    let domain = &state.domain;
+    let (domain, ui) = (&state.domain, &mut state.ui);
+    let selected_path = domain.selected_path();
     let vm = ScreenView::build(
         domain.current_command(),
         &domain.root,
         &domain.expanded,
-        &search_query,
-        active_tab,
+        &ui.search_query,
+        ui.active_tab,
         domain.current_form(),
         preview_argv,
     );
     render_main(
         frame,
-        &mut state.ui,
-        &mut state.frame,
-        &selected_path,
+        ui,
+        selected_path,
         config,
         main_area,
         &vm,
-        &mut frame_layout,
+        &mut frame_snapshot,
     );
-    sidebar::render_sidebar(frame, &state.ui, &selected_path, config, sidebar_area, &vm, &mut frame_layout);
-    dropdown::render_dropdown(frame, &state.ui, &state.frame, &state.domain, config, Rect::default(), &vm);
-    preview::render_preview(frame, &state.ui, config, preview_area, &vm);
-    footer::render_footer(frame, &state.ui, config, footer_area, &vm, &mut frame_layout);
+    sidebar::render_sidebar(
+        frame,
+        ui,
+        selected_path,
+        config,
+        sidebar_area,
+        &vm,
+        &mut frame_snapshot.layout,
+    );
+    dropdown::render_dropdown(
+        frame,
+        ui,
+        &frame_snapshot,
+        domain,
+        config,
+        Rect::default(),
+        &vm,
+    );
+    preview::render_preview(frame, ui, config, preview_area, &vm);
+    footer::render_footer(
+        frame,
+        ui,
+        config,
+        footer_area,
+        &vm,
+        &mut frame_snapshot.layout,
+    );
     toast::render_toast(frame, state, config, size);
-    state.frame.layout = frame_layout;
+    frame_snapshot
 }
 
 fn render_main(
     frame: &mut Frame<'_>,
     ui: &mut UiState,
-    frame_state: &mut FrameState,
     selected_path: &CommandPath,
     config: &TuiConfig,
     area: Rect,
     vm: &ScreenView<'_>,
-    frame_layout: &mut FrameLayout,
+    frame_snapshot: &mut FrameSnapshot,
 ) {
     let workspace_focused = matches!(ui.focus, Focus::Form);
     let workspace = Block::default()
@@ -181,5 +187,5 @@ fn render_main(
         .split(Rect::new(inner.x, inner.y, inner.width, inner.height));
 
     header::render_header(frame, selected_path, config, main[0], vm);
-    form_ui::render_form(frame, ui, frame_state, selected_path, config, body_area, vm, frame_layout);
+    form_ui::render_form(frame, ui, selected_path, config, body_area, vm, frame_snapshot);
 }

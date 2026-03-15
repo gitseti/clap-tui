@@ -9,10 +9,9 @@ use ratatui::widgets::{
 };
 
 use crate::config::TuiConfig;
+use crate::frame_snapshot::{FrameLayout, FrameSnapshot, TabButtonLayout};
 use crate::form_editor;
-use crate::input::{
-    ActiveTab, ArgValue, Focus, FrameLayout, FrameState, TabButtonLayout, UiState,
-};
+use crate::input::{ActiveTab, ArgValue, Focus, UiState};
 use crate::spec::CommandPath;
 use crate::spec::{ArgSpec, choice_value_matches_default};
 use crate::view::form::{self, field_metrics};
@@ -24,13 +23,13 @@ const TAB_CONTENT_TOP_PADDING: u16 = 1;
 pub(crate) fn render_form(
     frame: &mut Frame<'_>,
     ui: &mut UiState,
-    frame_state: &mut FrameState,
     selected_path: &CommandPath,
     config: &TuiConfig,
     area: Rect,
     vm: &ScreenView<'_>,
-    frame_layout: &mut FrameLayout,
+    frame_snapshot: &mut FrameSnapshot,
 ) {
+    let frame_layout = &mut frame_snapshot.layout;
     frame_layout.form = Some(area);
     frame_layout.dropdown = None;
     frame_layout.form_inputs.clear();
@@ -58,8 +57,8 @@ pub(crate) fn render_form(
     };
     let viewport_height = content_area.height;
     let form_scroll_max = content_height.saturating_sub(viewport_height);
-    frame_state.form_scroll_max = form_scroll_max;
-    let form_scroll = ui.form_scroll.min(frame_state.form_scroll_max);
+    frame_snapshot.form_scroll_max = form_scroll_max;
+    let form_scroll = ui.form_scroll.min(frame_snapshot.form_scroll_max);
 
     match ui.active_tab {
         ActiveTab::Help => render_help(frame, config, content_area, form_scroll, &vm.command.help),
@@ -486,7 +485,7 @@ mod tests {
             last_non_help_tab: ActiveTab::Options,
             selected_arg_index: 0,
             search_query: String::new(),
-            textareas: std::collections::HashMap::new(),
+            editors: crate::editor_state::EditorState::default(),
             dropdown_open: None,
             dropdown_scroll: 0,
             form_scroll: 0,

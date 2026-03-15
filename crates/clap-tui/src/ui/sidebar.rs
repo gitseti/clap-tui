@@ -5,7 +5,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::config::TuiConfig;
-use crate::input::{Focus, FrameLayout, SidebarItemLayout, UiState};
+use crate::frame_snapshot::{FrameLayout, SidebarItemLayout};
+use crate::input::{Focus, UiState};
 use crate::spec::CommandPath;
 
 use super::screen::ScreenView;

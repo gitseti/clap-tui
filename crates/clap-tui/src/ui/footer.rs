@@ -6,7 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use crate::config::TuiConfig;
-use crate::input::{FooterButtonLayout, FrameLayout, HoverTarget, UiState};
+use crate::frame_snapshot::{FooterButtonLayout, FrameLayout};
+use crate::input::{HoverTarget, UiState};
 #[cfg(test)]
 use crate::input::AppState;
 

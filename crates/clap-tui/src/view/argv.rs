@@ -3,17 +3,17 @@ use crate::input::AppState;
 
 pub(crate) fn build_argv(state: &AppState) -> Vec<String> {
     let mut command_line = vec![state.domain.root.name.clone()];
-    command_line.extend(state.selected_path().iter().cloned());
-    let form = state.current_inputs().cloned().unwrap_or_default();
-    command_line.extend(argv_serializer::build_argv(state.current_command(), &form));
+    command_line.extend(state.domain.selected_path().iter().cloned());
+    let form = state.domain.current_form().cloned().unwrap_or_default();
+    command_line.extend(argv_serializer::build_argv(state.domain.current_command(), &form));
     command_line
 }
 
 #[allow(dead_code)]
 pub(crate) fn missing_required(state: &AppState) -> Vec<String> {
     argv_serializer::missing_required(
-        state.current_command(),
-        &state.current_inputs().cloned().unwrap_or_default(),
+        state.domain.current_command(),
+        &state.domain.current_form().cloned().unwrap_or_default(),
     )
 }
 
@@ -53,7 +53,7 @@ mod tests {
         let mut name = arg("name", "--name", ArgKind::Option);
         name.default_values = vec!["world".to_string()];
         let mut state = app_state(vec![name]);
-        state.ensure_defaults();
+        state.domain.ensure_defaults();
 
         assert_eq!(build_argv(&state), vec!["tool".to_string()]);
     }
@@ -63,9 +63,9 @@ mod tests {
         let mut name = arg("name", "--name", ArgKind::Option);
         name.default_values = vec!["world".to_string()];
         let mut state = app_state(vec![name]);
-        state.ensure_defaults();
-        state.set_text_value("name", "world".to_string());
-        state.mark_touched("name");
+        state.domain.ensure_defaults();
+        state.domain.set_text_value("name", "world".to_string());
+        state.domain.mark_touched("name");
 
         assert_eq!(
             build_argv(&state),
@@ -83,14 +83,15 @@ mod tests {
         let mut color = arg("color", "--color", ArgKind::Enum);
         color.choices = vec!["red".to_string(), "blue".to_string()];
         let mut state = app_state(vec![flag, color]);
-        state.ensure_defaults();
-        state.toggle_flag("verbose");
-        state.mark_touched("verbose");
+        state.domain.ensure_defaults();
+        state.domain.toggle_flag("verbose");
+        state.domain.mark_touched("verbose");
         state
-            .current_inputs_mut()
+            .domain
+            .current_form_mut()
             .values
             .insert("color".to_string(), ArgValue::Choice("blue".to_string()));
-        state.mark_touched("color");
+        state.domain.mark_touched("color");
 
         assert_eq!(
             build_argv(&state),
@@ -109,7 +110,7 @@ mod tests {
         color.default_values = vec!["blue".to_string()];
         color.choices = vec!["red".to_string(), "blue".to_string()];
         let mut state = app_state(vec![color]);
-        state.ensure_defaults();
+        state.domain.ensure_defaults();
 
         assert_eq!(build_argv(&state), vec!["tool".to_string()]);
     }
@@ -120,12 +121,13 @@ mod tests {
         color.default_values = vec!["blue".to_string()];
         color.choices = vec!["red".to_string(), "blue".to_string()];
         let mut state = app_state(vec![color]);
-        state.ensure_defaults();
+        state.domain.ensure_defaults();
         state
-            .current_inputs_mut()
+            .domain
+            .current_form_mut()
             .values
             .insert("color".to_string(), ArgValue::Choice("blue".to_string()));
-        state.mark_touched("color");
+        state.domain.mark_touched("color");
 
         assert_eq!(
             build_argv(&state),
@@ -142,8 +144,8 @@ mod tests {
         let mut paths = arg("path", "--path", ArgKind::Option);
         paths.value_cardinality = crate::spec::ValueCardinality::Many;
         let mut state = app_state(vec![paths]);
-        state.set_text_value("path", "a\nb".to_string());
-        state.mark_touched("path");
+        state.domain.set_text_value("path", "a\nb".to_string());
+        state.domain.mark_touched("path");
 
         assert_eq!(
             build_argv(&state),
@@ -165,10 +167,10 @@ mod tests {
         let mut output = arg("output", "output", ArgKind::Positional);
         output.position = Some(1);
         let mut state = app_state(vec![input, output]);
-        state.set_text_value("input", "a\nb".to_string());
-        state.mark_touched("input");
-        state.set_text_value("output", "dest".to_string());
-        state.mark_touched("output");
+        state.domain.set_text_value("input", "a\nb".to_string());
+        state.domain.mark_touched("input");
+        state.domain.set_text_value("output", "dest".to_string());
+        state.domain.mark_touched("output");
 
         assert_eq!(
             build_argv(&state),
@@ -188,10 +190,11 @@ mod tests {
         mode.choices = vec!["fast".to_string(), "slow".to_string()];
         let mut state = app_state(vec![mode]);
         state
-            .current_inputs_mut()
+            .domain
+            .current_form_mut()
             .values
             .insert("mode".to_string(), ArgValue::Choice("slow".to_string()));
-        state.mark_touched("mode");
+        state.domain.mark_touched("mode");
 
         assert_eq!(
             build_argv(&state),
