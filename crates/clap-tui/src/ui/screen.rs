@@ -44,7 +44,11 @@ impl<'a> ScreenView<'a> {
     }
 }
 
-pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) -> FrameSnapshot {
+pub(crate) fn render(
+    frame: &mut Frame<'_>,
+    state: &mut AppState,
+    config: &TuiConfig,
+) -> FrameSnapshot {
     let size = frame.area();
 
     let background = Block::default()

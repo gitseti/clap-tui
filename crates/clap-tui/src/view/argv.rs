@@ -5,7 +5,10 @@ pub(crate) fn build_argv(state: &AppState) -> Vec<String> {
     let mut command_line = vec![state.domain.root.name.clone()];
     command_line.extend(state.domain.selected_path().iter().cloned());
     let form = state.domain.current_form().cloned().unwrap_or_default();
-    command_line.extend(argv_serializer::build_argv(state.domain.current_command(), &form));
+    command_line.extend(argv_serializer::build_argv(
+        state.domain.current_command(),
+        &form,
+    ));
     command_line
 }
 

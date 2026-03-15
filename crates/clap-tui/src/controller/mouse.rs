@@ -63,7 +63,8 @@ pub(crate) fn handle_mouse_event(
             return Some(Action::ClickForm(event));
         }
     }
-    if frame_snapshot.dropdown_contains(event.column, event.row) && state.ui.dropdown_open.is_some() {
+    if frame_snapshot.dropdown_contains(event.column, event.row) && state.ui.dropdown_open.is_some()
+    {
         match event.kind {
             AppMouseEventKind::ScrollDown => return Some(Action::ScrollDropdown(1)),
             AppMouseEventKind::ScrollUp => return Some(Action::ScrollDropdown(-1)),
@@ -146,8 +147,9 @@ mod tests {
         frame_snapshot.layout.form = Some(Rect::new(0, 0, 30, 10));
         frame_snapshot.layout.form_view = Some(Rect::new(0, 0, 30, 10));
 
-        let action = handle_mouse_event(click(1, 1), &state, &frame_snapshot, &TuiConfig::default())
-            .expect("click action");
+        let action =
+            handle_mouse_event(click(1, 1), &state, &frame_snapshot, &TuiConfig::default())
+                .expect("click action");
         let effect = apply_action(&action, &mut state, &frame_snapshot);
         assert_eq!(effect, Effect::None);
 
@@ -162,8 +164,9 @@ mod tests {
             Some(&crate::input::ArgValue::Bool(false))
         );
 
-        let action = handle_mouse_event(click(1, 0), &state, &frame_snapshot, &TuiConfig::default())
-            .expect("toggle action");
+        let action =
+            handle_mouse_event(click(1, 0), &state, &frame_snapshot, &TuiConfig::default())
+                .expect("toggle action");
         let effect = apply_action(&action, &mut state, &frame_snapshot);
         assert_eq!(effect, Effect::None);
 
@@ -315,7 +318,10 @@ mod tests {
         let effect = apply_action(&action, &mut state, &frame_snapshot);
 
         assert_eq!(effect, Effect::None);
-        assert_eq!(state.domain.selected_path().as_slice(), &["build".to_string()]);
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["build".to_string()]
+        );
         assert!(state.domain.expanded.contains("tool::build"));
         assert!(matches!(state.ui.focus, Focus::Sidebar));
     }

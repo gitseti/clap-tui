@@ -7,9 +7,9 @@ use ratatui::widgets::Widget;
 
 use crate::config::TuiConfig;
 use crate::frame_snapshot::{FooterButtonLayout, FrameLayout};
-use crate::input::{HoverTarget, UiState};
 #[cfg(test)]
 use crate::input::AppState;
+use crate::input::{HoverTarget, UiState};
 
 use super::screen::ScreenView;
 use super::styles;
@@ -67,7 +67,13 @@ pub(crate) fn render_footer(
     _frame_layout: &FrameLayout,
 ) {
     let view = build_footer_view(ui, area);
-    frame.render_widget(FooterWidget { config, view: &view }, area);
+    frame.render_widget(
+        FooterWidget {
+            config,
+            view: &view,
+        },
+        area,
+    );
 }
 
 pub(crate) fn populate_layout(ui: &UiState, area: Rect, frame_layout: &mut FrameLayout) {
@@ -78,12 +84,32 @@ pub(crate) fn populate_layout(ui: &UiState, area: Rect, frame_layout: &mut Frame
 
 fn build_footer_view(ui: &UiState, area: Rect) -> FooterView {
     let actions = vec![
-        build_chip(ui, HoverTarget::Run, "Ctrl+Enter Run", FooterChipVariant::Primary),
-        build_chip(ui, HoverTarget::Exit, "Ctrl+C Exit", FooterChipVariant::Secondary),
+        build_chip(
+            ui,
+            HoverTarget::Run,
+            "Ctrl+Enter Run",
+            FooterChipVariant::Primary,
+        ),
+        build_chip(
+            ui,
+            HoverTarget::Exit,
+            "Ctrl+C Exit",
+            FooterChipVariant::Secondary,
+        ),
     ];
     let hints = vec![
-        build_chip(ui, HoverTarget::Search, "/ Search", FooterChipVariant::Subtle),
-        build_chip(ui, HoverTarget::Focus, "Tab Focus", FooterChipVariant::Subtle),
+        build_chip(
+            ui,
+            HoverTarget::Search,
+            "/ Search",
+            FooterChipVariant::Subtle,
+        ),
+        build_chip(
+            ui,
+            HoverTarget::Focus,
+            "Tab Focus",
+            FooterChipVariant::Subtle,
+        ),
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
     ];
     FooterView {
@@ -130,7 +156,8 @@ fn footer_spans(config: &TuiConfig, view: &FooterView) -> Vec<Span<'static>> {
 }
 
 fn spans_for_chips(config: &TuiConfig, chips: &[FooterChip]) -> Vec<Span<'static>> {
-    chips.iter()
+    chips
+        .iter()
         .enumerate()
         .flat_map(|(index, chip)| {
             let mut spans = Vec::with_capacity(2);
@@ -169,17 +196,16 @@ fn layout_footer_buttons(area: Rect, view: &FooterView) -> Vec<FooterButtonLayou
     };
 
     let action_width = group_width(&action_group);
-    let hint_start_x = area.x.saturating_add(action_width).saturating_add(view.gap_width);
+    let hint_start_x = area
+        .x
+        .saturating_add(action_width)
+        .saturating_add(view.gap_width);
     let mut layouts = layout_group(area.x, area, &action_group);
     layouts.extend(layout_group(hint_start_x, area, &hint_group));
     layouts
 }
 
-fn layout_group(
-    start_x: u16,
-    area: Rect,
-    group: &FooterButtonGroup,
-) -> Vec<FooterButtonLayout> {
+fn layout_group(start_x: u16, area: Rect, group: &FooterButtonGroup) -> Vec<FooterButtonLayout> {
     let mut layouts = Vec::with_capacity(group.chips.len());
     let mut cursor_x = start_x;
     for (index, chip) in group.chips.iter().enumerate() {
@@ -207,7 +233,10 @@ fn group_width(group: &FooterButtonGroup) -> u16 {
 }
 
 fn chips_width(chips: &[FooterChip]) -> u16 {
-    let labels = chips.iter().map(|chip| chip_width(&chip.label)).sum::<u16>();
+    let labels = chips
+        .iter()
+        .map(|chip| chip_width(&chip.label))
+        .sum::<u16>();
     let gaps = u16::try_from(chips.len().saturating_sub(1)).unwrap_or(0);
     labels.saturating_add(gaps)
 }
@@ -259,9 +288,18 @@ mod tests {
                 HoverTarget::Help,
             ]
         );
-        assert_eq!(layouts[0].rect.x + layouts[0].rect.width + 1, layouts[1].rect.x);
-        assert_eq!(layouts[2].rect.x + layouts[2].rect.width + 1, layouts[3].rect.x);
-        assert_eq!(layouts[3].rect.x + layouts[3].rect.width + 1, layouts[4].rect.x);
+        assert_eq!(
+            layouts[0].rect.x + layouts[0].rect.width + 1,
+            layouts[1].rect.x
+        );
+        assert_eq!(
+            layouts[2].rect.x + layouts[2].rect.width + 1,
+            layouts[3].rect.x
+        );
+        assert_eq!(
+            layouts[3].rect.x + layouts[3].rect.width + 1,
+            layouts[4].rect.x
+        );
     }
 
     #[test]

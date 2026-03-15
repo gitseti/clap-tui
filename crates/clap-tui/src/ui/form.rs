@@ -4,13 +4,12 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    Widget,
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget,
 };
 
 use crate::config::TuiConfig;
-use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot, TabButtonLayout};
 use crate::form_editor;
+use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot, TabButtonLayout};
 use crate::input::{ActiveTab, ArgValue, Focus, UiState};
 use crate::spec::CommandPath;
 use crate::spec::{ArgSpec, choice_value_matches_default};
@@ -63,35 +62,41 @@ pub(crate) fn populate_layout(
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
     for item in &vm.active_args {
         let metrics = field_metrics(item.arg);
+        let item_bottom = y + i32::from(metrics.total_height);
         if y >= i32::from(content_area.y) + i32::from(content_area.height) {
             break;
         }
-        if y < 0 {
+        if item_bottom <= i32::from(content_area.y) {
             y += i32::from(metrics.total_height);
             continue;
         }
-        let y_u16 = u16::try_from(y).expect("visible field y fits into u16");
-
         let label = if metrics.label_height > 0 {
-            Some(Rect::new(area.x, y_u16, area.width, metrics.label_height))
+            clipped_rect(area.x, area.width, y, metrics.label_height, content_area)
         } else {
             None
         };
         let input_y = y + i32::from(metrics.label_height);
-        let input = Rect::new(
+        let Some(input) = clipped_rect(
             area.x,
-            u16::try_from(input_y).expect("visible input y fits into u16"),
             area.width,
+            input_y,
             metrics.input_height,
-        );
-        let description = field_help_text(item.arg).map(|_| {
-            Rect::new(
-                area.x,
-                input.y.saturating_add(metrics.input_height),
-                area.width,
-                metrics.description_height.max(1),
-            )
-        });
+            content_area,
+        ) else {
+            y += i32::from(metrics.total_height);
+            continue;
+        };
+        let description = field_help_text(item.arg)
+            .map(|_| {
+                clipped_rect(
+                    area.x,
+                    area.width,
+                    input_y + i32::from(metrics.input_height),
+                    metrics.description_height.max(1),
+                    content_area,
+                )
+            })
+            .flatten();
 
         frame_layout.form_inputs.insert(item.arg.id.clone(), input);
         frame_layout.form_fields.push(FormFieldLayout {
@@ -104,12 +109,52 @@ pub(crate) fn populate_layout(
         if ui.dropdown_open.as_deref() == Some(&item.arg.id) {
             frame_layout.dropdown = frame_layout
                 .form_view
-                .and_then(|form_view| dropdown::dropdown_layout(form_view, input, item.arg.choices.len()))
+                .and_then(|form_view| {
+                    dropdown::dropdown_layout(form_view, input, item.arg.choices.len())
+                })
                 .map(|layout| layout.rect);
         }
 
         y += i32::from(metrics.total_height);
     }
+}
+
+fn intersect_rects(rect: Rect, bounds: Rect) -> Option<Rect> {
+    let left = rect.x.max(bounds.x);
+    let top = rect.y.max(bounds.y);
+    let right = rect
+        .x
+        .saturating_add(rect.width)
+        .min(bounds.x.saturating_add(bounds.width));
+    let bottom = rect
+        .y
+        .saturating_add(rect.height)
+        .min(bounds.y.saturating_add(bounds.height));
+
+    if left >= right || top >= bottom {
+        return None;
+    }
+
+    Some(Rect::new(
+        left,
+        top,
+        right.saturating_sub(left),
+        bottom.saturating_sub(top),
+    ))
+}
+
+fn clipped_rect(x: u16, width: u16, top: i32, height: u16, bounds: Rect) -> Option<Rect> {
+    let bounded_top = top.max(i32::from(bounds.y));
+    let bounded_bottom = top
+        .saturating_add(i32::from(height))
+        .min(i32::from(bounds.y.saturating_add(bounds.height)));
+    if bounded_top >= bounded_bottom {
+        return None;
+    }
+
+    let y = u16::try_from(bounded_top).ok()?;
+    let clipped_height = u16::try_from(bounded_bottom.saturating_sub(bounded_top)).ok()?;
+    intersect_rects(Rect::new(x, y, width, clipped_height), bounds)
 }
 
 pub(crate) fn render_form(
@@ -282,10 +327,15 @@ fn render_fields(
     frame_snapshot: &FrameSnapshot,
 ) {
     for field in &frame_snapshot.layout.form_fields {
-        let Some(item) = vm.active_args.iter().find(|item| item.arg.id == field.arg_id) else {
+        let Some(item) = vm
+            .active_args
+            .iter()
+            .find(|item| item.arg.id == field.arg_id)
+        else {
             continue;
         };
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
+        let input_is_truncated = text_input_is_truncated(item.arg, field.input);
 
         if let Some(label_rect) = field.label {
             let mut spans = vec![Span::styled(
@@ -352,7 +402,11 @@ fn render_fields(
                 text_style,
             );
         } else if item.arg.uses_choice_input() {
-            let display = if value.is_empty() { "Select..." } else { value.as_str() };
+            let display = if value.is_empty() {
+                "Select..."
+            } else {
+                value.as_str()
+            };
             let input = Paragraph::new(enum_display_line(
                 config,
                 display,
@@ -363,6 +417,11 @@ fn render_fields(
             ))
             .style(styles::compact_control(config, selected));
             frame.render_widget(input, field.input);
+        } else if input_is_truncated {
+            frame.render_widget(
+                Paragraph::new(value).style(fill_style.patch(text_style)),
+                field.input,
+            );
         } else if selected {
             let editor = form_editor::editor_for_render(ui, selected_path, item.arg, &value);
             let mut textarea = editor.to_textarea(editor.selection_anchor());
@@ -387,7 +446,9 @@ fn render_fields(
             place_textarea_cursor(frame, &textarea, field.input);
         } else {
             frame.render_widget(
-                Paragraph::new(value).block(block).style(fill_style.patch(text_style)),
+                Paragraph::new(value)
+                    .block(block)
+                    .style(fill_style.patch(text_style)),
                 field.input,
             );
         }
@@ -399,6 +460,10 @@ fn render_fields(
             );
         }
     }
+}
+
+fn text_input_is_truncated(arg: &ArgSpec, input: Rect) -> bool {
+    arg.accepts_text_input() && input.height < field_metrics(arg).input_height
 }
 
 fn value_matches_default(arg: &ArgSpec, value: Option<&ArgValue>, is_touched: bool) -> bool {
@@ -443,7 +508,10 @@ fn render_flag_toggle(
             },
         ),
     ]);
-    frame.render_widget(Paragraph::new(line).style(styles::flag_toggle(config, selected)), area);
+    frame.render_widget(
+        Paragraph::new(line).style(styles::flag_toggle(config, selected)),
+        area,
+    );
 }
 
 fn enum_display_line(
@@ -506,12 +574,13 @@ fn field_help_text(arg: &ArgSpec) -> Option<String> {
 mod tests {
     use ratatui::style::Modifier;
 
-    use super::{build_tab_bar_view, populate_layout};
+    use super::{build_tab_bar_view, populate_layout, text_input_is_truncated};
     use crate::config::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, Focus, UiState};
-    use crate::spec::CommandSpec;
+    use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::screen::ScreenView;
+    use crate::view::form::visible_args;
 
     fn command() -> CommandSpec {
         CommandSpec {
@@ -540,6 +609,21 @@ mod tests {
         }
     }
 
+    fn option_arg(id: &str, name: &str) -> ArgSpec {
+        ArgSpec {
+            id: id.to_string(),
+            display_name: name.to_string(),
+            help: None,
+            required: false,
+            kind: ArgKind::Option,
+            default_values: Vec::new(),
+            choices: Vec::new(),
+            position: None,
+            value_cardinality: ValueCardinality::One,
+            value_hint: None,
+        }
+    }
+
     #[test]
     fn tab_bar_view_keeps_expected_labels_and_order() {
         let command = command();
@@ -553,7 +637,11 @@ mod tests {
         };
 
         let view = build_tab_bar_view(&ui_state(), &TuiConfig::default(), &vm);
-        let labels = view.items.iter().map(|item| item.label.as_str()).collect::<Vec<_>>();
+        let labels = view
+            .items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
 
         assert_eq!(labels, vec![" Options ", " Arguments ", " Help "]);
     }
@@ -576,7 +664,10 @@ mod tests {
 
         assert!(view.items[0].style.add_modifier.contains(Modifier::BOLD));
         assert!(view.items[1].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(view.items[0].style.bg, Some(TuiConfig::default().theme.accent));
+        assert_eq!(
+            view.items[0].style.bg,
+            Some(TuiConfig::default().theme.accent)
+        );
         assert_eq!(
             view.items[1].style.bg,
             Some(TuiConfig::default().theme.surface_raised)
@@ -604,6 +695,73 @@ mod tests {
         );
 
         assert_eq!(snapshot.layout.form_tabs.len(), 3);
-        assert_eq!(snapshot.layout.form_view, Some(ratatui::layout::Rect::new(2, 5, 40, 10)));
+        assert_eq!(
+            snapshot.layout.form_view,
+            Some(ratatui::layout::Rect::new(2, 5, 40, 10))
+        );
+    }
+
+    #[test]
+    fn layout_phase_clips_scrolled_fields_to_form_view() {
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            about: None,
+            help: String::new(),
+            args: vec![
+                option_arg("target", "--target"),
+                option_arg("output", "--output"),
+                option_arg("mode", "--mode"),
+            ],
+            subcommands: Vec::new(),
+        };
+        let vm = ScreenView {
+            command: &command,
+            tree_items: Vec::new(),
+            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
+            active_args: visible_args(&command, ActiveTab::Options),
+            preview_argv: Vec::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.form_scroll = 1;
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(2, 3, 40, 6),
+            &vm,
+            &mut snapshot,
+        );
+
+        let form_view = snapshot.layout.form_view.expect("form view");
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("visible field layout");
+
+        assert_eq!(field.label, None);
+        assert!(field.input.y >= form_view.y);
+        assert!(field.input.y + field.input.height <= form_view.y + form_view.height);
+    }
+
+    #[test]
+    fn truncated_text_inputs_do_not_render_as_bordered_blocks() {
+        let single = option_arg("target", "--target");
+        let mut multi = option_arg("paths", "--paths");
+        multi.value_cardinality = ValueCardinality::Many;
+
+        assert!(text_input_is_truncated(
+            &single,
+            ratatui::layout::Rect::new(0, 0, 20, 1)
+        ));
+        assert!(!text_input_is_truncated(
+            &single,
+            ratatui::layout::Rect::new(0, 0, 20, 3)
+        ));
+        assert!(text_input_is_truncated(
+            &multi,
+            ratatui::layout::Rect::new(0, 0, 20, 4)
+        ));
     }
 }

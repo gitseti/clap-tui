@@ -50,6 +50,9 @@ This means the renderer is not just a pure view projection. It also produces con
 - Render and control are coupled through mutable shared layout state.
 - Mouse behavior depends on geometry produced by the last render pass.
 - Some navigation helpers also depend on last-frame layout information, not only durable model state.
+- The `view` module is not a clean read-only presentation layer; it currently contains controller-shared policies such as tree expansion traversal, field ordering, field measurement, scroll bounds, and hit-testing.
+- `UiState` still embeds concrete widget implementation state through stored `tui_textarea::TextArea` instances, which keeps the interaction layer coupled to a specific widget crate.
+- The `DomainState` / `UiState` / `NotificationState` split is present structurally, but the main function signatures still accept `&mut AppState` widely, so the boundary is not yet enforced by the API surface.
 - The loop redraws continuously even when idle, which is simple but not especially efficient.
 - Per-frame view construction does avoidable cloning and recomputation.
 
@@ -59,11 +62,63 @@ This is a solid small-project design, but not yet a clean long-term architecture
 
 The render loop itself is not the problem. The main issue is the shared mutable contract between renderer and controller.
 
+Relative to current ratatui guidance, the design is idiomatic but not yet the cleanest modern form.
+
+Why:
+
+- the single-threaded loop and immediate-mode rendering model are still appropriate
+- the current architecture does not yet enforce a clear `event -> action/message -> update -> render` boundary
+- controllers still mutate broad app state directly instead of routing through a narrower update path
+
+That means the refactor goal should not be to replace the loop, but to make state transitions more explicit inside the existing loop.
+
 ## Refactor Direction
 
 Do not replace the event loop first.
 
 Keep the current single-threaded loop and runtime abstraction. Refactor around state ownership and the handoff between render and interaction.
+
+Also avoid introducing async or a framework-style runtime unless the app later develops real concurrent I/O needs. That would add complexity without addressing the current core coupling.
+
+## State Ownership Principle
+
+For a ratatui-style immediate-mode application, the application should own meaningful state and widgets should primarily render from that state.
+
+Preferred ownership model:
+
+- the application owns durable domain state
+- the application owns transient interaction state
+- rendering produces a frame snapshot for geometry and hit-testing
+- widgets render from those inputs and do not become the source of truth for application behavior
+
+What widgets may own:
+
+- short-lived render helpers
+- crate-local component state used to drive a specific control implementation
+
+Constraints on widget-owned state:
+
+- it should remain explicit in the application architecture
+- it should not silently become the source of truth for domain behavior
+- it should be replaceable without forcing a rewrite of domain or controller logic
+
+Applied to this project:
+
+- `FrameLayout` / frame snapshot data should remain outside widgets
+- sidebar, footer, dropdown, and form widgets should draw from app-owned state plus snapshot/context inputs
+- text editing state may remain component-local, but should sit behind a crate-local abstraction rather than exposing raw widget crate types as the architectural boundary
+
+Clarification:
+
+- for mouse interaction, this snapshot is practically the last rendered frame snapshot
+- it is still frame-derived data, but it is allowed to persist long enough for the next input cycle to consume it
+- the architectural goal is to keep it distinct from durable domain state, not to force it to disappear immediately after draw
+
+Practical rule:
+
+- widgets own drawing
+- the application owns meaning
+- component-local state is acceptable only when it remains an implementation detail rather than the main state model
 
 ### Target state split
 
@@ -97,6 +152,11 @@ Split current state responsibilities into three categories:
    - Dropdown rectangle
    - Derived per-frame limits such as max scroll
 
+Note:
+
+- this category is frame-derived rather than domain-durable
+- in implementation it will usually be stored as the most recent rendered snapshot so mouse and navigation code can use it
+
 ## Recommended Incremental Plan
 
 ### Phase 1: Isolate frame-derived geometry
@@ -128,6 +188,12 @@ Keep widget-specific and render-specific data out of domain-oriented structs.
 
 The code already gestures in this direction, but the boundaries are still too porous.
 
+Additional clarification:
+
+- structural separation alone is not enough
+- rendering and controllers should stop taking broad `&mut AppState` access when narrower borrows are sufficient
+- `ui::prepare`-style normalization should gradually move toward explicit state transitions or selector-style helpers so invariants are less tied to the render loop
+
 ### Phase 3: Remove controller dependence on render internals
 
 Mouse and navigation logic should depend on a well-defined snapshot interface rather than on arbitrary mutable fields written by render code.
@@ -138,6 +204,46 @@ This should make it clearer which behavior depends on:
 - interaction state
 - actual screen geometry
 
+### Phase 3.5: Introduce an explicit update boundary
+
+After the frame snapshot boundary is in place, move toward an explicit:
+
+- event
+- action/message
+- update
+- render
+
+flow inside the existing loop.
+
+Recommended direction:
+
+- keyboard and mouse handlers should primarily translate terminal events into domain/UI actions
+- a small update layer should apply those actions to state
+- rendering should consume the resulting state plus the latest frame snapshot inputs
+
+Examples of actions:
+
+- `SelectCommand(path)`
+- `ToggleExpand(path)`
+- `SetFocus(Focus)`
+- `MoveFormSelection(delta)`
+- `OpenDropdown(arg_id)`
+- `CloseDropdown`
+- `SetChoice(arg_id, value)`
+- `Run`
+- `Exit`
+
+Why this matters:
+
+- it makes state transitions easier to test
+- it centralizes invariants that are currently spread across controller helpers and `ui::prepare`
+- it aligns the app more closely with current ratatui application patterns such as TEA/component-style update loops without requiring a full rewrite
+
+Non-goal of this phase:
+
+- do not force every tiny helper into a heavy reducer abstraction immediately
+- do introduce a single explicit state-transition path for meaningful user actions
+
 ### Phase 4: Reduce per-frame recomputation
 
 After the boundaries are cleaner:
@@ -145,6 +251,7 @@ After the boundaries are cleaner:
 - trim unnecessary cloning in screen/view-model construction
 - consider borrowing more immutable command data
 - avoid rebuilding derived structures every frame where not needed
+- separate stable selectors from geometry-dependent helpers so cached or borrowed data has a clearer home
 
 This is lower priority than untangling the architecture.
 
@@ -213,6 +320,21 @@ Likely contents:
 
 This should be a convenience wrapper, not a new catch-all mutable state object.
 
+### 2a. Tighten the role of the `view` module
+
+The current `view` module is doing two different jobs:
+
+- selector-style derivation for rendering
+- interaction-support logic such as hit-testing and traversal rules
+
+Recommended direction:
+
+- keep pure derived data builders in `view`
+- move geometry-dependent hit-testing into frame-snapshot-oriented code
+- move navigation policy that is independent of rendering into controller/domain helpers
+
+This should make the `view` layer easier to reason about as a mostly pure derivation layer instead of a mixed utility bucket.
+
 ### 3. Make the panel/view/widget split an explicit pattern
 
 The refactor worked best where the code was separated into three roles:
@@ -246,6 +368,11 @@ Recommended next step:
 
 - split form layout/snapshot responsibilities from live editor integration
 - only consider a larger form widget extraction after that split exists
+
+Additional constraint:
+
+- `UiState` should eventually hold editor session state in a crate-local abstraction rather than raw `TextArea` values, so form interaction is not coupled directly to the current widget implementation
+- widget-local mutable state is still acceptable where a `StatefulWidget`-style control is the right fit; the important rule is that application meaning and cross-component behavior do not depend directly on external widget crate types
 
 ### 5. Keep `FrameLayout` ownership strictly in panel/orchestration code
 

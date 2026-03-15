@@ -77,14 +77,8 @@ pub(crate) enum ChoiceSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InputPresentation {
     Toggle,
-    FreeText {
-        multiple: bool,
-        positional: bool,
-    },
-    ChoiceList {
-        multiple: bool,
-        positional: bool,
-    },
+    FreeText { multiple: bool, positional: bool },
+    ChoiceList { multiple: bool, positional: bool },
 }
 
 impl CommandPath {
@@ -180,7 +174,10 @@ impl CommandModel {
     pub(crate) fn from_command(command: &Command) -> Self {
         let mut cmd = command.clone();
         let help = cmd.render_help().to_string();
-        let args = cmd.get_arguments().filter_map(arg_to_model).collect::<Vec<_>>();
+        let args = cmd
+            .get_arguments()
+            .filter_map(arg_to_model)
+            .collect::<Vec<_>>();
         let subcommands = cmd
             .get_subcommands()
             .map(CommandModel::from_command)
@@ -197,7 +194,10 @@ impl CommandModel {
     pub(crate) fn resolve_path(&self, path: &[String]) -> Option<&CommandModel> {
         let mut cmd = self;
         for name in path {
-            cmd = cmd.subcommands.iter().find(|candidate| &candidate.name == name)?;
+            cmd = cmd
+                .subcommands
+                .iter()
+                .find(|candidate| &candidate.name == name)?;
         }
         Some(cmd)
     }
@@ -222,7 +222,10 @@ impl CommandModel {
         let path = if start.contains("::") {
             start.split("::").map(str::to_string).collect::<Vec<_>>()
         } else {
-            start.split_whitespace().map(str::to_string).collect::<Vec<_>>()
+            start
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
         };
         self.normalize_path(&path)
     }
@@ -269,7 +272,9 @@ fn arg_to_model(arg: &Arg) -> Option<ArgModel> {
     let action = arg.get_action();
     let value_cardinality = match arg.get_num_args() {
         Some(num_args) if num_args.max_values() > 1 => ValueCardinality::Many,
-        None if matches!(action, ArgAction::SetTrue | ArgAction::SetFalse) => ValueCardinality::None,
+        None if matches!(action, ArgAction::SetTrue | ArgAction::SetFalse) => {
+            ValueCardinality::None
+        }
         Some(_) | None => ValueCardinality::One,
     };
     let value_hint = match arg.get_value_hint() {

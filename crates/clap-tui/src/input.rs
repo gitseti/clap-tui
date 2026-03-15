@@ -144,9 +144,9 @@ impl DomainState {
                     .default_value()
                     .or_else(|| arg.choices.first().map(String::as_str))
                     .map(|value| ArgValue::Choice(value.to_string())),
-                crate::spec::InputPresentation::FreeText { .. } => {
-                    arg.default_value().map(|value| ArgValue::Text(value.to_string()))
-                }
+                crate::spec::InputPresentation::FreeText { .. } => arg
+                    .default_value()
+                    .map(|value| ArgValue::Text(value.to_string())),
             };
             if let Some(value) = value {
                 inputs.values.insert(arg.id.clone(), value);

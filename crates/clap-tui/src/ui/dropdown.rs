@@ -180,14 +180,20 @@ fn build_dropdown_view(
 ) -> Option<DropdownView> {
     let arg_id = ui.dropdown_open.as_ref()?;
     let rect = frame_snapshot.layout.dropdown?;
-    let arg = domain.current_command().args.iter().find(|arg| &arg.id == arg_id)?;
+    let arg = domain
+        .current_command()
+        .args
+        .iter()
+        .find(|arg| &arg.id == arg_id)?;
 
     let is_touched = domain
         .current_form()
         .is_some_and(|form| form.touched.contains(&arg.id));
     let total_rows = arg.choices.len();
     let visible_rows = rect.height.saturating_sub(2) as usize;
-    let scroll_position = ui.dropdown_scroll.min(total_rows.saturating_sub(visible_rows));
+    let scroll_position = ui
+        .dropdown_scroll
+        .min(total_rows.saturating_sub(visible_rows));
     let selected_row = domain
         .current_form()
         .and_then(|inputs| inputs.values.get(&arg.id))

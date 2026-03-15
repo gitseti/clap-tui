@@ -272,7 +272,9 @@ fn apply_choice_input(
                 })
                 .unwrap_or(0);
             let next = if current == 0 { len - 1 } else { current - 1 };
-            state.domain.set_choice_value(&arg.id, arg.choices[next].clone());
+            state
+                .domain
+                .set_choice_value(&arg.id, arg.choices[next].clone());
             state.domain.mark_touched(&arg.id);
             navigation::ensure_enum_visible(state, frame_snapshot, next, len);
         }
@@ -307,12 +309,9 @@ fn apply_mouse_selection(
     let Some(mut selection) = state.ui.mouse_select.take() else {
         return;
     };
-    if let Some((row, col)) = frame_snapshot.input_position_from_point(
-        &selection.arg_id,
-        event.column,
-        event.row,
-        true,
-    ) {
+    if let Some((row, col)) =
+        frame_snapshot.input_position_from_point(&selection.arg_id, event.column, event.row, true)
+    {
         let arg = state
             .domain
             .current_command()
@@ -337,16 +336,13 @@ fn apply_mouse_selection(
 }
 
 fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &FrameSnapshot) {
-    let Some((path, caret_hit, has_children)) = frame_snapshot
-        .sidebar_item_at(x, y)
-        .map(|item| {
-            (
-                item.path.clone(),
-                FrameSnapshot::sidebar_caret_contains(item, x, y),
-                item.has_children,
-            )
-        })
-    else {
+    let Some((path, caret_hit, has_children)) = frame_snapshot.sidebar_item_at(x, y).map(|item| {
+        (
+            item.path.clone(),
+            FrameSnapshot::sidebar_caret_contains(item, x, y),
+            item.has_children,
+        )
+    }) else {
         return;
     };
 
@@ -405,7 +401,11 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
             navigation::open_enum_dropdown(state, frame_snapshot, &hit.arg_id, total);
         }
         if hit.accepts_text_input
-            && let Some(arg) = command.args.iter().find(|arg| arg.id == hit.arg_id).cloned()
+            && let Some(arg) = command
+                .args
+                .iter()
+                .find(|arg| arg.id == hit.arg_id)
+                .cloned()
         {
             form_editor::clear_selection(state, &arg);
             state.ui.mouse_select = None;
@@ -529,11 +529,7 @@ mod tests {
             AppKeyCode::Char('b'),
             AppKeyModifiers::default(),
         ));
-        let effect = apply_action(
-            &action,
-            &mut state,
-            &snapshot,
-        );
+        let effect = apply_action(&action, &mut state, &snapshot);
         assert_eq!(effect, Effect::None);
         assert_eq!(state.ui.search_query, "b");
 
@@ -541,11 +537,7 @@ mod tests {
             AppKeyCode::Esc,
             AppKeyModifiers::default(),
         ));
-        let effect = apply_action(
-            &action,
-            &mut state,
-            &snapshot,
-        );
+        let effect = apply_action(&action, &mut state, &snapshot);
         assert_eq!(effect, Effect::None);
         assert!(matches!(state.ui.focus, crate::input::Focus::Sidebar));
     }
@@ -573,19 +565,24 @@ mod tests {
             row: 1,
             modifiers: AppKeyModifiers::default(),
         });
-        let effect = apply_action(
-            &action,
-            &mut state,
-            &snapshot,
-        );
+        let effect = apply_action(&action, &mut state, &snapshot);
 
         assert_eq!(effect, Effect::None);
-        assert!(state.ui.mouse_select.as_ref().is_some_and(|selection| selection.active));
+        assert!(
+            state
+                .ui
+                .mouse_select
+                .as_ref()
+                .is_some_and(|selection| selection.active)
+        );
         let editor = state
             .ui
             .editors
             .editor(state.domain.selected_path(), "path")
             .expect("editor");
-        assert_eq!(editor.selection_anchor(), Some(crate::editor_state::TextPosition::default()));
+        assert_eq!(
+            editor.selection_anchor(),
+            Some(crate::editor_state::TextPosition::default())
+        );
     }
 }

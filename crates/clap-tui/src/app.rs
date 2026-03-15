@@ -153,7 +153,8 @@ fn event_loop<R: Runtime>(
 
         match session.read_event()? {
             AppEvent::Key(key) => {
-                if let Some(action) = controller::handle_key_event(key, &state, &frame_snapshot, config)
+                if let Some(action) =
+                    controller::handle_key_event(key, &state, &frame_snapshot, config)
                 {
                     let effect = update::apply_action(&action, &mut state, &frame_snapshot);
                     match handle_effect(effect, &mut state, session) {
@@ -165,12 +166,9 @@ fn event_loop<R: Runtime>(
                 }
             }
             AppEvent::Mouse(mouse) => {
-                if let Some(action) = controller::handle_mouse_event(
-                    mouse,
-                    &state,
-                    &frame_snapshot,
-                    config,
-                ) {
+                if let Some(action) =
+                    controller::handle_mouse_event(mouse, &state, &frame_snapshot, config)
+                {
                     let effect = update::apply_action(&action, &mut state, &frame_snapshot);
                     match handle_effect(effect, &mut state, session) {
                         ActionOutcome::Continue => {}
@@ -191,7 +189,8 @@ fn redraw_timeout(state: &AppState) -> Duration {
         .toast
         .as_ref()
         .map_or(Duration::from_secs(60 * 60), |toast| {
-            toast.expires_at
+            toast
+                .expires_at
                 .saturating_duration_since(std::time::Instant::now())
         })
 }

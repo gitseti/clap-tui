@@ -30,11 +30,7 @@ impl Default for TextEditor {
 }
 
 impl EditorState {
-    pub fn editor(
-        &self,
-        command_key: &CommandPath,
-        arg_id: &str,
-    ) -> Option<&TextEditor> {
+    pub fn editor(&self, command_key: &CommandPath, arg_id: &str) -> Option<&TextEditor> {
         self.editors
             .get(&command_key.storage_key())
             .and_then(|editors| editors.get(arg_id))
@@ -218,7 +214,10 @@ mod tests {
         editor.start_selection(0, 1);
         editor.move_cursor_to(0, 4);
 
-        assert_eq!(editor.selection_anchor(), Some(TextPosition { row: 0, col: 1 }));
+        assert_eq!(
+            editor.selection_anchor(),
+            Some(TextPosition { row: 0, col: 1 })
+        );
         assert_eq!(editor.cursor(), TextPosition { row: 0, col: 4 });
     }
 }

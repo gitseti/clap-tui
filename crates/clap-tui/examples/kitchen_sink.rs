@@ -1,4 +1,4 @@
-use clap::{value_parser, Arg, ArgAction, ArgGroup, Command, ValueHint};
+use clap::{Arg, ArgAction, ArgGroup, Command, ValueHint, value_parser};
 use clap_tui::TuiApp;
 
 fn build_command() -> Command {

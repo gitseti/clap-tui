@@ -68,7 +68,9 @@ impl FrameSnapshot {
     }
 
     pub fn dropdown_contains(&self, x: u16, y: u16) -> bool {
-        self.layout.dropdown.is_some_and(|area| contains(area, x, y))
+        self.layout
+            .dropdown
+            .is_some_and(|area| contains(area, x, y))
     }
 
     pub fn preview_contains(&self, x: u16, y: u16) -> bool {
@@ -178,7 +180,9 @@ mod tests {
         assert_eq!(snapshot.footer_target_at(1, 10), Some(HoverTarget::Run));
         assert_eq!(snapshot.tab_at(1, 0), Some(ActiveTab::Help));
         assert_eq!(
-            snapshot.sidebar_item_at(1, 2).map(|item| item.path.as_slice()),
+            snapshot
+                .sidebar_item_at(1, 2)
+                .map(|item| item.path.as_slice()),
             Some(&["build".to_string()][..])
         );
     }

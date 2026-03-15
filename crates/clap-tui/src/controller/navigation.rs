@@ -68,7 +68,11 @@ pub(crate) fn move_sidebar_selection(state: &mut AppState, delta: isize) {
     }
 }
 
-pub(crate) fn move_form_selection(state: &mut AppState, frame_snapshot: &FrameSnapshot, delta: isize) {
+pub(crate) fn move_form_selection(
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+    delta: isize,
+) {
     if matches!(state.ui.active_tab, ActiveTab::Help) {
         return;
     }
@@ -359,7 +363,11 @@ mod tests {
         let root = command(
             "tool",
             vec![arg("verbose", "--verbose", ArgKind::Flag)],
-            vec![command("build", Vec::new(), vec![command("release", Vec::new(), Vec::new())])],
+            vec![command(
+                "build",
+                Vec::new(),
+                vec![command("release", Vec::new(), Vec::new())],
+            )],
         );
         let mut state = AppState::new(root);
 
@@ -375,7 +383,11 @@ mod tests {
 
     #[test]
     fn invalid_start_command_keeps_root_selected_and_does_not_create_orphan_form_state() {
-        let root = command("tool", vec![arg("verbose", "--verbose", ArgKind::Flag)], Vec::new());
+        let root = command(
+            "tool",
+            vec![arg("verbose", "--verbose", ArgKind::Flag)],
+            Vec::new(),
+        );
         let mut state = AppState::new(root);
 
         apply_start_command(&mut state, "missing");
@@ -400,16 +412,22 @@ mod tests {
         move_sidebar_selection(&mut state, 1);
 
         assert_eq!(state.domain.current_command().name, "build");
-        assert!(state
-            .domain
-            .root
-            .resolve_path(state.domain.selected_path().as_slice())
-            .is_some());
+        assert!(
+            state
+                .domain
+                .root
+                .resolve_path(state.domain.selected_path().as_slice())
+                .is_some()
+        );
     }
 
     #[test]
     fn selecting_invalid_command_path_is_rejected() {
-        let root = command("tool", Vec::new(), vec![command("build", Vec::new(), Vec::new())]);
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![command("build", Vec::new(), Vec::new())],
+        );
         let mut state = AppState::new(root);
 
         let result = state.domain.select_command_path(&["missing".to_string()]);
@@ -472,9 +490,13 @@ mod tests {
         color.choices = (0..10).map(|index| format!("choice-{index}")).collect();
         let mut state = AppState::new(command("tool", vec![color], Vec::new()));
         let mut frame_snapshot = FrameSnapshot::default();
-        state.domain.set_choice_value("color", "choice-8".to_string());
+        state
+            .domain
+            .set_choice_value("color", "choice-8".to_string());
         frame_snapshot.layout.form_view = Some(Rect::new(0, 0, 30, 10));
-        frame_snapshot.layout.form_inputs
+        frame_snapshot
+            .layout
+            .form_inputs
             .insert("color".to_string(), Rect::new(1, 1, 20, 1));
 
         open_enum_dropdown(&mut state, &frame_snapshot, "color", 10);
