@@ -33,9 +33,9 @@ enum Color {
     Blue,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = TuiApp::from_factory::<Cli>();
-    app.run_with_parser::<Cli, _>(|cli| {
+    app.run_with_parser::<Cli, _, std::io::Error>(|cli| {
         println!("Selected: {:?}", cli.command);
         Ok(())
     })?;

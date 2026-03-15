@@ -4,8 +4,7 @@ use std::time::{Duration, Instant};
 use ratatui::layout::Rect;
 use tui_textarea::TextArea;
 
-use crate::spec::{ArgKind, CommandSpec};
-use crate::view::form;
+use crate::spec::{ArgKind, ArgSpec, CommandSpec};
 
 #[derive(Debug, Clone)]
 pub enum Focus {
@@ -94,27 +93,42 @@ pub struct Toast {
 }
 
 #[derive(Debug)]
-pub struct AppState {
+pub struct CommandState {
     pub root: CommandSpec,
     pub selected_path: Vec<String>,
     pub expanded: HashSet<String>,
     pub search: String,
-    pub focus: Focus,
     pub active_tab: ActiveTab,
     pub last_non_help_tab: ActiveTab,
     pub selected_arg_index: usize,
     pub inputs: HashMap<String, CommandInputs>,
+    pub touched: HashMap<String, HashSet<String>>,
+}
+
+#[derive(Debug)]
+pub struct InteractionState {
+    pub focus: Focus,
     pub textareas: HashMap<String, HashMap<String, TextArea<'static>>>,
-    pub layout: LayoutCache,
     pub enum_open: Option<String>,
     pub enum_scroll: usize,
     pub form_scroll: u16,
     pub form_scroll_max: u16,
     pub hover: Option<HoverTarget>,
     pub hover_tab: Option<ActiveTab>,
-    pub touched: HashMap<String, HashSet<String>>,
     pub mouse_select: Option<MouseSelection>,
+}
+
+#[derive(Debug, Default)]
+pub struct NotificationState {
     pub toast: Option<Toast>,
+}
+
+#[derive(Debug)]
+pub struct AppState {
+    pub command: CommandState,
+    pub interaction: InteractionState,
+    pub layout: LayoutCache,
+    pub notifications: NotificationState,
 }
 
 impl AppState {
@@ -122,43 +136,51 @@ impl AppState {
         let mut expanded = HashSet::new();
         expanded.insert(root.name.clone());
         Self {
-            root,
-            selected_path: Vec::new(),
-            expanded,
-            search: String::new(),
-            focus: Focus::Sidebar,
-            active_tab: ActiveTab::Options,
-            last_non_help_tab: ActiveTab::Options,
-            selected_arg_index: 0,
-            inputs: HashMap::new(),
-            textareas: HashMap::new(),
+            command: CommandState {
+                root,
+                selected_path: Vec::new(),
+                expanded,
+                search: String::new(),
+                active_tab: ActiveTab::Options,
+                last_non_help_tab: ActiveTab::Options,
+                selected_arg_index: 0,
+                inputs: HashMap::new(),
+                touched: HashMap::new(),
+            },
+            interaction: InteractionState {
+                focus: Focus::Sidebar,
+                textareas: HashMap::new(),
+                enum_open: None,
+                enum_scroll: 0,
+                form_scroll: 0,
+                form_scroll_max: 0,
+                hover: None,
+                hover_tab: None,
+                mouse_select: None,
+            },
             layout: LayoutCache::default(),
-            enum_open: None,
-            enum_scroll: 0,
-            form_scroll: 0,
-            form_scroll_max: 0,
-            hover: None,
-            hover_tab: None,
-            touched: HashMap::new(),
-            mouse_select: None,
-            toast: None,
+            notifications: NotificationState::default(),
         }
     }
 
     pub fn command_path_key(&self) -> String {
-        if self.selected_path.is_empty() {
-            self.root.name.clone()
+        if self.command.selected_path.is_empty() {
+            self.command.root.name.clone()
         } else {
-            let mut parts = vec![self.root.name.clone()];
-            parts.extend(self.selected_path.iter().cloned());
+            let mut parts = vec![self.command.root.name.clone()];
+            parts.extend(self.command.selected_path.iter().cloned());
             parts.join("::")
         }
     }
 
     pub fn current_command(&self) -> &CommandSpec {
-        let mut cmd = &self.root;
-        for name in &self.selected_path {
-            if let Some(next) = cmd.subcommands.iter().find(|c| &c.name == name) {
+        let mut cmd = &self.command.root;
+        for name in &self.command.selected_path {
+            if let Some(next) = cmd
+                .subcommands
+                .iter()
+                .find(|candidate| &candidate.name == name)
+            {
                 cmd = next;
             }
         }
@@ -167,60 +189,52 @@ impl AppState {
 
     pub fn current_inputs_mut(&mut self) -> &mut CommandInputs {
         let key = self.command_path_key();
-        self.inputs.entry(key).or_default()
+        self.command.inputs.entry(key).or_default()
     }
 
     pub fn current_inputs(&self) -> Option<&CommandInputs> {
         let key = self.command_path_key();
-        self.inputs.get(&key)
+        self.command.inputs.get(&key)
     }
 
-    pub fn visible_tabs(&self) -> Vec<ActiveTab> {
-        vec![ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help]
+    pub fn visible_tabs() -> [ActiveTab; 3] {
+        [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help]
     }
 
-    pub fn focus_first_tab(&mut self) {
-        self.active_tab = self
-            .visible_tabs()
-            .first()
-            .copied()
-            .unwrap_or(ActiveTab::Options);
-        self.last_non_help_tab = self.active_tab;
-        self.ensure_selected_arg_visible();
-        self.form_scroll = 0;
-        self.enum_open = None;
-        self.mouse_select = None;
+    pub fn focus_first_tab(&mut self, visible_args: &[(usize, &ArgSpec)]) {
+        self.command.active_tab = Self::visible_tabs()[0];
+        self.command.last_non_help_tab = self.command.active_tab;
+        self.ensure_selected_arg_visible(visible_args);
+        self.interaction.form_scroll = 0;
+        self.interaction.enum_open = None;
+        self.interaction.mouse_select = None;
     }
 
-    pub fn visible_args(&self) -> Vec<(usize, &crate::spec::ArgSpec)> {
-        form::visible_args(self.current_command(), self.active_tab)
-            .into_iter()
-            .map(|item| (item.order_index, item.arg))
-            .collect()
-    }
-
-    pub fn ensure_active_tab_visible(&mut self) {
-        let tabs = self.visible_tabs();
-        if !tabs.contains(&self.active_tab) {
-            self.active_tab = tabs.first().copied().unwrap_or(ActiveTab::Options);
-            if self.active_tab != ActiveTab::Help {
-                self.last_non_help_tab = self.active_tab;
-                self.ensure_selected_arg_visible();
-            }
-            self.form_scroll = 0;
-            self.enum_open = None;
-            self.mouse_select = None;
-        }
-    }
-
-    pub fn ensure_selected_arg_visible(&mut self) {
-        let args = self.visible_args();
-        if args.is_empty() {
-            self.selected_arg_index = 0;
+    pub fn ensure_active_tab_visible(&mut self, visible_args: &[(usize, &ArgSpec)]) {
+        if Self::visible_tabs().contains(&self.command.active_tab) {
             return;
         }
-        if !args.iter().any(|(idx, _)| *idx == self.selected_arg_index) {
-            self.selected_arg_index = args[0].0;
+
+        self.command.active_tab = Self::visible_tabs()[0];
+        if self.command.active_tab != ActiveTab::Help {
+            self.command.last_non_help_tab = self.command.active_tab;
+            self.ensure_selected_arg_visible(visible_args);
+        }
+        self.interaction.form_scroll = 0;
+        self.interaction.enum_open = None;
+        self.interaction.mouse_select = None;
+    }
+
+    pub fn ensure_selected_arg_visible(&mut self, visible_args: &[(usize, &ArgSpec)]) {
+        if visible_args.is_empty() {
+            self.command.selected_arg_index = 0;
+            return;
+        }
+        if !visible_args
+            .iter()
+            .any(|(index, _)| *index == self.command.selected_arg_index)
+        {
+            self.command.selected_arg_index = visible_args[0].0;
         }
     }
 
@@ -233,18 +247,12 @@ impl AppState {
             }
             let value = match arg.kind {
                 ArgKind::Flag => Some(ArgValue::Bool(false)),
-                ArgKind::Enum => arg
+                _ if arg.uses_choice_input() => arg
                     .possible_values
                     .iter()
-                    .position(|v| arg.default.as_deref() == Some(v))
+                    .position(|value| arg.default.as_deref() == Some(value))
                     .map(ArgValue::Enum)
-                    .or_else(|| {
-                        if arg.possible_values.is_empty() {
-                            None
-                        } else {
-                            Some(ArgValue::Enum(0))
-                        }
-                    }),
+                    .or_else(|| (!arg.possible_values.is_empty()).then_some(ArgValue::Enum(0))),
                 _ => arg.default.clone().map(ArgValue::Text),
             };
             if let Some(value) = value {
@@ -254,15 +262,14 @@ impl AppState {
     }
 
     pub fn set_text_value(&mut self, arg_id: &str, text: String) {
-        let inputs = self.current_inputs_mut();
-        inputs
+        self.current_inputs_mut()
             .values
             .insert(arg_id.to_string(), ArgValue::Text(text));
     }
 
     pub fn toggle_flag(&mut self, arg_id: &str) {
-        let inputs = self.current_inputs_mut();
-        let entry = inputs
+        let entry = self
+            .current_inputs_mut()
             .values
             .entry(arg_id.to_string())
             .or_insert(ArgValue::Bool(false));
@@ -272,8 +279,8 @@ impl AppState {
     }
 
     pub fn cycle_enum(&mut self, arg_id: &str, max: usize) {
-        let inputs = self.current_inputs_mut();
-        let entry = inputs
+        let entry = self
+            .current_inputs_mut()
             .values
             .entry(arg_id.to_string())
             .or_insert(ArgValue::Enum(0));
@@ -286,7 +293,8 @@ impl AppState {
 
     pub fn mark_touched(&mut self, arg_id: &str) {
         let key = self.command_path_key();
-        self.touched
+        self.command
+            .touched
             .entry(key)
             .or_default()
             .insert(arg_id.to_string());
@@ -294,33 +302,32 @@ impl AppState {
 
     pub fn clear_touched(&mut self, arg_id: &str) {
         let key = self.command_path_key();
-        if let Some(set) = self.touched.get_mut(&key) {
+        if let Some(set) = self.command.touched.get_mut(&key) {
             set.remove(arg_id);
         }
     }
 
     pub fn is_touched(&self, arg_id: &str) -> bool {
         let key = self.command_path_key();
-        self.touched
+        self.command
+            .touched
             .get(&key)
-            .map(|set| set.contains(arg_id))
-            .unwrap_or(false)
+            .is_some_and(|set| set.contains(arg_id))
     }
 
     pub fn current_textareas_mut(&mut self) -> &mut HashMap<String, TextArea<'static>> {
         let key = self.command_path_key();
-        self.textareas.entry(key).or_default()
+        self.interaction.textareas.entry(key).or_default()
     }
 
     pub fn textarea_for(&mut self, arg_id: &str, initial: &str) -> &mut TextArea<'static> {
-        let textareas = self.current_textareas_mut();
-        textareas
+        self.current_textareas_mut()
             .entry(arg_id.to_string())
             .or_insert_with(|| TextArea::new(vec![initial.to_string()]))
     }
 
     pub fn show_toast(&mut self, message: impl Into<String>, duration: Duration, is_error: bool) {
-        self.toast = Some(Toast {
+        self.notifications.toast = Some(Toast {
             message: message.into(),
             expires_at: Instant::now() + duration,
             is_error,
@@ -329,11 +336,12 @@ impl AppState {
 
     pub fn clear_expired_toast(&mut self) {
         if self
+            .notifications
             .toast
             .as_ref()
             .is_some_and(|toast| Instant::now() >= toast.expires_at)
         {
-            self.toast = None;
+            self.notifications.toast = None;
         }
     }
 }

@@ -13,12 +13,13 @@ pub(crate) fn render_toast(
     config: &TuiConfig,
     area: Rect,
 ) {
-    let Some(toast) = state.toast.as_ref() else {
+    let Some(toast) = state.notifications.toast.as_ref() else {
         return;
     };
 
     let text = format!(" {} ", toast.message);
-    let width = (text.chars().count() as u16 + 2).min(area.width.saturating_sub(2));
+    let width = (u16::try_from(text.chars().count()).unwrap_or(area.width) + 2)
+        .min(area.width.saturating_sub(2));
     let x = area
         .x
         .saturating_add(area.width.saturating_sub(width.saturating_add(1)));

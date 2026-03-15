@@ -17,7 +17,7 @@ pub(crate) fn render_preview(
     area: Rect,
     vm: &ScreenView,
 ) {
-    let hovered = state.hover == Some(crate::input::HoverTarget::Preview);
+    let hovered = state.interaction.hover == Some(crate::input::HoverTarget::Preview);
     let border_style = if hovered {
         Style::default()
             .fg(config.theme.accent)
@@ -45,9 +45,7 @@ pub(crate) fn render_preview(
 fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: bool) -> Line<'a> {
     let hover_fg = config.theme.text;
     let prompt_style = if hovered {
-        Style::default()
-            .fg(hover_fg)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(hover_fg).add_modifier(Modifier::BOLD)
     } else {
         styles::help(config)
     };
@@ -59,15 +57,9 @@ fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: boo
         }
         let style = if token.starts_with('-') {
             seen_flag = true;
-            if hovered {
-                Style::default()
-                    .fg(config.theme.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .fg(config.theme.accent)
-                    .add_modifier(Modifier::BOLD)
-            }
+            Style::default()
+                .fg(config.theme.accent)
+                .add_modifier(Modifier::BOLD)
         } else if !seen_flag {
             Style::default()
                 .fg(if hovered { hover_fg } else { config.theme.text })

@@ -24,11 +24,11 @@ struct Cli {
     name: String,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = TuiApp::from_factory::<Cli>();
     let mut config = TuiConfig::default();
     config.theme = Theme::from_preset(ThemePreset::HighContrastDark);
-    app.with_config(config).run_with_parser::<Cli, _>(|cli| {
+    app.with_config(config).run_with_parser::<Cli, _, std::io::Error>(|cli| {
         println!("Hello {}", cli.name);
         Ok(())
     })?;

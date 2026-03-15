@@ -17,9 +17,5 @@ ratatui.workspace = true
 crossterm.workspace = true
 thiserror.workspace = true
 tracing = { version = "0.1", optional = true }
-anyhow.workspace = true
 tui-textarea = "0.4"
 arboard = "3.6.1"
-
-[dev-dependencies]
-anyhow.workspace = true

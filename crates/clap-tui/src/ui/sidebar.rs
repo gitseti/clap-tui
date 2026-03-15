@@ -17,8 +17,8 @@ pub(crate) fn render_sidebar(
     area: Rect,
     vm: &ScreenView,
 ) {
-    let search_focused = matches!(state.focus, Focus::Search);
-    let sidebar_focused = matches!(state.focus, Focus::Sidebar);
+    let search_focused = matches!(state.interaction.focus, Focus::Search);
+    let sidebar_focused = matches!(state.interaction.focus, Focus::Sidebar);
     let panel_focused = search_focused || sidebar_focused;
     let panel = Block::default()
         .borders(Borders::ALL)
@@ -38,10 +38,14 @@ pub(crate) fn render_sidebar(
     });
     let sidebar = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
         .split(inner);
 
-    let mut search_style = if state.search.is_empty() {
+    let mut search_style = if state.command.search.is_empty() {
         styles::placeholder(config)
     } else {
         Style::default().fg(config.theme.text)
@@ -51,21 +55,16 @@ pub(crate) fn render_sidebar(
         search_style = search_style.fg(config.theme.text);
     }
 
-    let search = Paragraph::new(format!(
-        "{}",
-        if state.search.is_empty() {
-            "/ search commands".to_string()
-        } else {
-            state.search.clone()
-        }
-    ))
-    .style(
-        search_style.bg(if search_focused {
-            config.theme.surface_raised
-        } else {
-            config.theme.input_bg
-        }),
-    );
+    let search = Paragraph::new(if state.command.search.is_empty() {
+        "/ search commands".to_string()
+    } else {
+        state.command.search.clone()
+    })
+    .style(search_style.bg(if search_focused {
+        config.theme.surface_raised
+    } else {
+        config.theme.input_bg
+    }));
     frame.render_widget(search, sidebar[0]);
     state.layout.search = Some(sidebar[0]);
 
@@ -79,11 +78,11 @@ pub(crate) fn render_sidebar(
     let list_area = sidebar[2];
     let content_y = list_area.y;
     let content_x = list_area.x;
-    let content_height = list_area.height as usize;
+    let content_height = usize::from(list_area.height);
     for (index, item) in vm.tree_items.iter().take(content_height).enumerate() {
-        let row_y = content_y.saturating_add(index as u16);
+        let row_y = content_y.saturating_add(u16::try_from(index).unwrap_or(list_area.height));
         let row_rect = Rect::new(content_x, row_y, list_area.width, 1);
-        let selected = item.path == state.selected_path;
+        let selected = item.path == state.command.selected_path;
         let row_style = if selected {
             if sidebar_focused {
                 styles::list_highlight(config)
@@ -115,7 +114,9 @@ pub(crate) fn render_sidebar(
         frame.render_widget(Paragraph::new(line).style(row_style), row_rect);
 
         let caret = if item.has_children {
-            let caret_x = content_x.saturating_add(item.indent as u16 + 2);
+            let caret_x = content_x
+                .saturating_add(u16::try_from(item.indent).unwrap_or(0))
+                .saturating_add(2);
             Some(Rect::new(caret_x, row_y, 1, 1))
         } else {
             None
@@ -125,6 +126,6 @@ pub(crate) fn render_sidebar(
             row: row_rect,
             caret,
             has_children: item.has_children,
-            });
+        });
     }
 }

@@ -30,7 +30,7 @@ pub(crate) struct ScreenView {
 impl ScreenView {
     pub(crate) fn build(state: &AppState) -> Self {
         let command = state.current_command().clone();
-        let active_args = form::visible_args(&command, state.active_tab)
+        let active_args = form::visible_args(&command, state.command.active_tab)
             .into_iter()
             .map(|item| ScreenArg {
                 order_index: item.order_index,
@@ -39,8 +39,12 @@ impl ScreenView {
             .collect();
         Self {
             command,
-            tree_items: command_tree::tree_items(&state.root, &state.expanded, &state.search),
-            visible_tabs: state.visible_tabs(),
+            tree_items: command_tree::tree_items(
+                &state.command.root,
+                &state.command.expanded,
+                &state.command.search,
+            ),
+            visible_tabs: AppState::visible_tabs().to_vec(),
             active_args,
             preview_argv: argv::build_argv(state),
             inputs: state.current_inputs().cloned(),
@@ -60,13 +64,21 @@ impl ScreenView {
 
 pub(crate) fn render(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig) {
     let size = frame.area();
-    let mut sidebar_width = (size.width as u32 * config.layout.sidebar_ratio as u32 / 100) as u16;
+    let mut sidebar_width =
+        u16::try_from(u32::from(size.width) * u32::from(config.layout.sidebar_ratio) / 100)
+            .unwrap_or(size.width);
     sidebar_width = sidebar_width.clamp(22, 30);
 
     state.ensure_defaults();
-    state.ensure_active_tab_visible();
-    if state.active_tab != ActiveTab::Help {
-        state.ensure_selected_arg_visible();
+    let current_command = state.current_command().clone();
+    let active_args = form::visible_args(&current_command, state.command.active_tab);
+    let visible = active_args
+        .iter()
+        .map(|item| (item.order_index, item.arg))
+        .collect::<Vec<_>>();
+    state.ensure_active_tab_visible(&visible);
+    if state.command.active_tab != ActiveTab::Help {
+        state.ensure_selected_arg_visible(&visible);
     }
 
     let background = Block::default()
@@ -128,7 +140,7 @@ fn render_main(
     area: Rect,
     vm: &ScreenView,
 ) {
-    let workspace_focused = matches!(state.focus, Focus::Form);
+    let workspace_focused = matches!(state.interaction.focus, Focus::Form);
     let workspace = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)

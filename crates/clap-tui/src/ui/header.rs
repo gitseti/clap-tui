@@ -16,11 +16,11 @@ pub(crate) fn render_header(
     area: Rect,
     vm: &ScreenView,
 ) {
-    let breadcrumb = if state.selected_path.is_empty() {
+    let breadcrumb = if state.command.selected_path.is_empty() {
         vm.command.name.clone()
     } else {
         let mut parts = vec![vm.command.name.clone()];
-        parts.extend(state.selected_path.iter().cloned());
+        parts.extend(state.command.selected_path.iter().cloned());
         parts.join(" > ")
     };
     let mut lines = Vec::with_capacity(2);
@@ -43,8 +43,5 @@ pub(crate) fn render_header(
         Style::default().fg(config.theme.dim),
     )));
 
-    frame.render_widget(
-        Paragraph::new(lines).style(styles::header(config)),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).style(styles::header(config)), area);
 }

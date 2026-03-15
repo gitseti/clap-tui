@@ -3,7 +3,6 @@ use tui_textarea::{CursorMove, TextArea};
 
 use crate::config::TuiConfig;
 use crate::input::{AppState, ArgValue, Focus, MouseSelection};
-use crate::spec::ArgKind;
 use crate::view::{argv, command_tree, form};
 
 use super::Action;
@@ -26,17 +25,17 @@ pub(crate) fn handle_mouse_event(
         return None;
     }
     if let MouseEventKind::Up(MouseButton::Left) = event.kind {
-        state.mouse_select = None;
+        state.interaction.mouse_select = None;
     }
     if let MouseEventKind::Down(MouseButton::Left) = event.kind {
         if let Some(dropdown) = layout.dropdown {
-            if state.enum_open.is_some() {
+            if state.interaction.enum_open.is_some() {
                 if contains(dropdown, event.column, event.row) {
-                    if let Some(active) = state.enum_open.clone() {
+                    if let Some(active) = state.interaction.enum_open.clone() {
                         handle_dropdown_click(event, state, &active);
                     }
                 } else {
-                    state.enum_open = None;
+                    state.interaction.enum_open = None;
                 }
                 return None;
             }
@@ -53,7 +52,7 @@ pub(crate) fn handle_mouse_event(
         }
         if let Some(search_area) = layout.search {
             if contains(search_area, event.column, event.row) {
-                state.focus = Focus::Search;
+                state.interaction.focus = Focus::Search;
                 return None;
             }
         }
@@ -74,7 +73,7 @@ pub(crate) fn handle_mouse_event(
         }
     }
     if let Some(dropdown) = state.layout.dropdown {
-        if contains(dropdown, event.column, event.row) && state.enum_open.is_some() {
+        if contains(dropdown, event.column, event.row) && state.interaction.enum_open.is_some() {
             match event.kind {
                 MouseEventKind::ScrollDown => {
                     navigation::scroll_enum(state, 1);
@@ -102,7 +101,7 @@ fn handle_preview_click(state: &AppState) -> Action {
 }
 
 fn update_mouse_selection(state: &mut AppState, event: event::MouseEvent) -> bool {
-    let Some(mut selection) = state.mouse_select.take() else {
+    let Some(mut selection) = state.interaction.mouse_select.take() else {
         return false;
     };
     if let Some((row, col)) = input_position_from_event(state, &selection.arg_id, event, true) {
@@ -114,7 +113,7 @@ fn update_mouse_selection(state: &mut AppState, event: event::MouseEvent) -> boo
         }
         textarea.move_cursor(CursorMove::Jump(row, col));
     }
-    state.mouse_select = Some(selection);
+    state.interaction.mouse_select = Some(selection);
     true
 }
 
@@ -129,13 +128,23 @@ fn handle_sidebar_click(event: event::MouseEvent, state: &mut AppState) {
         return;
     };
 
-    if state.selected_path != path {
-        state.selected_path = path.clone();
-        state.focus_first_tab();
+    if state.command.selected_path != path {
+        state.command.selected_path.clone_from(&path);
+        let command = state.current_command().clone();
+        let args = form::visible_args(&command, state.command.active_tab);
+        let visible = args
+            .iter()
+            .map(|item| (item.order_index, item.arg))
+            .collect::<Vec<_>>();
+        state.focus_first_tab(&visible);
     }
     if let Some(caret) = caret {
         if contains(caret, event.column, event.row) && has_children {
-            let items = command_tree::tree_items(&state.root, &state.expanded, &state.search);
+            let items = command_tree::tree_items(
+                &state.command.root,
+                &state.command.expanded,
+                &state.command.search,
+            );
             if let Some(item) = items.iter().find(|item| item.path == path) {
                 if item.expanded {
                     navigation::collapse_selected(state);
@@ -145,11 +154,11 @@ fn handle_sidebar_click(event: event::MouseEvent, state: &mut AppState) {
             }
         }
     }
-    state.focus = Focus::Sidebar;
+    state.interaction.focus = Focus::Sidebar;
 }
 
 fn handle_form_click(event: event::MouseEvent, state: &mut AppState) {
-    if matches!(state.active_tab, crate::input::ActiveTab::Help) {
+    if matches!(state.command.active_tab, crate::input::ActiveTab::Help) {
         return;
     }
     let Some(form_view) = state.layout.form_view else {
@@ -161,31 +170,30 @@ fn handle_form_click(event: event::MouseEvent, state: &mut AppState) {
     let content_y = event
         .row
         .saturating_sub(form_view.y)
-        .saturating_add(state.form_scroll);
+        .saturating_add(state.interaction.form_scroll);
     let command = state.current_command().clone();
-    let args = form::visible_args(&command, state.active_tab);
+    let args = form::visible_args(&command, state.command.active_tab);
     if let Some(hit) = form::hit_test_form_content(&args, content_y) {
-        state.selected_arg_index = hit.order_index;
-        state.focus = Focus::Form;
-        if hit.kind == ArgKind::Flag && (hit.in_input || hit.in_label) {
+        state.command.selected_arg_index = hit.order_index;
+        state.interaction.focus = Focus::Form;
+        if hit.is_flag && (hit.in_input || hit.in_label) {
             state.toggle_flag(&hit.arg_id);
             state.mark_touched(&hit.arg_id);
         }
-        if hit.kind == ArgKind::Enum && hit.in_input {
+        if hit.uses_choice_input && hit.in_input {
             let total = command
                 .args
                 .iter()
                 .find(|arg| arg.id == hit.arg_id)
-                .map(|arg| arg.possible_values.len())
-                .unwrap_or(0);
+                .map_or(0, |arg| arg.possible_values.len());
             navigation::open_enum_dropdown(state, &hit.arg_id, total);
         }
-        if matches!(hit.kind, ArgKind::Option | ArgKind::Positional) {
+        if hit.accepts_text_input {
             let textarea = ensure_textarea_for_displayed(state, &hit.arg_id);
             textarea.cancel_selection();
-            state.mouse_select = None;
+            state.interaction.mouse_select = None;
             if let Some((row, col)) = input_position_from_event(state, &hit.arg_id, event, false) {
-                state.mouse_select = Some(MouseSelection {
+                state.interaction.mouse_select = Some(MouseSelection {
                     arg_id: hit.arg_id.clone(),
                     anchor_row: row,
                     anchor_col: col,
@@ -303,13 +311,14 @@ fn handle_dropdown_click(event: event::MouseEvent, state: &mut AppState, arg_id:
         if event.row <= area.y || event.row >= area.y + area.height - 1 {
             return;
         }
-        let index = event.row.saturating_sub(area.y + 1) as usize + state.enum_scroll;
+        let index =
+            usize::from(event.row.saturating_sub(area.y + 1)) + state.interaction.enum_scroll;
         if index < arg.possible_values.len() {
             state
                 .current_inputs_mut()
                 .values
                 .insert(arg.id.clone(), ArgValue::Enum(index));
-            state.enum_open = None;
+            state.interaction.enum_open = None;
             state.mark_touched(&arg.id);
         }
     }
@@ -338,11 +347,11 @@ fn handle_footer_click(event: event::MouseEvent, state: &mut AppState) -> Option
                 }
                 crate::input::HoverTarget::Exit => return Some(Action::Exit),
                 crate::input::HoverTarget::Search => {
-                    state.focus = Focus::Search;
+                    state.interaction.focus = Focus::Search;
                     return None;
                 }
                 crate::input::HoverTarget::Focus => {
-                    state.focus = Focus::Sidebar;
+                    state.interaction.focus = Focus::Sidebar;
                     return None;
                 }
                 crate::input::HoverTarget::Help => {
@@ -357,22 +366,22 @@ fn handle_footer_click(event: event::MouseEvent, state: &mut AppState) -> Option
 }
 
 fn update_hover(state: &mut AppState, x: u16, y: u16) {
-    state.hover = state
+    state.interaction.hover = state
         .layout
         .footer_buttons
         .iter()
         .find(|button| contains(button.rect, x, y))
         .map(|button| button.target);
-    if state.hover.is_none()
+    if state.interaction.hover.is_none()
         && state
             .layout
             .preview
             .is_some_and(|area| contains(area, x, y))
     {
-        state.hover = Some(crate::input::HoverTarget::Preview);
+        state.interaction.hover = Some(crate::input::HoverTarget::Preview);
     }
 
-    state.hover_tab = state
+    state.interaction.hover_tab = state
         .layout
         .form_tabs
         .iter()
@@ -432,14 +441,14 @@ mod tests {
         let mut verbose = arg("verbose", "--verbose", ArgKind::Flag);
         verbose.help = Some("Enable verbose output".to_string());
         let mut state = AppState::new(command(vec![verbose]));
-        state.active_tab = ActiveTab::Options;
+        state.command.active_tab = ActiveTab::Options;
         state.layout.form = Some(Rect::new(0, 0, 30, 10));
         state.layout.form_view = Some(Rect::new(0, 0, 30, 10));
 
         handle_form_click(click(1, 1), &mut state);
 
-        assert_eq!(state.selected_arg_index, 0);
-        assert!(matches!(state.focus, Focus::Form));
+        assert_eq!(state.command.selected_arg_index, 0);
+        assert!(matches!(state.interaction.focus, Focus::Form));
         assert!(!state.is_touched("verbose"));
         assert!(
             state

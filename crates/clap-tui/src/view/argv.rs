@@ -1,52 +1,57 @@
 use crate::input::{AppState, ArgValue};
-use crate::spec::ArgKind;
 
 pub(crate) fn build_argv(state: &AppState) -> Vec<String> {
-    let mut argv = Vec::new();
-    argv.push(state.root.name.clone());
-    argv.extend(state.selected_path.iter().cloned());
+    let mut command_line = vec![state.command.root.name.clone()];
+    command_line.extend(state.command.selected_path.iter().cloned());
 
     let inputs = state.current_inputs();
-    let args = state.current_command().args.iter();
+    let current_args = state.current_command().args.iter();
     let mut positionals: Vec<(usize, usize, String)> = Vec::new();
-    let mut pos_seq: usize = 0;
+    let mut positional_sequence = 0_usize;
 
-    for arg in args {
+    for arg in current_args {
         let is_touched = state.is_touched(&arg.id);
         if arg.default.is_some() && !is_touched {
             continue;
         }
         match inputs.and_then(|i| i.values.get(&arg.id)) {
             Some(ArgValue::Bool(true)) => {
-                argv.push(arg.name.clone());
+                command_line.push(arg.name.clone());
             }
             Some(ArgValue::Text(value)) if !value.is_empty() => {
-                if arg.kind == ArgKind::Positional {
+                if arg.is_positional() {
                     if let Some(idx) = arg.positional_index {
                         if arg.is_multi {
                             for part in value.lines().filter(|s| !s.trim().is_empty()) {
-                                positionals.push((idx, pos_seq, part.to_string()));
-                                pos_seq += 1;
+                                positionals.push((idx, positional_sequence, part.to_string()));
+                                positional_sequence += 1;
                             }
                         } else {
-                            positionals.push((idx, pos_seq, value.clone()));
-                            pos_seq += 1;
+                            positionals.push((idx, positional_sequence, value.clone()));
+                            positional_sequence += 1;
                         }
                     }
                 } else if arg.is_multi {
                     for part in value.lines().filter(|s| !s.trim().is_empty()) {
-                        argv.push(arg.name.clone());
-                        argv.push(part.to_string());
+                        command_line.push(arg.name.clone());
+                        command_line.push(part.to_string());
                     }
                 } else {
-                    argv.push(arg.name.clone());
-                    argv.push(value.clone());
+                    command_line.push(arg.name.clone());
+                    command_line.push(value.clone());
                 }
             }
             Some(ArgValue::Enum(idx)) => {
                 if let Some(val) = arg.possible_values.get(*idx) {
-                    argv.push(arg.name.clone());
-                    argv.push(val.clone());
+                    if arg.is_positional() {
+                        if let Some(positional_index) = arg.positional_index {
+                            positionals.push((positional_index, positional_sequence, val.clone()));
+                            positional_sequence += 1;
+                        }
+                    } else {
+                        command_line.push(arg.name.clone());
+                        command_line.push(val.clone());
+                    }
                 }
             }
             _ => {}
@@ -55,10 +60,10 @@ pub(crate) fn build_argv(state: &AppState) -> Vec<String> {
 
     positionals.sort_by_key(|(idx, seq, _)| (*idx, *seq));
     for (_, _, value) in positionals {
-        argv.push(value);
+        command_line.push(value);
     }
 
-    argv
+    command_line
 }
 
 #[allow(dead_code)]
@@ -70,9 +75,8 @@ pub(crate) fn missing_required(state: &AppState) -> Vec<String> {
         .iter()
         .filter(|arg| arg.required)
         .filter_map(|arg| match inputs.and_then(|i| i.values.get(&arg.id)) {
-            Some(ArgValue::Bool(true)) => None,
             Some(ArgValue::Text(value)) if !value.is_empty() => None,
-            Some(ArgValue::Enum(_)) => None,
+            Some(ArgValue::Bool(true) | ArgValue::Enum(_)) => None,
             _ => Some(arg.name.clone()),
         })
         .collect()
@@ -239,6 +243,24 @@ mod tests {
                 "a".to_string(),
                 "b".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn positional_enums_serialize_as_plain_values() {
+        let mut mode = arg("mode", "mode", ArgKind::Enum);
+        mode.positional_index = Some(1);
+        mode.possible_values = vec!["fast".to_string(), "slow".to_string()];
+        let mut state = app_state(vec![mode]);
+        state
+            .current_inputs_mut()
+            .values
+            .insert("mode".to_string(), ArgValue::Enum(1));
+        state.mark_touched("mode");
+
+        assert_eq!(
+            build_argv(&state),
+            vec!["tool".to_string(), "slow".to_string()]
         );
     }
 }

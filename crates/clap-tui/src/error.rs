@@ -10,6 +10,9 @@ pub enum TuiError {
     /// Clap validation error.
     #[error("clap error: {0}")]
     Clap(#[from] clap::Error),
+    /// Application callback error.
+    #[error("runner error: {0}")]
+    Runner(Box<dyn std::error::Error + Send + Sync>),
     /// User exited without running.
     #[error("cancelled")]
     Cancelled,

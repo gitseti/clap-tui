@@ -17,9 +17,9 @@ struct Cli {
     count: u32,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = TuiApp::from_factory::<Cli>();
-    app.run_with_parser::<Cli, _>(|cli| {
+    app.run_with_parser::<Cli, _, std::io::Error>(|cli| {
         if cli.verbose {
             println!("Verbose mode on");
         }

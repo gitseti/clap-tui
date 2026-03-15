@@ -1,5 +1,5 @@
 use crate::input::ActiveTab;
-use crate::spec::{ArgKind, ArgSpec, CommandSpec};
+use crate::spec::{ArgSpec, CommandSpec};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OrderedArg<'a> {
@@ -19,8 +19,10 @@ pub(crate) struct FieldMetrics {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FormHit {
     pub(crate) order_index: usize,
-    pub(crate) kind: ArgKind,
     pub(crate) arg_id: String,
+    pub(crate) is_flag: bool,
+    pub(crate) uses_choice_input: bool,
+    pub(crate) accepts_text_input: bool,
     pub(crate) in_input: bool,
     pub(crate) in_label: bool,
     pub(crate) in_description: bool,
@@ -30,7 +32,7 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
     let mut positionals = command
         .args
         .iter()
-        .filter(|arg| matches!(arg.kind, ArgKind::Positional))
+        .filter(|arg| arg.is_positional())
         .filter(|arg| !is_help_arg(arg))
         .collect::<Vec<_>>();
     positionals.sort_by_key(|arg| arg.positional_index.unwrap_or(usize::MAX));
@@ -38,7 +40,7 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
     let mut others = command
         .args
         .iter()
-        .filter(|arg| !matches!(arg.kind, ArgKind::Positional))
+        .filter(|arg| !arg.is_positional())
         .filter(|arg| !is_help_arg(arg))
         .collect::<Vec<_>>();
     others.sort_by_key(|arg| arg.name.clone());
@@ -55,28 +57,29 @@ pub(crate) fn visible_args(command: &CommandSpec, active_tab: ActiveTab) -> Vec<
     match active_tab {
         ActiveTab::Options => ordered_args(command)
             .into_iter()
-            .filter(|item| !matches!(item.arg.kind, ArgKind::Positional))
+            .filter(|item| !item.arg.is_positional())
             .collect(),
         ActiveTab::Arguments => ordered_args(command)
             .into_iter()
-            .filter(|item| matches!(item.arg.kind, ArgKind::Positional))
+            .filter(|item| item.arg.is_positional())
             .collect(),
         ActiveTab::Help => Vec::new(),
     }
 }
 
 pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
-    let label_height = if matches!(arg.kind, ArgKind::Flag) { 0 } else { 1 };
+    let label_height = u16::from(!arg.is_flag());
     let description_height = if arg.help.is_some() || arg.value_hint.is_some() {
         1
     } else {
         0
     };
-    let input_height = match arg.kind {
-        ArgKind::Flag => 1,
-        ArgKind::Enum => 1,
-        _ if arg.is_multi => 5,
-        _ => 3,
+    let input_height = if arg.is_flag() || arg.uses_choice_input() {
+        1
+    } else if arg.is_multi {
+        5
+    } else {
+        3
     };
     let gap_height = 1;
     FieldMetrics {
@@ -131,8 +134,10 @@ pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> 
         if in_label || in_description || in_input {
             return Some(FormHit {
                 order_index: item.order_index,
-                kind: item.arg.kind,
                 arg_id: item.arg.id.clone(),
+                is_flag: item.arg.is_flag(),
+                uses_choice_input: item.arg.uses_choice_input(),
+                accepts_text_input: item.arg.accepts_text_input(),
                 in_input,
                 in_label,
                 in_description,
@@ -256,6 +261,7 @@ mod tests {
         assert!(!label_hit.in_description);
 
         let input_hit = hit_test_form_content(&visible, 1).expect("input hit");
+        assert!(input_hit.accepts_text_input);
         assert!(input_hit.in_input);
         assert!(!input_hit.in_label);
         assert!(!input_hit.in_description);
@@ -279,6 +285,7 @@ mod tests {
         assert_eq!(field_content_bounds(&visible, 0), Some((0, 1)));
 
         let input_hit = hit_test_form_content(&visible, 0).expect("input hit");
+        assert!(input_hit.is_flag);
         assert!(input_hit.in_input);
         assert!(!input_hit.in_label);
 

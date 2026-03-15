@@ -31,6 +31,24 @@ pub enum ArgKind {
     Enum,
 }
 
+impl ArgSpec {
+    pub(crate) fn is_flag(&self) -> bool {
+        matches!(self.kind, ArgKind::Flag)
+    }
+
+    pub(crate) fn is_positional(&self) -> bool {
+        self.positional_index.is_some() || matches!(self.kind, ArgKind::Positional)
+    }
+
+    pub(crate) fn uses_choice_input(&self) -> bool {
+        !self.possible_values.is_empty()
+    }
+
+    pub(crate) fn accepts_text_input(&self) -> bool {
+        !self.is_flag() && !self.uses_choice_input()
+    }
+}
+
 pub(crate) fn enum_value_matches_default(arg: &ArgSpec, index: usize) -> bool {
     arg.default
         .as_deref()
@@ -44,15 +62,15 @@ impl CommandSpec {
         let help = cmd.render_help().to_string();
         let args = cmd
             .get_arguments()
-            .filter_map(|arg| arg_to_spec(arg))
+            .filter_map(arg_to_spec)
             .collect::<Vec<_>>();
         let subcommands = cmd
             .get_subcommands()
-            .map(|sub| CommandSpec::from_command(sub))
+            .map(CommandSpec::from_command)
             .collect::<Vec<_>>();
         Self {
             name: cmd.get_name().to_string(),
-            about: cmd.get_about().map(|s| s.to_string()),
+            about: cmd.get_about().map(std::string::ToString::to_string),
             help,
             args,
             subcommands,
@@ -72,7 +90,7 @@ fn arg_to_spec(arg: &Arg) -> Option<ArgSpec> {
         .or_else(|| arg.get_short().map(|s| format!("-{s}")))
         .unwrap_or_else(|| id.clone());
 
-    let help = arg.get_help().map(|s| s.to_string());
+    let help = arg.get_help().map(std::string::ToString::to_string);
     let required = arg.is_required_set();
     let possible_values = arg
         .get_possible_values()
@@ -86,16 +104,13 @@ fn arg_to_spec(arg: &Arg) -> Option<ArgSpec> {
         .map(|v| v.to_string_lossy().to_string());
 
     let positional_index = if arg.is_positional() {
-        arg.get_index().map(|idx| idx as usize)
+        arg.get_index()
     } else {
         None
     };
 
     let action = arg.get_action();
-    let is_multi = arg
-        .get_num_args()
-        .map(|n| n.max_values() > 1)
-        .unwrap_or(false);
+    let is_multi = arg.get_num_args().is_some_and(|n| n.max_values() > 1);
     let value_hint = match arg.get_value_hint() {
         clap::ValueHint::Unknown => None,
         hint => Some(format!("{hint:?}")),

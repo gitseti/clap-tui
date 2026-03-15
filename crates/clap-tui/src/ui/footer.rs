@@ -33,7 +33,7 @@ pub(crate) fn render_footer(
     let left_x = area.x;
     let min_right_x = left_x
         .saturating_add(action_width)
-        .saturating_add(if action_width > 0 { 1 } else { 0 });
+        .saturating_add(u16::from(action_width > 0));
     let preferred_right_x = area.x.saturating_add(area.width.saturating_sub(hint_width));
     let right_x = preferred_right_x.max(min_right_x);
 
@@ -45,18 +45,27 @@ pub(crate) fn render_footer(
             cursor_x = cursor_x.saturating_add(1);
         }
         let label = format!(" {chip} ");
-        let rect = Rect::new(cursor_x, area.y, label.chars().count() as u16, 1);
+        let rect = Rect::new(
+            cursor_x,
+            area.y,
+            u16::try_from(label.chars().count()).unwrap_or(area.width),
+            1,
+        );
         state.layout.footer_buttons.push(FooterButtonLayout {
             target: *target,
             rect,
         });
         let style = match target {
-            HoverTarget::Run => styles::primary_chip(config, state.hover == Some(*target)),
-            HoverTarget::Exit => styles::secondary_chip(config, state.hover == Some(*target)),
-            _ => styles::subtle_chip(config, state.hover == Some(*target)),
+            HoverTarget::Run => {
+                styles::primary_chip(config, state.interaction.hover == Some(*target))
+            }
+            HoverTarget::Exit => {
+                styles::secondary_chip(config, state.interaction.hover == Some(*target))
+            }
+            _ => styles::subtle_chip(config, state.interaction.hover == Some(*target)),
         };
         spans.push(Span::styled(label.clone(), style));
-        cursor_x = cursor_x.saturating_add(label.chars().count() as u16);
+        cursor_x = cursor_x.saturating_add(u16::try_from(label.chars().count()).unwrap_or(0));
     }
 
     let gap = right_x.saturating_sub(cursor_x);
@@ -71,16 +80,21 @@ pub(crate) fn render_footer(
             cursor_x = cursor_x.saturating_add(1);
         }
         let label = format!(" {chip} ");
-        let rect = Rect::new(cursor_x, area.y, label.chars().count() as u16, 1);
+        let rect = Rect::new(
+            cursor_x,
+            area.y,
+            u16::try_from(label.chars().count()).unwrap_or(area.width),
+            1,
+        );
         state.layout.footer_buttons.push(FooterButtonLayout {
             target: *target,
             rect,
         });
         spans.push(Span::styled(
             label.clone(),
-            styles::subtle_chip(config, state.hover == Some(*target)),
+            styles::subtle_chip(config, state.interaction.hover == Some(*target)),
         ));
-        cursor_x = cursor_x.saturating_add(label.chars().count() as u16);
+        cursor_x = cursor_x.saturating_add(u16::try_from(label.chars().count()).unwrap_or(0));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -89,8 +103,8 @@ pub(crate) fn render_footer(
 fn group_width(items: &[(HoverTarget, &str)]) -> u16 {
     let labels = items
         .iter()
-        .map(|(_, chip)| chip.chars().count() as u16 + 2)
+        .map(|(_, chip)| u16::try_from(chip.chars().count()).unwrap_or(0) + 2)
         .sum::<u16>();
-    let gaps = items.len().saturating_sub(1) as u16;
+    let gaps = u16::try_from(items.len().saturating_sub(1)).unwrap_or(0);
     labels.saturating_add(gaps)
 }

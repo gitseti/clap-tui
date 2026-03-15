@@ -56,6 +56,7 @@ pub enum ThemePreset {
 
 impl Theme {
     /// Build a theme from a built-in preset.
+    #[must_use]
     pub fn from_preset(preset: ThemePreset) -> Self {
         match preset {
             ThemePreset::CalmDark => Self {
@@ -162,7 +163,7 @@ impl Default for LayoutConfig {
 }
 
 /// Top-level configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct TuiConfig {
     /// Theme configuration.
@@ -173,15 +174,4 @@ pub struct TuiConfig {
     pub start_command: Option<String>,
     /// Layout configuration.
     pub layout: LayoutConfig,
-}
-
-impl Default for TuiConfig {
-    fn default() -> Self {
-        Self {
-            theme: Theme::default(),
-            keymap: Keymap::default(),
-            start_command: None,
-            layout: LayoutConfig::default(),
-        }
-    }
 }

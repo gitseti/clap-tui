@@ -148,9 +148,7 @@ pub(crate) fn subtle_chip(config: &TuiConfig, hovered: bool) -> Style {
         .fg(config.theme.dim)
         .bg(config.theme.pill_bg);
     if hovered {
-        style
-            .fg(config.theme.text)
-            .add_modifier(Modifier::BOLD)
+        style.fg(config.theme.text).add_modifier(Modifier::BOLD)
     } else {
         style
     }

@@ -53,7 +53,7 @@ pub(crate) fn dropdown_layout(
         return None;
     }
 
-    let popup_height = visible_rows as u16 + 2;
+    let popup_height = u16::try_from(visible_rows).unwrap_or(MAX_DROPDOWN_ROWS) + 2;
     let y = if place_below {
         input_rect.y.saturating_add(input_rect.height)
     } else {
@@ -73,7 +73,7 @@ pub(crate) fn render_dropdown(
     _area: Rect,
     _vm: &ScreenView,
 ) {
-    let Some(arg_id) = state.enum_open.clone() else {
+    let Some(arg_id) = state.interaction.enum_open.clone() else {
         return;
     };
     let Some(rect) = state.layout.dropdown else {
@@ -85,7 +85,10 @@ pub(crate) fn render_dropdown(
     let is_touched = state.is_touched(&arg.id);
     let total = arg.possible_values.len();
     let visible = rect.height.saturating_sub(2) as usize;
-    let start = state.enum_scroll.min(total.saturating_sub(visible));
+    let start = state
+        .interaction
+        .enum_scroll
+        .min(total.saturating_sub(visible));
     let end = (start + visible).min(total);
     let current_idx = state
         .current_inputs()
@@ -105,9 +108,8 @@ pub(crate) fn render_dropdown(
             let is_default = !is_touched && enum_value_matches_default(arg, index);
             let is_selected = index == current_idx;
             let text_style = match (is_selected, is_default) {
-                (true, true) => Style::default().fg(config.theme.dim),
                 (true, false) => Style::default().fg(config.theme.selection_fg),
-                (false, true) => Style::default().fg(config.theme.dim),
+                (_, true) => Style::default().fg(config.theme.dim),
                 (false, false) => Style::default().fg(config.theme.text),
             };
             let line = Line::from(Span::styled(value.clone(), text_style));
@@ -135,7 +137,7 @@ pub(crate) fn render_dropdown(
     if total > visible && visible > 0 {
         let scroll_steps = total.saturating_sub(visible).saturating_add(1);
         let mut scrollbar_state = ScrollbarState::new(scroll_steps)
-            .position(state.enum_scroll)
+            .position(state.interaction.enum_scroll)
             .viewport_content_length(visible);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .track_symbol(Some("┃"))
