@@ -50,6 +50,9 @@ pub(crate) fn handle_mouse_event(
         if frame_snapshot.search_contains(event.column, event.row) {
             return Some(Action::FocusSearch);
         }
+        if state.ui.help_open && frame_snapshot.form_contains(event.column, event.row) {
+            return Some(Action::ToggleHelp);
+        }
         if frame_snapshot.sidebar_contains(event.column, event.row) {
             return Some(Action::ClickSidebar {
                 x: event.column,
@@ -70,6 +73,16 @@ pub(crate) fn handle_mouse_event(
             AppMouseEventKind::ScrollUp => return Some(Action::ScrollDropdown(-1)),
             _ => {}
         }
+    }
+    if state.ui.help_open && frame_snapshot.form_contains(event.column, event.row) {
+        match event.kind {
+            AppMouseEventKind::ScrollDown => return Some(Action::ScrollForm(2)),
+            AppMouseEventKind::ScrollUp => return Some(Action::ScrollForm(-2)),
+            _ => {}
+        }
+    }
+    if state.ui.help_open {
+        return None;
     }
     if let AppMouseEventKind::ScrollDown = event.kind {
         return Some(Action::ScrollForm(2));
@@ -112,6 +125,7 @@ mod tests {
     fn command(args: Vec<ArgSpec>) -> CommandSpec {
         CommandSpec {
             name: "tool".to_string(),
+            version: None,
             about: None,
             help: String::new(),
             args,
@@ -143,7 +157,7 @@ mod tests {
         verbose.help = Some("Enable verbose output".to_string());
         let mut state = AppState::new(command(vec![verbose]));
         let mut frame_snapshot = FrameSnapshot::default();
-        state.ui.active_tab = ActiveTab::Options;
+        state.ui.active_tab = ActiveTab::Inputs;
         frame_snapshot.layout.form = Some(Rect::new(0, 0, 30, 10));
         frame_snapshot.layout.form_view = Some(Rect::new(0, 0, 30, 10));
 
@@ -211,9 +225,9 @@ mod tests {
     fn tab_click_switches_active_tab() {
         let mut state = AppState::new(command(Vec::new()));
         let mut frame_snapshot = FrameSnapshot::default();
-        state.ui.active_tab = ActiveTab::Options;
+        state.ui.active_tab = ActiveTab::Inputs;
         frame_snapshot.layout.form_tabs = vec![TabButtonLayout {
-            tab: ActiveTab::Help,
+            tab: ActiveTab::Inputs,
             rect: Rect::new(0, 0, 8, 1),
         }];
 
@@ -223,7 +237,7 @@ mod tests {
         let effect = apply_action(&action, &mut state, &frame_snapshot);
 
         assert_eq!(effect, Effect::None);
-        assert_eq!(state.ui.active_tab, ActiveTab::Help);
+        assert_eq!(state.ui.active_tab, ActiveTab::Inputs);
     }
 
     #[test]
@@ -281,16 +295,19 @@ mod tests {
     fn sidebar_caret_click_selects_command_and_expands_item() {
         let mut state = AppState::new(CommandSpec {
             name: "tool".to_string(),
+            version: None,
             about: None,
             help: String::new(),
             args: Vec::new(),
             subcommands: vec![CommandSpec {
                 name: "build".to_string(),
+                version: None,
                 about: None,
                 help: String::new(),
                 args: Vec::new(),
                 subcommands: vec![CommandSpec {
                     name: "release".to_string(),
+                    version: None,
                     about: None,
                     help: String::new(),
                     args: Vec::new(),
@@ -324,5 +341,24 @@ mod tests {
         );
         assert!(state.domain.expanded.contains("tool::build"));
         assert!(matches!(state.ui.focus, Focus::Sidebar));
+    }
+
+    #[test]
+    fn help_overlay_ignores_scroll_events_outside_form_area() {
+        let mut state = AppState::new(command(Vec::new()));
+        state.ui.help_open = true;
+        let mut frame_snapshot = FrameSnapshot::default();
+        frame_snapshot.layout.form = Some(Rect::new(20, 0, 40, 10));
+        frame_snapshot.layout.form_view = Some(Rect::new(20, 0, 40, 10));
+        frame_snapshot.layout.sidebar = Some(Rect::new(0, 0, 20, 10));
+
+        let action = handle_mouse_event(
+            scroll(AppMouseEventKind::ScrollDown, 5, 5),
+            &state,
+            &frame_snapshot,
+            &TuiConfig::default(),
+        );
+
+        assert!(action.is_none());
     }
 }

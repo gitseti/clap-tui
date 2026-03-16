@@ -3,6 +3,7 @@ use clap_tui::TuiApp;
 
 fn build_command() -> Command {
     Command::new("kitchen-sink")
+        .version("0.1.0")
         .about("Track clap feature coverage in the TUI generator")
         .long_about(
             "A broad clap command graph used to track which clap features are \
@@ -19,7 +20,6 @@ fn build_command() -> Command {
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
-                .visible_short_alias('V')
                 .help("Increase logging verbosity")
                 .long_help("Repeat to increase verbosity, for example `-v`, `-vv`, or `-vvv`.")
                 .help_heading("Global")

@@ -100,9 +100,7 @@ pub(crate) fn normalize_state(state: &mut AppState) {
         .map(|item| (item.order_index, item.arg))
         .collect::<Vec<_>>();
     state.ui.ensure_active_tab_visible(&visible);
-    if state.ui.active_tab != ActiveTab::Help {
-        state.ui.ensure_selected_arg_visible(&visible);
-    }
+    state.ui.ensure_selected_arg_visible(&visible);
 }
 
 fn apply_command_action(action: &Action, state: &mut AppState) -> Effect {
@@ -221,7 +219,7 @@ fn apply_search_input(key: AppKeyEvent, state: &mut AppState) {
 }
 
 fn apply_form_text_input(key: AppKeyEvent, state: &mut AppState) {
-    if matches!(state.ui.active_tab, ActiveTab::Help) {
+    if state.ui.help_open {
         return;
     }
     let command = state.domain.current_command().clone();
@@ -336,6 +334,14 @@ fn apply_mouse_selection(
 }
 
 fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &FrameSnapshot) {
+    if let Some(sidebar_area) = frame_snapshot.layout.sidebar
+        && y == sidebar_area.y
+    {
+        navigation::select_root(state);
+        state.ui.focus = Focus::Sidebar;
+        return;
+    }
+
     let Some((path, caret_hit, has_children)) = frame_snapshot.sidebar_item_at(x, y).map(|item| {
         (
             item.path.clone(),
@@ -375,7 +381,7 @@ fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &Fr
 }
 
 fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: &FrameSnapshot) {
-    if matches!(state.ui.active_tab, ActiveTab::Help) {
+    if state.ui.help_open {
         return;
     }
     let Some(content_y) =
@@ -497,6 +503,7 @@ mod tests {
     fn command(args: Vec<ArgSpec>) -> CommandSpec {
         CommandSpec {
             name: "tool".to_string(),
+            version: None,
             about: None,
             help: String::new(),
             args,
@@ -584,5 +591,38 @@ mod tests {
             editor.selection_anchor(),
             Some(crate::editor_state::TextPosition::default())
         );
+    }
+
+    #[test]
+    fn sidebar_title_click_reselects_root() {
+        let mut state = crate::input::AppState::new(CommandSpec {
+            name: "tool".to_string(),
+            version: Some("1.0.0".to_string()),
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: vec![CommandSpec {
+                name: "build".to_string(),
+                version: None,
+                about: None,
+                help: String::new(),
+                args: Vec::new(),
+                subcommands: Vec::new(),
+            }],
+        });
+        state
+            .domain
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.sidebar = Some(ratatui::layout::Rect::new(0, 0, 20, 8));
+
+        let action = Action::ClickSidebar { x: 2, y: 0 };
+        let effect = apply_action(&action, &mut state, &snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.domain.selected_path().is_empty());
+        assert_eq!(state.domain.current_command().name, "tool");
+        assert!(matches!(state.ui.focus, crate::input::Focus::Sidebar));
     }
 }

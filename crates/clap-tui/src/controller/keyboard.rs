@@ -17,6 +17,19 @@ pub(crate) fn handle_key_event(
     if key.code == AppKeyCode::Enter && key.modifiers.control {
         return Some(Action::Run);
     }
+    if state.ui.help_open {
+        return match key.code {
+            AppKeyCode::Esc => Some(Action::ToggleHelp),
+            AppKeyCode::Char(c) if c == config.keymap.help => Some(Action::ToggleHelp),
+            AppKeyCode::F(1) => Some(Action::ToggleHelp),
+            AppKeyCode::Up => Some(Action::ScrollForm(-1)),
+            AppKeyCode::Down => Some(Action::ScrollForm(1)),
+            AppKeyCode::PageUp => Some(Action::ScrollForm(-10)),
+            AppKeyCode::PageDown => Some(Action::ScrollForm(10)),
+            AppKeyCode::Tab => Some(Action::ToggleFocus),
+            _ => None,
+        };
+    }
     if matches!(state.ui.focus, Focus::Search) {
         return Some(Action::SearchInput(key));
     }

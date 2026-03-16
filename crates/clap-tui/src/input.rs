@@ -14,9 +14,7 @@ pub enum Focus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
-    Options,
-    Arguments,
-    Help,
+    Inputs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +68,8 @@ pub struct UiState {
     pub focus: Focus,
     pub active_tab: ActiveTab,
     pub last_non_help_tab: ActiveTab,
+    pub help_open: bool,
+    pub help_scroll: u16,
     pub selected_arg_index: usize,
     pub search_query: String,
     pub editors: EditorState,
@@ -227,8 +227,8 @@ impl DomainState {
 }
 
 impl UiState {
-    pub fn visible_tabs() -> [ActiveTab; 3] {
-        [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help]
+    pub fn visible_tabs() -> [ActiveTab; 1] {
+        [ActiveTab::Inputs]
     }
 
     pub fn focus_first_tab(&mut self, visible_args: &[(usize, &ArgSpec)]) {
@@ -246,10 +246,8 @@ impl UiState {
         }
 
         self.active_tab = Self::visible_tabs()[0];
-        if self.active_tab != ActiveTab::Help {
-            self.last_non_help_tab = self.active_tab;
-            self.ensure_selected_arg_visible(visible_args);
-        }
+        self.last_non_help_tab = self.active_tab;
+        self.ensure_selected_arg_visible(visible_args);
         self.form_scroll = 0;
         self.dropdown_open = None;
         self.mouse_select = None;
@@ -274,6 +272,14 @@ impl UiState {
 
     pub fn clamp_form_scroll(&mut self, frame_snapshot: &FrameSnapshot) {
         self.form_scroll = self.form_scroll(frame_snapshot);
+    }
+
+    pub fn help_scroll(&self, frame_snapshot: &FrameSnapshot) -> u16 {
+        frame_snapshot.help_scroll(self.help_scroll)
+    }
+
+    pub fn clamp_help_scroll(&mut self, frame_snapshot: &FrameSnapshot) {
+        self.help_scroll = self.help_scroll(frame_snapshot);
     }
 }
 
@@ -303,8 +309,10 @@ impl AppState {
             domain: DomainState::new(root),
             ui: UiState {
                 focus: Focus::Sidebar,
-                active_tab: ActiveTab::Options,
-                last_non_help_tab: ActiveTab::Options,
+                active_tab: ActiveTab::Inputs,
+                last_non_help_tab: ActiveTab::Inputs,
+                help_open: false,
+                help_scroll: 0,
                 selected_arg_index: 0,
                 search_query: String::new(),
                 editors: EditorState::default(),

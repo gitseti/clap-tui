@@ -3,23 +3,18 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
 use crate::config::TuiConfig;
 use crate::form_editor;
-use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot, TabButtonLayout};
-use crate::input::{ActiveTab, ArgValue, Focus, UiState};
+use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot};
+use crate::input::{ArgValue, Focus, UiState};
 use crate::spec::CommandPath;
 use crate::spec::{ArgSpec, choice_value_matches_default};
 use crate::view::form::{self, field_metrics};
 
 use super::{dropdown, screen::ScreenView, styles};
-
-const TAB_CONTENT_TOP_PADDING: u16 = 1;
-const TAB_PADDING_LEFT: &str = " ";
-const TAB_PADDING_RIGHT: &str = " ";
-const TAB_DIVIDER: &str = "│";
 
 pub(crate) fn populate_layout(
     ui: &UiState,
@@ -27,39 +22,21 @@ pub(crate) fn populate_layout(
     vm: &ScreenView<'_>,
     frame_snapshot: &mut FrameSnapshot,
 ) {
-    let show_tabs = vm.visible_tabs.len() > 1;
-    let mut content_area = area;
-    let content_height = match ui.active_tab {
-        ActiveTab::Help => form::measure_help_height(&vm.command.help),
-        _ => form::measure_fields_height(&vm.active_args),
-    };
-    let tab_layouts = if show_tabs {
-        let tabs_rect = Rect::new(area.x, area.y, area.width, 1);
-        let content_offset = 1 + TAB_CONTENT_TOP_PADDING;
-        content_area = Rect::new(
-            area.x,
-            area.y.saturating_add(content_offset),
-            area.width,
-            area.height.saturating_sub(content_offset),
-        );
-        layout_tab_bar(tabs_rect, vm)
-    } else {
-        Vec::new()
-    };
+    let content_area = area;
+    let content_height = form::measure_fields_height(&vm.active_args);
+    let help_height = form::measure_help_height(&vm.command.help);
     let viewport_height = content_area.height;
+    let help_viewport_height = viewport_height.saturating_sub(4);
     frame_snapshot.form_scroll_max = content_height.saturating_sub(viewport_height);
+    frame_snapshot.help_scroll_max = help_height.saturating_sub(help_viewport_height);
     let form_scroll = ui.form_scroll(frame_snapshot);
     let frame_layout = &mut frame_snapshot.layout;
     frame_layout.form = Some(area);
     frame_layout.dropdown = None;
     frame_layout.form_fields.clear();
     frame_layout.form_inputs.clear();
-    frame_layout.form_tabs = tab_layouts;
+    frame_layout.form_tabs.clear();
     frame_layout.form_view = Some(content_area);
-
-    if ui.active_tab == ActiveTab::Help {
-        return;
-    }
 
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
     for item in &vm.active_args {
@@ -171,35 +148,35 @@ pub(crate) fn render_form(
         return;
     };
     let frame_layout = &frame_snapshot.layout;
-    let show_tabs = !frame_layout.form_tabs.is_empty();
-    if show_tabs {
-        render_tab_bar(
-            frame,
-            ui,
-            config,
-            Rect::new(area.x, area.y, area.width, 1),
-            vm,
-        );
-    }
-
     let content_area = frame_layout.form_view.unwrap_or(area);
-    let content_height = match ui.active_tab {
-        ActiveTab::Help => form::measure_help_height(&vm.command.help),
-        _ => form::measure_fields_height(&vm.active_args),
-    };
+    let content_height = form::measure_fields_height(&vm.active_args);
     let viewport_height = content_area.height;
     let form_scroll = ui.form_scroll(frame_snapshot);
 
-    match ui.active_tab {
-        ActiveTab::Help => render_help(frame, config, content_area, form_scroll, &vm.command.help),
-        _ => render_fields(frame, ui, selected_path, config, vm, frame_snapshot),
+    if ui.help_open {
+        render_help_overlay(
+            frame,
+            config,
+            area,
+            ui.help_scroll(frame_snapshot),
+            &vm.command.help,
+        );
+        return;
     }
+
+    render_fields(frame, ui, selected_path, config, vm, frame_snapshot);
 
     if content_height > viewport_height {
         let scroll_steps = usize::from(frame_snapshot.form_scroll_max.saturating_add(1));
         let mut scrollbar_state = ScrollbarState::new(scroll_steps)
             .position(usize::from(form_scroll))
             .viewport_content_length(usize::from(viewport_height));
+        let scrollbar_area = Rect::new(
+            content_area.x,
+            content_area.y,
+            content_area.width.saturating_add(1),
+            content_area.height,
+        );
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .track_symbol(Some("┃"))
             .thumb_symbol("█")
@@ -209,103 +186,8 @@ pub(crate) fn render_form(
                     .add_modifier(Modifier::BOLD),
             )
             .track_style(Style::default().fg(config.theme.dim));
-        frame.render_stateful_widget(scrollbar, content_area, &mut scrollbar_state);
+        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
-}
-
-fn layout_tab_bar(area: Rect, vm: &ScreenView<'_>) -> Vec<TabButtonLayout> {
-    let mut cursor_x = area.x;
-    let right = area.x.saturating_add(area.width);
-    vm.visible_tabs
-        .iter()
-        .enumerate()
-        .filter_map(|(index, tab)| {
-            let width = tab_render_width(*tab);
-            let layout = TabButtonLayout {
-                tab: *tab,
-                rect: intersect_rects(Rect::new(cursor_x, area.y, width, 1), area)?,
-            };
-            cursor_x = cursor_x.saturating_add(width);
-            if index + 1 < vm.visible_tabs.len() {
-                cursor_x = cursor_x.saturating_add(tab_divider_width());
-            }
-            if cursor_x >= right {
-                return Some(layout);
-            }
-            Some(layout)
-        })
-        .collect()
-}
-
-fn render_tab_bar(
-    frame: &mut Frame<'_>,
-    ui: &UiState,
-    config: &TuiConfig,
-    area: Rect,
-    vm: &ScreenView<'_>,
-) {
-    frame.render_widget(build_tabs(ui, config, vm), area);
-}
-
-fn tab_label(tab: ActiveTab) -> &'static str {
-    match tab {
-        ActiveTab::Options => "Options",
-        ActiveTab::Arguments => "Arguments",
-        ActiveTab::Help => "Help",
-    }
-}
-
-fn tab_title(ui: &UiState, config: &TuiConfig, tab: ActiveTab) -> Line<'static> {
-    let style = if ui.hover_tab == Some(tab) && ui.active_tab != tab {
-        Style::default()
-            .fg(config.theme.text)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    };
-    Line::from(Span::styled(tab_label(tab).to_string(), style))
-}
-
-fn selected_tab_index(ui: &UiState, vm: &ScreenView<'_>) -> usize {
-    vm.visible_tabs
-        .iter()
-        .position(|tab| *tab == ui.active_tab)
-        .unwrap_or_default()
-}
-
-fn build_tabs<'a>(ui: &UiState, config: &TuiConfig, vm: &'a ScreenView<'a>) -> Tabs<'static> {
-    let titles = vm
-        .visible_tabs
-        .iter()
-        .map(|tab| tab_title(ui, config, *tab))
-        .collect::<Vec<_>>();
-    Tabs::new(titles)
-        .select(selected_tab_index(ui, vm))
-        .style(Style::default().fg(config.theme.dim))
-        .highlight_style(
-            Style::default()
-                .fg(config.theme.panel_bg)
-                .bg(config.theme.accent)
-                .add_modifier(Modifier::BOLD),
-        )
-        .divider(Span::raw(TAB_DIVIDER))
-        .padding(TAB_PADDING_LEFT, TAB_PADDING_RIGHT)
-}
-
-fn tab_render_width(tab: ActiveTab) -> u16 {
-    usize_to_u16(
-        TAB_PADDING_LEFT.chars().count()
-            + tab_label(tab).chars().count()
-            + TAB_PADDING_RIGHT.chars().count(),
-    )
-}
-
-fn tab_divider_width() -> u16 {
-    usize_to_u16(TAB_DIVIDER.chars().count())
-}
-
-fn usize_to_u16(width: usize) -> u16 {
-    u16::try_from(width).unwrap_or(u16::MAX)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -548,13 +430,61 @@ fn place_textarea_cursor(frame: &mut Frame<'_>, textarea: &tui_textarea::TextAre
     frame.set_cursor_position((x, y));
 }
 
-fn render_help(frame: &mut Frame<'_>, config: &TuiConfig, area: Rect, scroll: u16, help: &str) {
+fn render_help_overlay(
+    frame: &mut Frame<'_>,
+    config: &TuiConfig,
+    area: Rect,
+    scroll: u16,
+    help: &str,
+) {
+    let popup = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::raw(" "),
+            Span::raw("Help"),
+            Span::raw(" "),
+        ]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(config.theme.panel_focus_border))
+        .style(styles::panel(config));
+    let inner = popup.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    frame.render_widget(block, popup);
     frame.render_widget(
         Paragraph::new(help.to_string())
             .style(Style::default().fg(config.theme.text))
             .scroll((scroll, 0)),
-        area,
+        inner,
     );
+
+    let visible_height = inner.height;
+    if usize::from(visible_height) < help.lines().count() {
+        let steps = usize::from(
+            u16::try_from(help.lines().count())
+                .unwrap_or(u16::MAX)
+                .saturating_sub(visible_height),
+        )
+        .saturating_add(1);
+        let mut scrollbar_state = ScrollbarState::new(steps)
+            .position(usize::from(scroll))
+            .viewport_content_length(usize::from(visible_height));
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .track_symbol(Some("┃"))
+            .thumb_symbol("█")
+            .thumb_style(
+                Style::default()
+                    .fg(config.theme.panel_focus_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .track_style(Style::default().fg(config.theme.dim));
+        frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+    }
 }
 
 fn field_help_text(arg: &ArgSpec) -> Option<String> {
@@ -563,24 +493,22 @@ fn field_help_text(arg: &ArgSpec) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::buffer::Buffer;
-    use ratatui::style::{Modifier, Style};
-    use ratatui::widgets::Widget;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
-    use super::{
-        build_tabs, populate_layout, selected_tab_index, tab_render_width, tab_title,
-        text_input_is_truncated,
-    };
-    use crate::config::TuiConfig;
+    use super::{populate_layout, text_input_is_truncated};
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, Focus, UiState};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
+    use crate::ui::form::render_form;
     use crate::ui::screen::ScreenView;
     use crate::view::form::visible_args;
+    use crate::TuiConfig;
 
     fn command() -> CommandSpec {
         CommandSpec {
             name: "tool".to_string(),
+            version: None,
             about: None,
             help: String::new(),
             args: Vec::new(),
@@ -591,8 +519,10 @@ mod tests {
     fn ui_state() -> UiState {
         UiState {
             focus: Focus::Form,
-            active_tab: ActiveTab::Options,
-            last_non_help_tab: ActiveTab::Options,
+            active_tab: ActiveTab::Inputs,
+            last_non_help_tab: ActiveTab::Inputs,
+            help_open: false,
+            help_scroll: 0,
             selected_arg_index: 0,
             search_query: String::new(),
             editors: crate::editor_state::EditorState::default(),
@@ -620,74 +550,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tab_titles_keep_expected_labels_and_order() {
-        let command = command();
-        let vm = ScreenView {
-            command: &command,
-            tree_items: Vec::new(),
-            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
-            active_args: Vec::new(),
-            preview_argv: Vec::new(),
-            inputs: None,
-        };
-
-        let labels = vm
-            .visible_tabs
+    fn buffer_text(backend: &TestBackend) -> String {
+        backend
+            .buffer()
+            .content
             .iter()
-            .map(|tab| tab_title(&ui_state(), &TuiConfig::default(), *tab).to_string())
-            .collect::<Vec<_>>();
-
-        assert_eq!(labels, vec!["Options", "Arguments", "Help"]);
+            .map(|cell| cell.symbol())
+            .collect::<String>()
     }
 
     #[test]
-    fn selected_tab_index_follows_active_tab() {
+    fn layout_phase_has_no_tab_geometry_for_single_inputs_view() {
         let command = command();
         let vm = ScreenView {
             command: &command,
+            root: &command,
             tree_items: Vec::new(),
-            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
-            active_args: Vec::new(),
-            preview_argv: Vec::new(),
-            inputs: None,
-        };
-        let mut ui = ui_state();
-        ui.active_tab = ActiveTab::Help;
-
-        assert_eq!(selected_tab_index(&ui, &vm), 2);
-    }
-
-    #[test]
-    fn hovered_unselected_tab_title_is_bold() {
-        let mut ui = ui_state();
-        ui.hover_tab = Some(ActiveTab::Arguments);
-
-        let title = tab_title(&ui, &TuiConfig::default(), ActiveTab::Arguments);
-        let span = title.spans.first().expect("tab title span");
-
-        assert!(span.style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(span.style.fg, Some(TuiConfig::default().theme.text));
-    }
-
-    #[test]
-    fn hovered_selected_tab_title_uses_default_style() {
-        let mut ui = ui_state();
-        ui.hover_tab = Some(ActiveTab::Options);
-
-        let title = tab_title(&ui, &TuiConfig::default(), ActiveTab::Options);
-        let span = title.spans.first().expect("tab title span");
-
-        assert_eq!(span.style, Style::default());
-    }
-
-    #[test]
-    fn layout_phase_populates_tab_and_form_view_geometry() {
-        let command = command();
-        let vm = ScreenView {
-            command: &command,
-            tree_items: Vec::new(),
-            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             inputs: None,
@@ -701,28 +579,20 @@ mod tests {
             &mut snapshot,
         );
 
-        assert_eq!(snapshot.layout.form_tabs.len(), 3);
+        assert!(snapshot.layout.form_tabs.is_empty());
         assert_eq!(
             snapshot.layout.form_view,
-            Some(ratatui::layout::Rect::new(2, 5, 40, 10))
-        );
-        assert_eq!(
-            snapshot.layout.form_tabs[0].rect,
-            ratatui::layout::Rect::new(2, 3, tab_render_width(ActiveTab::Options), 1)
-        );
-        assert_eq!(
-            snapshot.layout.form_tabs[1].rect.x,
-            2 + tab_render_width(ActiveTab::Options) + 1
+            Some(ratatui::layout::Rect::new(2, 3, 40, 12))
         );
     }
 
     #[test]
-    fn layout_phase_clips_tab_geometry_to_visible_area() {
+    fn layout_phase_uses_full_height_without_tab_strip() {
         let command = command();
         let vm = ScreenView {
             command: &command,
+            root: &command,
             tree_items: Vec::new(),
-            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             inputs: None,
@@ -736,49 +606,89 @@ mod tests {
             &mut snapshot,
         );
 
-        assert_eq!(snapshot.layout.form_tabs.len(), 2);
+        assert!(snapshot.layout.form_tabs.is_empty());
         assert_eq!(
-            snapshot.layout.form_tabs[0].rect,
-            ratatui::layout::Rect::new(2, 3, 9, 1)
-        );
-        assert_eq!(
-            snapshot.layout.form_tabs[1].rect,
-            ratatui::layout::Rect::new(12, 3, 2, 1)
+            snapshot.layout.form_view,
+            Some(ratatui::layout::Rect::new(2, 3, 12, 6))
         );
     }
 
     #[test]
-    fn tabs_render_with_stock_padding_and_dividers() {
-        let command = command();
+    fn layout_phase_uses_help_overlay_inner_viewport_for_scroll_range() {
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: (1..=10)
+                .map(|line| format!("line {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+        };
         let vm = ScreenView {
             command: &command,
+            root: &command,
             tree_items: Vec::new(),
-            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             inputs: None,
         };
-        let area = ratatui::layout::Rect::new(0, 0, 32, 1);
-        let mut buffer = Buffer::empty(area);
+        let mut snapshot = FrameSnapshot::default();
 
-        Widget::render(
-            build_tabs(&ui_state(), &TuiConfig::default(), &vm),
-            area,
-            &mut buffer,
+        populate_layout(
+            &ui_state(),
+            ratatui::layout::Rect::new(2, 3, 40, 8),
+            &vm,
+            &mut snapshot,
         );
 
-        assert_eq!(buffer[(0, 0)].symbol(), " ");
-        assert_eq!(buffer[(1, 0)].symbol(), "O");
-        assert_eq!(buffer[(8, 0)].symbol(), " ");
-        assert_eq!(buffer[(9, 0)].symbol(), "│");
-        assert_eq!(buffer[(10, 0)].symbol(), " ");
-        assert_eq!(buffer[(11, 0)].symbol(), "A");
+        assert_eq!(snapshot.help_scroll_max, 6);
+    }
+
+    #[test]
+    fn help_overlay_skips_rendering_fields_underneath() {
+        let mut command = command();
+        command.help = "Command help".to_string();
+        command.args = vec![option_arg("config", "--config")];
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            tree_items: Vec::new(),
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.help_open = true;
+
+        populate_layout(&ui, ratatui::layout::Rect::new(0, 0, 40, 8), &vm, &mut snapshot);
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(
+                    frame,
+                    &ui,
+                    &Vec::<String>::new().into(),
+                    &TuiConfig::default(),
+                    &vm,
+                    &snapshot,
+                );
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("Command help"));
+        assert!(!rendered.contains("--config"));
     }
 
     #[test]
     fn layout_phase_clips_scrolled_fields_to_form_view() {
         let command = CommandSpec {
             name: "tool".to_string(),
+            version: None,
             about: None,
             help: String::new(),
             args: vec![
@@ -790,9 +700,9 @@ mod tests {
         };
         let vm = ScreenView {
             command: &command,
+            root: &command,
             tree_items: Vec::new(),
-            visible_tabs: [ActiveTab::Options, ActiveTab::Arguments, ActiveTab::Help],
-            active_args: visible_args(&command, ActiveTab::Options),
+            active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             inputs: None,
         };

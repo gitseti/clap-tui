@@ -15,24 +15,6 @@ pub(crate) fn panel_border(config: &TuiConfig, focused: bool) -> Style {
     Style::default().fg(color)
 }
 
-pub(crate) fn panel_title(config: &TuiConfig, focused: bool) -> Style {
-    let color = if focused {
-        config.theme.panel_focus_border
-    } else {
-        config.theme.dim
-    };
-    let style = Style::default().fg(color);
-    if focused {
-        style.add_modifier(Modifier::BOLD)
-    } else {
-        style
-    }
-}
-
-pub(crate) fn header(config: &TuiConfig) -> Style {
-    Style::default().bg(config.theme.header_bg)
-}
-
 pub(crate) fn input(config: &TuiConfig, selected: bool) -> Style {
     if selected {
         Style::default().bg(config.theme.surface_raised)

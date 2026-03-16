@@ -2,7 +2,7 @@ use clap::Parser;
 use clap_tui::TuiApp;
 
 #[derive(Debug, Parser)]
-#[command(name = "simple", about = "Simple example")]
+#[command(name = "simple", about = "Simple example", version = "0.1.0")]
 struct Cli {
     /// Enable verbose output
     #[arg(short, long)]

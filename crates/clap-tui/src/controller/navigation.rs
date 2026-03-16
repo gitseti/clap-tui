@@ -10,17 +10,15 @@ pub(crate) fn switch_tab(state: &mut AppState, tab: ActiveTab) {
     let target = tabs
         .into_iter()
         .find(|candidate| *candidate == tab)
-        .unwrap_or(ActiveTab::Options);
+        .unwrap_or(ActiveTab::Inputs);
     if target == state.ui.active_tab {
         return;
     }
     state.ui.active_tab = target;
-    if state.ui.active_tab != ActiveTab::Help {
-        state.ui.last_non_help_tab = state.ui.active_tab;
-        let command = state.domain.current_command().clone();
-        let args = form::visible_args(&command, state.ui.active_tab);
-        state.ui.ensure_selected_arg_visible(&visible_args(&args));
-    }
+    state.ui.last_non_help_tab = state.ui.active_tab;
+    let command = state.domain.current_command().clone();
+    let args = form::visible_args(&command, state.ui.active_tab);
+    state.ui.ensure_selected_arg_visible(&visible_args(&args));
     reset_transient_form_ui(state);
 }
 
@@ -34,17 +32,10 @@ pub(crate) fn cycle_tabs(state: &mut AppState) {
 }
 
 pub(crate) fn toggle_help_tab(state: &mut AppState) {
-    if state.ui.active_tab == ActiveTab::Help {
-        let tabs = UiState::visible_tabs();
-        let mut target = state.ui.last_non_help_tab;
-        if !tabs.contains(&target) {
-            target = tabs[0];
-        }
-        switch_tab(state, target);
-    } else {
-        state.ui.last_non_help_tab = state.ui.active_tab;
-        switch_tab(state, ActiveTab::Help);
-    }
+    state.ui.help_open = !state.ui.help_open;
+    state.ui.help_scroll = 0;
+    state.ui.dropdown_open = None;
+    state.ui.mouse_select = None;
 }
 
 pub(crate) fn move_sidebar_selection(state: &mut AppState, delta: isize) {
@@ -56,10 +47,31 @@ pub(crate) fn move_sidebar_selection(state: &mut AppState, delta: isize) {
     if items.is_empty() {
         return;
     }
-    let current_index = items
+    if state.domain.selected_path().is_empty() {
+        if delta > 0 {
+            select_command(state, items[0].path.as_slice());
+        }
+        return;
+    }
+    let current_index = match items
         .iter()
         .position(|item| item.path == *state.domain.selected_path())
-        .unwrap_or(0);
+    {
+        Some(current_index) => current_index,
+        None if delta > 0 => {
+            select_command(state, items[0].path.as_slice());
+            return;
+        }
+        None if delta < 0 => {
+            select_command(state, items[items.len() - 1].path.as_slice());
+            return;
+        }
+        None => return,
+    };
+    if delta < 0 && current_index == 0 {
+        select_root(state);
+        return;
+    }
     let next_index = current_index
         .saturating_add_signed(delta)
         .min(items.len() - 1);
@@ -73,7 +85,7 @@ pub(crate) fn move_form_selection(
     frame_snapshot: &FrameSnapshot,
     delta: isize,
 ) {
-    if matches!(state.ui.active_tab, ActiveTab::Help) {
+    if state.ui.help_open {
         return;
     }
     let command = state.domain.current_command().clone();
@@ -136,7 +148,7 @@ pub(crate) fn expand_selected(state: &mut AppState) {
 }
 
 pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
-    if matches!(state.ui.active_tab, ActiveTab::Help) {
+    if state.ui.help_open {
         return;
     }
     let command = state.domain.current_command().clone();
@@ -203,7 +215,7 @@ pub(crate) fn open_enum_dropdown(
 }
 
 pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
-    if matches!(state.ui.active_tab, ActiveTab::Help) {
+    if state.ui.help_open {
         return;
     }
     let Some(form_area) = frame_snapshot.form_view_rect() else {
@@ -231,6 +243,15 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
 }
 
 pub(crate) fn scroll_form(state: &mut AppState, frame_snapshot: &FrameSnapshot, delta: i16) {
+    if state.ui.help_open {
+        if delta.is_negative() {
+            state.ui.help_scroll = state.ui.help_scroll.saturating_sub(delta.unsigned_abs());
+        } else {
+            state.ui.help_scroll = state.ui.help_scroll.saturating_add(delta.unsigned_abs());
+        }
+        state.ui.clamp_help_scroll(frame_snapshot);
+        return;
+    }
     if delta.is_negative() {
         state.ui.form_scroll = state.ui.form_scroll.saturating_sub(delta.unsigned_abs());
     } else {
@@ -289,6 +310,10 @@ pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
             );
         }
     }
+}
+
+pub(crate) fn select_root(state: &mut AppState) {
+    select_command(state, &[]);
 }
 
 fn select_command(state: &mut AppState, path: &[String]) {
@@ -351,6 +376,7 @@ mod tests {
     fn command(name: &str, args: Vec<ArgSpec>, subcommands: Vec<CommandSpec>) -> CommandSpec {
         CommandSpec {
             name: name.to_string(),
+            version: None,
             about: None,
             help: String::new(),
             args,
@@ -419,6 +445,70 @@ mod tests {
                 .resolve_path(state.domain.selected_path().as_slice())
                 .is_some()
         );
+    }
+
+    #[test]
+    fn moving_sidebar_up_from_first_child_reselects_root() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![command("build", Vec::new(), Vec::new())],
+        );
+        let mut state = AppState::new(root);
+
+        move_sidebar_selection(&mut state, 1);
+        move_sidebar_selection(&mut state, -1);
+
+        assert!(state.domain.selected_path().is_empty());
+        assert_eq!(state.domain.current_command().name, "tool");
+    }
+
+    #[test]
+    fn filtered_sidebar_navigation_recovers_with_first_visible_match() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![
+                command("build", Vec::new(), Vec::new()),
+                command("deploy", Vec::new(), Vec::new()),
+                command("debug", Vec::new(), Vec::new()),
+            ],
+        );
+        let mut state = AppState::new(root);
+        state
+            .domain
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        state.ui.search_query = "de".to_string();
+
+        move_sidebar_selection(&mut state, 1);
+
+        assert_eq!(state.domain.current_command().name, "deploy");
+        assert_eq!(state.domain.selected_path().as_slice(), &["deploy".to_string()]);
+    }
+
+    #[test]
+    fn filtered_sidebar_navigation_recovers_with_last_visible_match() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![
+                command("build", Vec::new(), Vec::new()),
+                command("deploy", Vec::new(), Vec::new()),
+                command("debug", Vec::new(), Vec::new()),
+            ],
+        );
+        let mut state = AppState::new(root);
+        state
+            .domain
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        state.ui.search_query = "de".to_string();
+
+        move_sidebar_selection(&mut state, -1);
+
+        assert_eq!(state.domain.current_command().name, "debug");
+        assert_eq!(state.domain.selected_path().as_slice(), &["debug".to_string()]);
     }
 
     #[test]

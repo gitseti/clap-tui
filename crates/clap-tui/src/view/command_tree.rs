@@ -4,11 +4,36 @@ use crate::spec::{CommandPath, CommandSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TreeItem {
-    pub(crate) label: String,
+    pub(crate) name: String,
+    pub(crate) version: Option<String>,
     pub(crate) path: CommandPath,
     pub(crate) has_children: bool,
     pub(crate) indent: usize,
     pub(crate) expanded: bool,
+}
+
+impl TreeItem {
+    pub(crate) fn prefix(&self) -> String {
+        let indent = "  ".repeat(self.indent / 2);
+        let caret = if !self.has_children {
+            " "
+        } else if self.expanded {
+            "-"
+        } else {
+            "+"
+        };
+        format!("{indent}{caret} ")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn label(&self) -> String {
+        let mut label = format!("{}{}", self.prefix(), self.name);
+        if let Some(version) = &self.version {
+            label.push(' ');
+            label.push_str(version);
+        }
+        label
+    }
 }
 
 pub(crate) fn tree_items(
@@ -18,7 +43,18 @@ pub(crate) fn tree_items(
 ) -> Vec<TreeItem> {
     let mut items = Vec::new();
     let filter = search.trim().to_lowercase();
-    build_tree_items_inner(root, expanded, &filter, &mut Vec::new(), 0, &mut items);
+    let root_path = vec![root.name.clone()];
+    for subcommand in &root.subcommands {
+        let mut child_path = root_path.clone();
+        build_tree_items_inner(
+            subcommand,
+            expanded,
+            &filter,
+            &mut child_path,
+            0,
+            &mut items,
+        );
+    }
     items
 }
 
@@ -62,25 +98,13 @@ fn build_tree_items_inner(
 
     let include = matches || any_child_matches;
     if include {
-        let indent = "  ".repeat(depth);
-        let caret = if cmd.subcommands.is_empty() {
-            " "
-        } else if is_expanded {
-            "-"
-        } else {
-            "+"
-        };
-        let label = format!("{indent}{caret} {}", cmd.name);
-        let display_path = if depth == 0 {
-            CommandPath::default()
-        } else {
-            CommandPath::from(path[1..].to_vec())
-        };
+        let display_path = CommandPath::from(path[1..].to_vec());
         items.push(TreeItem {
-            label,
+            name: cmd.name.clone(),
+            version: None,
             path: display_path,
             has_children: !cmd.subcommands.is_empty(),
-            indent: indent.len(),
+            indent: depth * 2,
             expanded: is_expanded,
         });
         let show_children = if filter.is_empty() {
@@ -102,11 +126,12 @@ mod tests {
     use std::collections::HashSet;
 
     use super::tree_items;
-    use crate::spec::{ArgSpec, CommandPath, CommandSpec};
+    use crate::spec::{ArgSpec, CommandSpec};
 
     fn command(name: &str, about: Option<&str>, subcommands: Vec<CommandSpec>) -> CommandSpec {
         CommandSpec {
             name: name.to_string(),
+            version: None,
             about: about.map(str::to_string),
             help: String::new(),
             args: Vec::<ArgSpec>::new(),
@@ -120,9 +145,7 @@ mod tests {
 
         let items = tree_items(&root, &HashSet::new(), "");
 
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "  tool");
-        assert!(items[0].path.is_empty());
+        assert!(items.is_empty());
     }
 
     #[test]
@@ -134,8 +157,11 @@ mod tests {
 
         let items = tree_items(&root, &expanded, "");
 
-        let labels = items.into_iter().map(|item| item.label).collect::<Vec<_>>();
-        assert_eq!(labels, vec!["- tool", "  - api", "      serve"]);
+        let labels = items
+            .into_iter()
+            .map(|item| item.label())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["- api", "    serve"]);
     }
 
     #[test]
@@ -150,7 +176,6 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                CommandPath::default(),
                 vec!["release".to_string()].into(),
                 vec!["release".to_string(), "deploy".to_string()].into(),
             ]
@@ -165,7 +190,7 @@ mod tests {
 
         let items = tree_items(&root, &expanded, "");
 
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[1].path, vec!["build".to_string()].into());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].path, vec!["build".to_string()].into());
     }
 }

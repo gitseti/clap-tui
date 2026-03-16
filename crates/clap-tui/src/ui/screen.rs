@@ -1,5 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
 use std::collections::HashSet;
 
@@ -16,8 +18,8 @@ use super::{dropdown, footer, form as form_ui, header, layout, preview, sidebar,
 #[derive(Debug, Clone)]
 pub(crate) struct ScreenView<'a> {
     pub(crate) command: &'a CommandSpec,
+    pub(crate) root: &'a CommandSpec,
     pub(crate) tree_items: Vec<TreeItem>,
-    pub(crate) visible_tabs: [ActiveTab; 3],
     pub(crate) active_args: Vec<form::OrderedArg<'a>>,
     pub(crate) preview_argv: Vec<String>,
     pub(crate) inputs: Option<&'a CommandFormState>,
@@ -26,7 +28,7 @@ pub(crate) struct ScreenView<'a> {
 impl<'a> ScreenView<'a> {
     pub(crate) fn build(
         command: &'a CommandSpec,
-        root: &CommandSpec,
+        root: &'a CommandSpec,
         expanded: &HashSet<String>,
         search_query: &str,
         active_tab: ActiveTab,
@@ -35,8 +37,8 @@ impl<'a> ScreenView<'a> {
     ) -> Self {
         Self {
             command,
+            root,
             tree_items: command_tree::tree_items(root, expanded, search_query),
-            visible_tabs: UiState::visible_tabs(),
             active_args: form::visible_args(command, active_tab),
             preview_argv,
             inputs,
@@ -127,12 +129,21 @@ fn render_main(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(styles::panel_border(config, workspace_focused))
+        .title(workspace_title(config, vm.command))
         .style(styles::panel(config));
     frame.render_widget(workspace, area);
     if header_area.height == 0 || header_area.width == 0 {
         return;
     }
 
-    header::render_header(frame, selected_path, config, header_area, vm);
+    header::render_header(frame, config, header_area, vm);
     form_ui::render_form(frame, ui, selected_path, config, vm, frame_snapshot);
+}
+
+fn workspace_title(config: &TuiConfig, command: &CommandSpec) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(command.name.clone(), Style::default().fg(config.theme.text)),
+        Span::raw(" "),
+    ])
 }

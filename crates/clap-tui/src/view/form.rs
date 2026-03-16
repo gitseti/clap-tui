@@ -57,15 +57,7 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
 
 pub(crate) fn visible_args(command: &CommandSpec, active_tab: ActiveTab) -> Vec<OrderedArg<'_>> {
     match active_tab {
-        ActiveTab::Options => ordered_args(command)
-            .into_iter()
-            .filter(|item| !item.arg.is_positional())
-            .collect(),
-        ActiveTab::Arguments => ordered_args(command)
-            .into_iter()
-            .filter(|item| item.arg.is_positional())
-            .collect(),
-        ActiveTab::Help => Vec::new(),
+        ActiveTab::Inputs => ordered_args(command),
     }
 }
 
@@ -177,6 +169,7 @@ mod tests {
     fn command(args: Vec<ArgSpec>) -> CommandSpec {
         CommandSpec {
             name: "tool".to_string(),
+            version: None,
             about: None,
             help: String::new(),
             args,
@@ -223,9 +216,7 @@ mod tests {
         let option = arg("target", "--target", ArgKind::Option);
         let command = command(vec![positional, option]);
 
-        assert_eq!(visible_args(&command, ActiveTab::Options).len(), 1);
-        assert_eq!(visible_args(&command, ActiveTab::Arguments).len(), 1);
-        assert!(visible_args(&command, ActiveTab::Help).is_empty());
+        assert_eq!(visible_args(&command, ActiveTab::Inputs).len(), 2);
     }
 
     #[test]
@@ -248,7 +239,7 @@ mod tests {
         positional.position = Some(1);
         positional.help = Some("required".to_string());
         let command = command(vec![positional]);
-        let visible = visible_args(&command, ActiveTab::Arguments);
+        let visible = visible_args(&command, ActiveTab::Inputs);
 
         assert_eq!(measure_fields_height(&visible), 6);
         assert_eq!(field_content_bounds(&visible, 0), Some((1, 4)));
@@ -277,7 +268,7 @@ mod tests {
         let mut flag = arg("verbose", "--verbose", ArgKind::Flag);
         flag.help = Some("Enable verbose output".to_string());
         let command = command(vec![flag]);
-        let visible = visible_args(&command, ActiveTab::Options);
+        let visible = visible_args(&command, ActiveTab::Inputs);
 
         assert_eq!(measure_fields_height(&visible), 3);
         assert_eq!(field_content_bounds(&visible, 0), Some((0, 1)));
@@ -300,7 +291,7 @@ mod tests {
         let mut flag = arg("verbose", "--verbose", ArgKind::Flag);
         flag.help = Some("Enable verbose output".to_string());
         let command = command(vec![multi, flag]);
-        let visible = visible_args(&command, ActiveTab::Options);
+        let visible = visible_args(&command, ActiveTab::Inputs);
 
         assert_eq!(field_content_bounds(&visible, 1), Some((8, 9)));
 

@@ -75,7 +75,11 @@ fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: boo
         if index > 0 {
             spans.push(Span::raw(" "));
         }
-        let style = if token.starts_with('-') {
+        let style = if index == 0 {
+            Style::default()
+                .fg(config.theme.accent)
+                .add_modifier(Modifier::BOLD | Modifier::ITALIC)
+        } else if token.starts_with('-') {
             seen_flag = true;
             Style::default()
                 .fg(config.theme.accent)
@@ -100,7 +104,7 @@ mod tests {
     use crate::config::TuiConfig;
 
     #[test]
-    fn preview_highlights_flags_without_accenting_command_name() {
+    fn preview_highlights_binary_name_and_flags() {
         let config = TuiConfig::default();
         let argv = vec![
             "tool".to_string(),
@@ -112,8 +116,10 @@ mod tests {
         let line = command_preview_line(&config, &argv, false);
 
         assert_eq!(line.spans[1].content.as_ref(), "tool");
-        assert_eq!(line.spans[1].style.fg, Some(config.theme.text));
+        assert_eq!(line.spans[1].style.fg, Some(config.theme.accent));
         assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::ITALIC));
+        assert_eq!(line.spans[3].style.fg, Some(config.theme.text));
         assert_eq!(line.spans[5].content.as_ref(), "--port");
         assert_eq!(line.spans[5].style.fg, Some(config.theme.accent));
         assert_eq!(line.spans[7].style.fg, Some(config.theme.text));
@@ -127,8 +133,9 @@ mod tests {
 
         let line = command_preview_line(&config, &argv, true);
 
-        assert_eq!(line.spans[1].style.fg, Some(config.theme.text));
+        assert_eq!(line.spans[1].style.fg, Some(config.theme.accent));
         assert_eq!(line.spans[1].style.bg, None);
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::ITALIC));
         assert_eq!(line.spans[3].style.fg, Some(config.theme.accent));
         assert_eq!(line.spans[3].style.bg, None);
     }

@@ -8,6 +8,7 @@ use crate::config::TuiConfig;
 use crate::frame_snapshot::{FrameLayout, SidebarItemLayout};
 use crate::input::{Focus, UiState};
 use crate::spec::CommandPath;
+use crate::view::command_tree::TreeItem;
 
 use super::screen::ScreenView;
 use super::styles;
@@ -65,14 +66,12 @@ pub(crate) fn render_sidebar(
     let search_focused = matches!(ui.focus, Focus::Search);
     let sidebar_focused = matches!(ui.focus, Focus::Sidebar);
     let panel_focused = search_focused || sidebar_focused;
+    let root_selected = selected_path.is_empty();
     let panel = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(styles::panel_border(config, panel_focused))
-        .title(Line::from(Span::styled(
-            "Commands",
-            styles::panel_title(config, false),
-        )))
+        .title(sidebar_title(config, vm.root, root_selected))
         .style(styles::panel(config));
     frame.render_widget(panel, area);
     let inner = area.inner(ratatui::layout::Margin {
@@ -136,18 +135,134 @@ pub(crate) fn render_sidebar(
                 .bg(config.theme.panel_bg)
         };
         let rail = if selected { "|" } else { " " };
-        let line = Line::from(vec![
-            Span::styled(
-                rail,
-                Style::default().fg(if selected {
-                    config.theme.accent
-                } else {
-                    config.theme.panel_bg
-                }),
-            ),
-            Span::raw(" "),
-            Span::styled(item.label.clone(), row_style),
-        ]);
+        let line = sidebar_line(config, item, rail, row_style, selected);
         frame.render_widget(Paragraph::new(line).style(row_style), layout.row);
+    }
+}
+
+fn sidebar_title(
+    config: &TuiConfig,
+    root: &crate::spec::CommandSpec,
+    root_selected: bool,
+) -> Line<'static> {
+    let mut spans = vec![
+        Span::raw(" "),
+        Span::styled(
+            root.name.clone(),
+            Style::default().fg(if root_selected {
+                config.theme.text
+            } else {
+                config.theme.dim
+            }),
+        ),
+    ];
+    if let Some(version) = root.version.as_ref() {
+        spans.push(Span::raw(" · "));
+        spans.push(Span::styled(
+            version.clone(),
+            Style::default().fg(if root_selected {
+                config.theme.text
+            } else {
+                config.theme.dim
+            }),
+        ));
+    }
+    spans.push(Span::raw(" "));
+    Line::from(spans)
+}
+
+fn sidebar_line(
+    config: &TuiConfig,
+    item: &TreeItem,
+    rail: &'static str,
+    row_style: Style,
+    selected: bool,
+) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(
+            rail,
+            Style::default().fg(if selected {
+                config.theme.accent
+            } else {
+                config.theme.panel_bg
+            }),
+        ),
+        Span::raw(" "),
+        Span::styled(item.prefix(), row_style),
+    ];
+    if item.path.is_empty() {
+        spans.push(Span::styled(
+            item.name.clone(),
+            Style::default()
+                .fg(config.theme.accent)
+                .add_modifier(Modifier::BOLD | Modifier::ITALIC),
+        ));
+        if let Some(version) = &item.version {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                version.clone(),
+                Style::default().fg(if selected {
+                    config.theme.selection_fg
+                } else {
+                    config.theme.dim
+                }),
+            ));
+        }
+    } else {
+        spans.push(Span::styled(item.name.clone(), row_style));
+    }
+    Line::from(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::Modifier;
+
+    use super::{sidebar_line, sidebar_title};
+    use crate::config::TuiConfig;
+    use crate::spec::{CommandPath, CommandSpec};
+    use crate::view::command_tree::TreeItem;
+
+    #[test]
+    fn sidebar_title_uses_binary_styling_and_shows_version() {
+        let config = TuiConfig::default();
+        let root = CommandSpec {
+            name: "ls".to_string(),
+            version: Some("1.2.3".to_string()),
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+        };
+
+        let line = sidebar_title(&config, &root, false);
+
+        assert_eq!(line.spans[0].content.as_ref(), " ");
+        assert_eq!(line.spans[1].content.as_ref(), "ls");
+        assert_eq!(line.spans[1].style.fg, Some(config.theme.dim));
+        assert!(!line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+        assert!(!line.spans[1].style.add_modifier.contains(Modifier::ITALIC));
+        assert_eq!(line.spans[2].content.as_ref(), " · ");
+        assert_eq!(line.spans[3].content.as_ref(), "1.2.3");
+        assert_eq!(line.spans[3].style.fg, Some(config.theme.dim));
+        assert_eq!(line.spans[4].content.as_ref(), " ");
+    }
+
+    #[test]
+    fn non_root_rows_keep_standard_row_styling() {
+        let config = TuiConfig::default();
+        let item = TreeItem {
+            name: "serve".to_string(),
+            version: None,
+            path: CommandPath::from(vec!["serve".to_string()]),
+            has_children: false,
+            indent: 0,
+            expanded: false,
+        };
+
+        let line = sidebar_line(&config, &item, " ", ratatui::style::Style::default(), false);
+
+        assert_eq!(line.spans[3].content.as_ref(), "serve");
+        assert_ne!(line.spans[3].style.fg, Some(config.theme.accent));
     }
 }

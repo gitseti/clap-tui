@@ -257,6 +257,7 @@ fn chip_style(config: &TuiConfig, variant: FooterChipVariant, hovered: bool) -> 
 fn build_test_state() -> AppState {
     AppState::new(crate::spec::CommandSpec {
         name: "tool".to_string(),
+        version: None,
         about: None,
         help: String::new(),
         args: Vec::new(),

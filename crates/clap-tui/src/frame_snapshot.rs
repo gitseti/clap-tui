@@ -25,11 +25,16 @@ pub struct FrameLayout {
 pub struct FrameSnapshot {
     pub layout: FrameLayout,
     pub form_scroll_max: u16,
+    pub help_scroll_max: u16,
 }
 
 impl FrameSnapshot {
     pub fn form_scroll(&self, requested_scroll: u16) -> u16 {
         requested_scroll.min(self.form_scroll_max)
+    }
+
+    pub fn help_scroll(&self, requested_scroll: u16) -> u16 {
+        requested_scroll.min(self.help_scroll_max)
     }
 
     pub fn footer_target_at(&self, x: u16, y: u16) -> Option<HoverTarget> {
@@ -167,7 +172,7 @@ mod tests {
             rect: Rect::new(0, 10, 8, 1),
         }];
         snapshot.layout.form_tabs = vec![TabButtonLayout {
-            tab: ActiveTab::Help,
+            tab: ActiveTab::Inputs,
             rect: Rect::new(0, 0, 8, 1),
         }];
         snapshot.layout.sidebar_items = vec![SidebarItemLayout {
@@ -178,7 +183,7 @@ mod tests {
         }];
 
         assert_eq!(snapshot.footer_target_at(1, 10), Some(HoverTarget::Run));
-        assert_eq!(snapshot.tab_at(1, 0), Some(ActiveTab::Help));
+        assert_eq!(snapshot.tab_at(1, 0), Some(ActiveTab::Inputs));
         assert_eq!(
             snapshot
                 .sidebar_item_at(1, 2)

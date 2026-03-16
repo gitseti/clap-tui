@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use clap_tui::TuiApp;
 
 #[derive(Debug, Parser)]
-#[command(name = "tool", about = "Subcommand example")]
+#[command(name = "tool", about = "Subcommand example", version = "0.1.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

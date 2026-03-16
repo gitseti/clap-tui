@@ -18,6 +18,7 @@ pub(crate) enum SelectionError {
 #[derive(Debug, Clone)]
 pub(crate) struct CommandModel {
     pub(crate) name: String,
+    pub(crate) version: Option<String>,
     pub(crate) about: Option<String>,
     pub(crate) help: String,
     pub(crate) args: Vec<ArgModel>,
@@ -184,6 +185,7 @@ impl CommandModel {
             .collect::<Vec<_>>();
         Self {
             name: cmd.get_name().to_string(),
+            version: cmd.get_version().map(std::string::ToString::to_string),
             about: cmd.get_about().map(std::string::ToString::to_string),
             help,
             args,

@@ -44,6 +44,7 @@ mod tests {
     fn app_state(args: Vec<ArgSpec>) -> AppState {
         AppState::new(CommandSpec {
             name: "tool".to_string(),
+            version: None,
             about: None,
             help: String::new(),
             args,

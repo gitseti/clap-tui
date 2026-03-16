@@ -1,47 +1,85 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::config::TuiConfig;
-use crate::spec::CommandPath;
+use crate::spec::CommandSpec;
 
 use super::{screen::ScreenView, styles};
 
 pub(crate) fn render_header(
     frame: &mut Frame<'_>,
-    selected_path: &CommandPath,
     config: &TuiConfig,
     area: Rect,
     vm: &ScreenView<'_>,
 ) {
-    let breadcrumb = if selected_path.is_empty() {
-        vm.command.name.clone()
-    } else {
-        let mut parts = vec![vm.command.name.clone()];
-        parts.extend(selected_path.iter().cloned());
-        parts.join(" > ")
-    };
-    let mut lines = Vec::with_capacity(2);
-    let mut title_line = vec![Span::styled(
-        vm.command.name.clone(),
-        Style::default()
-            .fg(config.theme.text)
-            .add_modifier(Modifier::BOLD),
-    )];
-    if let Some(about) = vm.command.about.as_ref().filter(|about| !about.is_empty()) {
-        title_line.push(Span::raw("  "));
-        title_line.push(Span::styled(
-            about.clone(),
-            Style::default().fg(config.theme.dim),
-        ));
-    }
-    lines.push(Line::from(title_line));
-    lines.push(Line::from(Span::styled(
-        breadcrumb,
-        Style::default().fg(config.theme.dim),
-    )));
+    frame.render_widget(
+        Paragraph::new(header_lines(config, vm.command)).style(styles::panel(config)),
+        area,
+    );
+}
 
-    frame.render_widget(Paragraph::new(lines).style(styles::header(config)), area);
+fn header_lines(config: &TuiConfig, command: &CommandSpec) -> Vec<Line<'static>> {
+    let description = command
+        .about
+        .as_ref()
+        .filter(|about| !about.is_empty())
+        .map(|about| {
+            Line::from(Span::styled(
+                about.clone(),
+                Style::default().fg(config.theme.dim),
+            ))
+        })
+        .unwrap_or_default();
+    vec![description, Line::default()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::header_lines;
+    use crate::config::TuiConfig;
+    use crate::spec::CommandSpec;
+
+    fn command(name: &str, about: Option<&str>) -> CommandSpec {
+        CommandSpec {
+            name: name.to_string(),
+            version: None,
+            about: about.map(str::to_string),
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn header_renders_description_on_first_line() {
+        let lines = header_lines(&TuiConfig::default(), &command("serve", Some("Run server")));
+
+        assert_eq!(lines[0].spans[0].content.as_ref(), "Run server");
+    }
+
+    #[test]
+    fn header_does_not_render_breadcrumb_text_for_nested_commands() {
+        let lines = header_lines(
+            &TuiConfig::default(),
+            &command("deploy", Some("Ship the selected release")),
+        );
+
+        let combined = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(!combined.contains('>'));
+        assert!(!combined.contains("root"));
+    }
+
+    #[test]
+    fn header_renders_blank_first_line_when_about_is_missing() {
+        let lines = header_lines(&TuiConfig::default(), &command("serve", None));
+
+        assert!(lines[0].spans.is_empty());
+    }
 }
