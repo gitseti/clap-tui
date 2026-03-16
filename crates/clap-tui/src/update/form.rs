@@ -7,7 +7,11 @@ use crate::runtime::{AppKeyCode, AppKeyEvent, AppMouseEvent};
 
 use super::{Action, Effect};
 
-pub(crate) fn apply(action: &Action, state: &mut AppState, frame_snapshot: &FrameSnapshot) -> Effect {
+pub(crate) fn apply(
+    action: &Action,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) -> Effect {
     match action {
         Action::ChoiceInput { arg_id, key } => {
             apply_choice_input(*key, state, frame_snapshot, arg_id);

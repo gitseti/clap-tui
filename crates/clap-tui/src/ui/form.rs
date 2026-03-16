@@ -65,17 +65,16 @@ pub(crate) fn populate_layout(
             y += i32::from(metrics.total_height);
             continue;
         };
-        let description = field_help_text(item.arg)
-            .and_then(|_| {
-                let description_y = y + i32::from(field_description_offset(item.arg)?);
-                clipped_rect(
-                    area.x,
-                    area.width,
-                    description_y,
-                    metrics.description_height.max(1),
-                    content_area,
-                )
-            });
+        let description = field_help_text(item.arg).and_then(|_| {
+            let description_y = y + i32::from(field_description_offset(item.arg)?);
+            clipped_rect(
+                area.x,
+                area.width,
+                description_y,
+                metrics.description_height.max(1),
+                content_area,
+            )
+        });
 
         frame_layout.form_inputs.insert(item.arg.id.clone(), input);
         frame_layout.form_fields.push(FormFieldLayout {
@@ -496,13 +495,13 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::{populate_layout, text_input_is_truncated};
+    use crate::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, Focus, UiState};
+    use crate::query::form::visible_args;
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
     use crate::ui::screen::ScreenView;
-    use crate::query::form::visible_args;
-    use crate::TuiConfig;
 
     fn command() -> CommandSpec {
         CommandSpec {
@@ -672,7 +671,12 @@ mod tests {
         let mut ui = ui_state();
         ui.help_open = true;
 
-        populate_layout(&ui, ratatui::layout::Rect::new(0, 0, 40, 8), &vm, &mut snapshot);
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
 
         let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
         terminal
@@ -723,11 +727,7 @@ mod tests {
             &mut snapshot,
         );
 
-        let field = snapshot
-            .layout
-            .form_fields
-            .first()
-            .expect("field layout");
+        let field = snapshot.layout.form_fields.first().expect("field layout");
         let label = field.label.expect("label rect");
         let description = field.description.expect("description rect");
 
@@ -823,7 +823,12 @@ mod tests {
         let mut snapshot = FrameSnapshot::default();
         let ui = ui_state();
 
-        populate_layout(&ui, ratatui::layout::Rect::new(0, 0, 40, 8), &vm, &mut snapshot);
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
 
         let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
         terminal

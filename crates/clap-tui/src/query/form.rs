@@ -142,7 +142,8 @@ pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> 
         let metrics = field_metrics(item.arg);
         let input_top = y.saturating_add(field_input_offset(item.arg));
         let input_bottom = input_top.saturating_add(metrics.input_height);
-        let description_top = field_description_offset(item.arg).map(|offset| y.saturating_add(offset));
+        let description_top =
+            field_description_offset(item.arg).map(|offset| y.saturating_add(offset));
         let label_bottom = y.saturating_add(metrics.label_height);
 
         let in_label = metrics.label_height > 0 && content_y >= y && content_y < label_bottom;

@@ -168,7 +168,9 @@ impl FrameSnapshot {
         self.layout
             .form_view
             .zip(self.form_input_rect(arg_id))
-            .and_then(|(form_view, input_rect)| dropdown_geometry(form_view, input_rect, total_options))
+            .and_then(|(form_view, input_rect)| {
+                dropdown_geometry(form_view, input_rect, total_options)
+            })
     }
 }
 

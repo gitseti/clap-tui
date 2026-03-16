@@ -68,7 +68,10 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert_eq!(derived.argv, vec!["tool".to_string(), "--verbose".to_string()]);
+        assert_eq!(
+            derived.argv,
+            vec!["tool".to_string(), "--verbose".to_string()]
+        );
         assert!(derived.validation.is_valid);
     }
 

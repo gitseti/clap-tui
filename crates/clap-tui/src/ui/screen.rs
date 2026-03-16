@@ -9,7 +9,10 @@ use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, CommandFormState, Focus, UiState};
 use crate::pipeline::{self, ValidationState};
-use crate::query::{form, tree::{self, TreeItem}};
+use crate::query::{
+    form,
+    tree::{self, TreeItem},
+};
 use crate::spec::{CommandPath, CommandSpec};
 
 use super::{dropdown, footer, form as form_ui, header, layout, preview, sidebar, styles, toast};

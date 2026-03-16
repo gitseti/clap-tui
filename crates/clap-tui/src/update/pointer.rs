@@ -5,7 +5,11 @@ use crate::runtime::AppMouseEvent;
 
 use super::{Action, Effect};
 
-pub(crate) fn apply(action: &Action, state: &mut AppState, frame_snapshot: &FrameSnapshot) -> Effect {
+pub(crate) fn apply(
+    action: &Action,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) -> Effect {
     match action {
         Action::UpdateHover { x, y } => apply_hover_update(state, frame_snapshot, *x, *y),
         Action::UpdateMouseSelection(event) => {

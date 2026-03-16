@@ -220,8 +220,8 @@ mod tests {
 
     use super::{sidebar_line, sidebar_title};
     use crate::config::TuiConfig;
-    use crate::spec::{CommandPath, CommandSpec};
     use crate::query::tree::TreeItem;
+    use crate::spec::{CommandPath, CommandSpec};
 
     #[test]
     fn sidebar_title_uses_binary_styling_and_shows_version() {
