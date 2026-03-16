@@ -14,11 +14,12 @@ mod error;
 mod form_editor;
 mod frame_snapshot;
 mod input;
+mod pipeline;
+mod query;
 mod runtime;
 mod spec;
 mod ui;
 mod update;
-mod view;
 
 pub use app::TuiApp;
 pub use config::{Keymap, LayoutConfig, Theme, ThemePreset, TuiConfig};

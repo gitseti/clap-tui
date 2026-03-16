@@ -166,6 +166,10 @@ impl DomainState {
             .insert(arg_id.to_string(), ArgValue::Choice(value));
     }
 
+    pub fn clear_value(&mut self, arg_id: &str) {
+        self.current_form_mut().values.remove(arg_id);
+    }
+
     pub fn toggle_flag(&mut self, arg_id: &str) {
         let entry = self
             .current_form_mut()
@@ -194,6 +198,26 @@ impl DomainState {
 
     pub fn mark_touched(&mut self, arg_id: &str) {
         self.current_form_mut().touched.insert(arg_id.to_string());
+    }
+
+    pub fn toggle_flag_touched(&mut self, arg_id: &str) {
+        self.toggle_flag(arg_id);
+        self.mark_touched(arg_id);
+    }
+
+    pub fn set_choice_value_touched(&mut self, arg_id: &str, value: String) {
+        self.set_choice_value(arg_id, value);
+        self.mark_touched(arg_id);
+    }
+
+    pub fn cycle_choice_touched(&mut self, arg_id: &str, choices: &[String]) {
+        self.cycle_choice(arg_id, choices);
+        self.mark_touched(arg_id);
+    }
+
+    pub fn clear_value_and_untouch(&mut self, arg_id: &str) {
+        self.clear_value(arg_id);
+        self.clear_touched(arg_id);
     }
 
     pub fn clear_touched(&mut self, arg_id: &str) {
@@ -235,9 +259,7 @@ impl UiState {
         self.active_tab = Self::visible_tabs()[0];
         self.last_non_help_tab = self.active_tab;
         self.ensure_selected_arg_visible(visible_args);
-        self.form_scroll = 0;
-        self.dropdown_open = None;
-        self.mouse_select = None;
+        self.reset_transient_form_ui();
     }
 
     pub fn ensure_active_tab_visible(&mut self, visible_args: &[(usize, &ArgSpec)]) {
@@ -248,9 +270,7 @@ impl UiState {
         self.active_tab = Self::visible_tabs()[0];
         self.last_non_help_tab = self.active_tab;
         self.ensure_selected_arg_visible(visible_args);
-        self.form_scroll = 0;
-        self.dropdown_open = None;
-        self.mouse_select = None;
+        self.reset_transient_form_ui();
     }
 
     pub fn ensure_selected_arg_visible(&mut self, visible_args: &[(usize, &ArgSpec)]) {
@@ -280,6 +300,103 @@ impl UiState {
 
     pub fn clamp_help_scroll(&mut self, frame_snapshot: &FrameSnapshot) {
         self.help_scroll = self.help_scroll(frame_snapshot);
+    }
+
+    pub fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Sidebar => Focus::Form,
+            _ => Focus::Sidebar,
+        };
+    }
+
+    pub fn focus_sidebar(&mut self) {
+        self.focus = Focus::Sidebar;
+    }
+
+    pub fn focus_form(&mut self) {
+        self.focus = Focus::Form;
+    }
+
+    pub fn focus_search(&mut self) {
+        self.focus = Focus::Search;
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.help_open = !self.help_open;
+        self.help_scroll = 0;
+        self.close_dropdown();
+        self.clear_mouse_selection();
+    }
+
+    pub fn close_dropdown(&mut self) {
+        self.dropdown_open = None;
+    }
+
+    pub fn open_dropdown(&mut self, arg_id: impl Into<String>, scroll: usize) {
+        self.dropdown_open = Some(arg_id.into());
+        self.dropdown_scroll = scroll;
+    }
+
+    pub fn set_dropdown_scroll(&mut self, scroll: usize) {
+        self.dropdown_scroll = scroll;
+    }
+
+    pub fn adjust_dropdown_scroll(&mut self, delta: i16) {
+        if delta.is_negative() {
+            self.dropdown_scroll = self
+                .dropdown_scroll
+                .saturating_sub(usize::from(delta.unsigned_abs()));
+        } else {
+            self.dropdown_scroll = self
+                .dropdown_scroll
+                .saturating_add(usize::from(delta.unsigned_abs()));
+        }
+    }
+
+    pub fn set_form_scroll(&mut self, scroll: u16) {
+        self.form_scroll = scroll;
+    }
+
+    pub fn adjust_form_scroll(&mut self, delta: i16) {
+        if delta.is_negative() {
+            self.form_scroll = self.form_scroll.saturating_sub(delta.unsigned_abs());
+        } else {
+            self.form_scroll = self.form_scroll.saturating_add(delta.unsigned_abs());
+        }
+    }
+
+    pub fn adjust_help_scroll(&mut self, delta: i16) {
+        if delta.is_negative() {
+            self.help_scroll = self.help_scroll.saturating_sub(delta.unsigned_abs());
+        } else {
+            self.help_scroll = self.help_scroll.saturating_add(delta.unsigned_abs());
+        }
+    }
+
+    pub fn set_selected_arg_index(&mut self, selected_arg_index: usize) {
+        self.selected_arg_index = selected_arg_index;
+    }
+
+    pub fn set_mouse_selection(&mut self, mouse_select: Option<MouseSelection>) {
+        self.mouse_select = mouse_select;
+    }
+
+    pub fn clear_mouse_selection(&mut self) {
+        self.mouse_select = None;
+    }
+
+    pub fn reset_transient_form_ui(&mut self) {
+        self.form_scroll = 0;
+        self.close_dropdown();
+        self.clear_mouse_selection();
+    }
+
+    pub fn set_hover(&mut self, hover: Option<HoverTarget>) {
+        self.hover = hover;
+    }
+
+    pub fn set_hover_tab(&mut self, hover_tab: Option<ActiveTab>) {
+        self.hover_tab = hover_tab;
     }
 }
 

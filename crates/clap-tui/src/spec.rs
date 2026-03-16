@@ -150,6 +150,18 @@ impl ArgModel {
         matches!(self.value_cardinality, ValueCardinality::Many)
     }
 
+    pub(crate) fn uses_toggle_semantics(&self) -> bool {
+        self.is_flag()
+    }
+
+    pub(crate) fn uses_choice_semantics(&self) -> bool {
+        self.uses_choice_input()
+    }
+
+    pub(crate) fn serializes_as_positional(&self) -> bool {
+        self.is_positional()
+    }
+
     pub(crate) fn input_presentation(&self) -> InputPresentation {
         if self.is_flag() {
             InputPresentation::Toggle

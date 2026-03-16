@@ -15,6 +15,11 @@ use crate::ui;
 use crate::update::{self, Effect};
 
 /// Primary entry point for building and running the TUI.
+///
+/// Supported extension points for library users are:
+/// - custom runtimes via [`TuiApp::with_runtime`]
+/// - theming and layout via [`TuiApp::with_config`]
+/// - startup command selection via [`crate::TuiConfig::start_command`]
 pub struct TuiApp<R: Runtime = CrosstermRuntime> {
     command: Command,
     config: TuiConfig,
@@ -152,7 +157,7 @@ fn event_loop<R: Runtime>(
         }
 
         match handle_app_event(
-            session.read_event()?,
+            &session.read_event()?,
             &mut state,
             &frame_snapshot,
             config,
@@ -212,7 +217,7 @@ fn handle_effect<R: Runtime>(
 }
 
 fn handle_app_event<R: Runtime>(
-    event: AppEvent,
+    event: &AppEvent,
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
     config: &TuiConfig,
@@ -220,7 +225,9 @@ fn handle_app_event<R: Runtime>(
 ) -> EventOutcome {
     match event {
         AppEvent::Key(key) => {
-            if let Some(action) = controller::handle_key_event(key, state, frame_snapshot, config) {
+            if let Some(action) =
+                controller::handle_key_event(*key, state, frame_snapshot, config)
+            {
                 let effect = update::apply_action(&action, state, frame_snapshot);
                 match handle_effect(effect, state, session) {
                     ActionOutcome::Continue => EventOutcome::Continue { needs_redraw: true },
@@ -235,7 +242,7 @@ fn handle_app_event<R: Runtime>(
         }
         AppEvent::Mouse(mouse) => {
             if let Some(action) =
-                controller::handle_mouse_event(mouse, state, frame_snapshot, config)
+                controller::handle_mouse_event(*mouse, state, frame_snapshot, config)
             {
                 let effect = update::apply_action(&action, state, frame_snapshot);
                 match handle_effect(effect, state, session) {
@@ -479,7 +486,7 @@ mod tests {
         let mut state = app_state();
 
         let outcome = handle_app_event(
-            AppEvent::Resize {
+            &AppEvent::Resize {
                 width: 120,
                 height: 40,
             },

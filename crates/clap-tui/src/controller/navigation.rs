@@ -1,9 +1,7 @@
 use crate::frame_snapshot::FrameSnapshot;
-use crate::input::{ActiveTab, AppState, ArgValue, Focus, UiState};
-use crate::spec::{ArgSpec, CommandPath, SelectionError};
-use crate::ui::dropdown::{MAX_DROPDOWN_ROWS, dropdown_layout};
-use crate::view::command_tree;
-use crate::view::form;
+use crate::input::{ActiveTab, AppState, ArgValue, UiState};
+use crate::query::{form, tree};
+use crate::spec::{CommandPath, SelectionError};
 
 pub(crate) fn switch_tab(state: &mut AppState, tab: ActiveTab) {
     let tabs = UiState::visible_tabs();
@@ -18,8 +16,8 @@ pub(crate) fn switch_tab(state: &mut AppState, tab: ActiveTab) {
     state.ui.last_non_help_tab = state.ui.active_tab;
     let command = state.domain.current_command().clone();
     let args = form::visible_args(&command, state.ui.active_tab);
-    state.ui.ensure_selected_arg_visible(&visible_args(&args));
-    reset_transient_form_ui(state);
+    state.ui.ensure_selected_arg_visible(&form::visible_arg_pairs(&args));
+    state.ui.reset_transient_form_ui();
 }
 
 pub(crate) fn cycle_tabs(state: &mut AppState) {
@@ -32,14 +30,11 @@ pub(crate) fn cycle_tabs(state: &mut AppState) {
 }
 
 pub(crate) fn toggle_help_tab(state: &mut AppState) {
-    state.ui.help_open = !state.ui.help_open;
-    state.ui.help_scroll = 0;
-    state.ui.dropdown_open = None;
-    state.ui.mouse_select = None;
+    state.ui.toggle_help();
 }
 
 pub(crate) fn move_sidebar_selection(state: &mut AppState, delta: isize) {
-    let items = command_tree::tree_items(
+    let items = tree::tree_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -98,12 +93,12 @@ pub(crate) fn move_form_selection(
         .position(|item| item.order_index == state.ui.selected_arg_index)
         .unwrap_or(0);
     let next_pos = current_pos.saturating_add_signed(delta).min(args.len() - 1);
-    state.ui.selected_arg_index = args[next_pos].order_index;
+    state.ui.set_selected_arg_index(args[next_pos].order_index);
     ensure_form_visible(state, frame_snapshot);
 }
 
 pub(crate) fn select_sidebar(state: &mut AppState) {
-    let items = command_tree::tree_items(
+    let items = tree::tree_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -118,7 +113,7 @@ pub(crate) fn select_sidebar(state: &mut AppState) {
 }
 
 pub(crate) fn collapse_selected(state: &mut AppState) {
-    let items = command_tree::tree_items(
+    let items = tree::tree_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -133,7 +128,7 @@ pub(crate) fn collapse_selected(state: &mut AppState) {
 }
 
 pub(crate) fn expand_selected(state: &mut AppState) {
-    let items = command_tree::tree_items(
+    let items = tree::tree_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -161,16 +156,15 @@ pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSn
     };
     let arg = item.arg;
     if arg.is_flag() {
-        state.domain.toggle_flag(&arg.id);
-        state.domain.mark_touched(&arg.id);
+        state.domain.toggle_flag_touched(&arg.id);
     } else if arg.uses_choice_input() {
         if arg.choices.is_empty() || state.ui.dropdown_open.as_deref() == Some(arg.id.as_str()) {
-            state.ui.dropdown_open = None;
+            state.ui.close_dropdown();
         } else {
             open_enum_dropdown(state, frame_snapshot, &arg.id, arg.choices.len());
         }
     } else {
-        state.ui.focus = Focus::Form;
+        state.ui.focus_form();
     }
 }
 
@@ -181,12 +175,12 @@ pub(crate) fn open_enum_dropdown(
     total: usize,
 ) {
     if total == 0 {
-        state.ui.dropdown_open = None;
-        state.ui.dropdown_scroll = 0;
+        state.ui.close_dropdown();
+        state.ui.set_dropdown_scroll(0);
         return;
     }
 
-    state.ui.dropdown_open = Some(arg_id.to_string());
+    state.ui.open_dropdown(arg_id.to_string(), 0);
     let current = state
         .domain
         .current_form()
@@ -203,15 +197,14 @@ pub(crate) fn open_enum_dropdown(
         })
         .unwrap_or(0);
     let visible_rows = frame_snapshot
-        .layout
-        .form_view
-        .zip(frame_snapshot.form_input_rect(arg_id))
-        .and_then(|(form_view, input_rect)| dropdown_layout(form_view, input_rect, total))
-        .map_or(total.min(usize::from(MAX_DROPDOWN_ROWS)), |layout| {
+        .dropdown_geometry_for_input(arg_id, total)
+        .map_or(total.min(usize::from(crate::frame_snapshot::MAX_DROPDOWN_ROWS)), |layout| {
             layout.visible_rows
         });
     let max_scroll = total.saturating_sub(visible_rows);
-    state.ui.dropdown_scroll = current.saturating_sub(visible_rows / 2).min(max_scroll);
+    state
+        .ui
+        .set_dropdown_scroll(current.saturating_sub(visible_rows / 2).min(max_scroll));
 }
 
 pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
@@ -232,46 +225,30 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     let visible_bottom = visible_top.saturating_add(form_area.height);
 
     if input_top < visible_top {
-        state.ui.form_scroll = input_top;
+        state.ui.set_form_scroll(input_top);
     } else if input_bottom > visible_bottom {
-        state.ui.form_scroll = state
-            .ui
-            .form_scroll
-            .saturating_add(input_bottom.saturating_sub(visible_bottom));
+        state.ui.set_form_scroll(
+            state
+                .ui
+                .form_scroll
+                .saturating_add(input_bottom.saturating_sub(visible_bottom)),
+        );
     }
     state.ui.clamp_form_scroll(frame_snapshot);
 }
 
 pub(crate) fn scroll_form(state: &mut AppState, frame_snapshot: &FrameSnapshot, delta: i16) {
     if state.ui.help_open {
-        if delta.is_negative() {
-            state.ui.help_scroll = state.ui.help_scroll.saturating_sub(delta.unsigned_abs());
-        } else {
-            state.ui.help_scroll = state.ui.help_scroll.saturating_add(delta.unsigned_abs());
-        }
+        state.ui.adjust_help_scroll(delta);
         state.ui.clamp_help_scroll(frame_snapshot);
         return;
     }
-    if delta.is_negative() {
-        state.ui.form_scroll = state.ui.form_scroll.saturating_sub(delta.unsigned_abs());
-    } else {
-        state.ui.form_scroll = state.ui.form_scroll.saturating_add(delta.unsigned_abs());
-    }
+    state.ui.adjust_form_scroll(delta);
     state.ui.clamp_form_scroll(frame_snapshot);
 }
 
 pub(crate) fn scroll_enum(state: &mut AppState, delta: i16) {
-    if delta.is_negative() {
-        state.ui.dropdown_scroll = state
-            .ui
-            .dropdown_scroll
-            .saturating_sub(usize::from(delta.unsigned_abs()));
-    } else {
-        state.ui.dropdown_scroll = state
-            .ui
-            .dropdown_scroll
-            .saturating_add(usize::from(delta.unsigned_abs()));
-    }
+    state.ui.adjust_dropdown_scroll(delta);
 }
 
 pub(crate) fn ensure_enum_visible(
@@ -288,11 +265,15 @@ pub(crate) fn ensure_enum_visible(
     }
     let max_scroll = total.saturating_sub(visible);
     if index < state.ui.dropdown_scroll {
-        state.ui.dropdown_scroll = index;
+        state.ui.set_dropdown_scroll(index);
     } else if index >= state.ui.dropdown_scroll + visible {
-        state.ui.dropdown_scroll = index.saturating_sub(visible - 1);
+        state
+            .ui
+            .set_dropdown_scroll(index.saturating_sub(visible - 1));
     }
-    state.ui.dropdown_scroll = state.ui.dropdown_scroll.min(max_scroll);
+    state
+        .ui
+        .set_dropdown_scroll(state.ui.dropdown_scroll.min(max_scroll));
 }
 
 pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
@@ -300,7 +281,7 @@ pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
         Ok(()) => {
             let command = state.domain.current_command().clone();
             let args = form::visible_args(&command, state.ui.active_tab);
-            state.ui.focus_first_tab(&visible_args(&args));
+            state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
         }
         Err(SelectionError::UnknownPath) => {
             state.notifications.show_toast(
@@ -320,7 +301,7 @@ fn select_command(state: &mut AppState, path: &[String]) {
     if state.domain.select_command_path(path).is_ok() {
         let command = state.domain.current_command().clone();
         let args = form::visible_args(&command, state.ui.active_tab);
-        state.ui.focus_first_tab(&visible_args(&args));
+        state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
     }
 }
 
@@ -331,18 +312,6 @@ fn toggle_expand(state: &mut AppState, path: &CommandPath, expanded: bool) {
     } else {
         state.domain.expanded.insert(key);
     }
-}
-
-fn reset_transient_form_ui(state: &mut AppState) {
-    state.ui.form_scroll = 0;
-    state.ui.dropdown_open = None;
-    state.ui.mouse_select = None;
-}
-
-fn visible_args<'a>(args: &[form::OrderedArg<'a>]) -> Vec<(usize, &'a ArgSpec)> {
-    args.iter()
-        .map(|item| (item.order_index, item.arg))
-        .collect()
 }
 
 #[cfg(test)]

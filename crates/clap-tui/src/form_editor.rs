@@ -67,8 +67,7 @@ pub(crate) fn apply_key_to_text_field(
     }
     let text = textarea.text();
     if text.is_empty() && has_default {
-        state.domain.current_form_mut().values.remove(&arg.id);
-        state.domain.clear_touched(&arg.id);
+        state.domain.clear_value_and_untouch(&arg.id);
     } else {
         state.domain.set_text_value(&arg.id, text);
         state.domain.mark_touched(&arg.id);

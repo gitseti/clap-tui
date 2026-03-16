@@ -61,6 +61,12 @@ pub(crate) fn visible_args(command: &CommandSpec, active_tab: ActiveTab) -> Vec<
     }
 }
 
+pub(crate) fn visible_arg_pairs<'a>(args: &[OrderedArg<'a>]) -> Vec<(usize, &'a ArgSpec)> {
+    args.iter()
+        .map(|item| (item.order_index, item.arg))
+        .collect()
+}
+
 pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
     let label_height = u16::from(!arg.is_flag());
     let description_height = u16::from(arg.help.is_some() || arg.value_hint.is_some());

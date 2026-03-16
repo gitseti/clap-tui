@@ -5,6 +5,14 @@ use ratatui::layout::Rect;
 use crate::input::{ActiveTab, HoverTarget};
 use crate::spec::CommandPath;
 
+pub(crate) const MAX_DROPDOWN_ROWS: u16 = 6;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DropdownGeometry {
+    pub(crate) rect: Rect,
+    pub(crate) visible_rows: usize,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct FrameLayout {
     pub sidebar: Option<Rect>,
@@ -151,6 +159,62 @@ impl FrameSnapshot {
             .dropdown
             .map(|dropdown| usize::from(dropdown.height.saturating_sub(2)))
     }
+
+    pub fn dropdown_geometry_for_input(
+        &self,
+        arg_id: &str,
+        total_options: usize,
+    ) -> Option<DropdownGeometry> {
+        self.layout
+            .form_view
+            .zip(self.form_input_rect(arg_id))
+            .and_then(|(form_view, input_rect)| dropdown_geometry(form_view, input_rect, total_options))
+    }
+}
+
+pub(crate) fn dropdown_geometry(
+    form_view: Rect,
+    input_rect: Rect,
+    total_options: usize,
+) -> Option<DropdownGeometry> {
+    if total_options == 0 || form_view.height == 0 || input_rect.width < 3 {
+        return None;
+    }
+
+    let desired_rows = total_options.min(MAX_DROPDOWN_ROWS as usize);
+    let available_below = form_view
+        .y
+        .saturating_add(form_view.height)
+        .saturating_sub(input_rect.y.saturating_add(input_rect.height));
+    let available_above = input_rect.y.saturating_sub(form_view.y);
+
+    let rows_below = available_below.saturating_sub(2) as usize;
+    let rows_above = available_above.saturating_sub(2) as usize;
+
+    let place_below = if rows_below >= desired_rows || rows_above == 0 {
+        rows_below > 0
+    } else if rows_above >= desired_rows || rows_below == 0 {
+        false
+    } else {
+        rows_below >= rows_above
+    };
+
+    let visible_rows = if place_below { rows_below } else { rows_above }.min(desired_rows);
+    if visible_rows == 0 {
+        return None;
+    }
+
+    let popup_height = u16::try_from(visible_rows).unwrap_or(MAX_DROPDOWN_ROWS) + 2;
+    let y = if place_below {
+        input_rect.y.saturating_add(input_rect.height)
+    } else {
+        input_rect.y.saturating_sub(popup_height)
+    };
+
+    Some(DropdownGeometry {
+        rect: Rect::new(input_rect.x, y, input_rect.width, popup_height),
+        visible_rows,
+    })
 }
 
 fn contains(area: Rect, x: u16, y: u16) -> bool {
@@ -161,7 +225,9 @@ fn contains(area: Rect, x: u16, y: u16) -> bool {
 mod tests {
     use ratatui::layout::Rect;
 
-    use super::{FooterButtonLayout, FrameSnapshot, SidebarItemLayout, TabButtonLayout};
+    use super::{
+        FooterButtonLayout, FrameSnapshot, SidebarItemLayout, TabButtonLayout, dropdown_geometry,
+    };
     use crate::input::{ActiveTab, HoverTarget};
 
     #[test]
@@ -210,6 +276,18 @@ mod tests {
         assert!(snapshot.dropdown_contains(11, 9));
         assert_eq!(snapshot.dropdown_choice_index(10, 2), Some(3));
         assert_eq!(snapshot.dropdown_visible_rows(), Some(3));
+    }
+
+    #[test]
+    fn dropdown_geometry_matches_expected_popup_layout() {
+        let form_view = Rect::new(10, 5, 60, 20);
+        let input_rect = Rect::new(14, 8, 24, 3);
+        let geometry = dropdown_geometry(form_view, input_rect, 4).expect("geometry");
+
+        assert_eq!(geometry.rect.x, input_rect.x);
+        assert_eq!(geometry.rect.width, input_rect.width);
+        assert_eq!(geometry.rect.y, input_rect.y + input_rect.height);
+        assert_eq!(geometry.visible_rows, 4);
     }
 }
 

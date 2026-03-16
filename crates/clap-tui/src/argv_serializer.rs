@@ -1,5 +1,5 @@
 use crate::input::{ArgValue, CommandFormState};
-use crate::spec::{CommandModel, InputPresentation};
+use crate::spec::CommandModel;
 
 pub(crate) fn build_argv(command: &CommandModel, state: &CommandFormState) -> Vec<String> {
     let mut argv = Vec::new();
@@ -13,63 +13,43 @@ pub(crate) fn build_argv(command: &CommandModel, state: &CommandFormState) -> Ve
         }
 
         match state.values.get(&arg.id) {
-            Some(ArgValue::Bool(true)) => argv.push(arg.display_name.clone()),
-            Some(ArgValue::Text(value)) if !value.is_empty() => match arg.input_presentation() {
-                InputPresentation::FreeText {
-                    multiple: true,
-                    positional: true,
-                } => {
+            Some(ArgValue::Bool(true)) if arg.uses_toggle_semantics() => {
+                argv.push(arg.display_name.clone());
+            }
+            Some(ArgValue::Text(value)) if !value.is_empty() => {
+                if arg.accepts_multiple_values() && arg.serializes_as_positional() {
                     for part in value.lines().filter(|s| !s.trim().is_empty()) {
                         if let Some(index) = arg.position {
                             positionals.push((index, positional_sequence, part.to_string()));
                             positional_sequence += 1;
                         }
                     }
-                }
-                InputPresentation::FreeText {
-                    multiple: false,
-                    positional: true,
-                } => {
+                } else if arg.serializes_as_positional() {
                     if let Some(index) = arg.position {
                         positionals.push((index, positional_sequence, value.clone()));
                         positional_sequence += 1;
                     }
-                }
-                InputPresentation::FreeText {
-                    multiple: true,
-                    positional: false,
-                } => {
+                } else if arg.accepts_multiple_values() {
                     for part in value.lines().filter(|s| !s.trim().is_empty()) {
                         argv.push(arg.display_name.clone());
                         argv.push(part.to_string());
                     }
-                }
-                InputPresentation::FreeText {
-                    multiple: false,
-                    positional: false,
-                } => {
+                } else {
                     argv.push(arg.display_name.clone());
                     argv.push(value.clone());
                 }
-                InputPresentation::Toggle | InputPresentation::ChoiceList { .. } => {}
-            },
-            Some(ArgValue::Choice(value)) => match arg.input_presentation() {
-                InputPresentation::ChoiceList {
-                    positional: true, ..
-                } => {
+            }
+            Some(ArgValue::Choice(value)) if arg.uses_choice_semantics() => {
+                if arg.serializes_as_positional() {
                     if let Some(index) = arg.position {
                         positionals.push((index, positional_sequence, value.clone()));
                         positional_sequence += 1;
                     }
-                }
-                InputPresentation::ChoiceList {
-                    positional: false, ..
-                } => {
+                } else {
                     argv.push(arg.display_name.clone());
                     argv.push(value.clone());
                 }
-                InputPresentation::Toggle | InputPresentation::FreeText { .. } => {}
-            },
+            }
             _ => {}
         }
     }
@@ -77,17 +57,4 @@ pub(crate) fn build_argv(command: &CommandModel, state: &CommandFormState) -> Ve
     positionals.sort_by_key(|(index, sequence, _)| (*index, *sequence));
     argv.extend(positionals.into_iter().map(|(_, _, value)| value));
     argv
-}
-
-pub(crate) fn missing_required(command: &CommandModel, state: &CommandFormState) -> Vec<String> {
-    command
-        .args
-        .iter()
-        .filter(|arg| arg.required)
-        .filter_map(|arg| match state.values.get(&arg.id) {
-            Some(ArgValue::Text(value)) if !value.is_empty() => None,
-            Some(ArgValue::Bool(true) | ArgValue::Choice(_)) => None,
-            _ => Some(arg.display_name.clone()),
-        })
-        .collect()
 }

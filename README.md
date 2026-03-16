@@ -36,6 +36,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 ```
 
+### Supported extension points
+
+The crate intentionally supports three public customization seams during the
+ongoing internal refactor:
+- custom runtimes with `TuiApp::with_runtime(...)`
+- theming and layout through `TuiConfig`
+- initial command selection through `TuiConfig.start_command`
+
+Internal modules and crate-private helper types are not stable extension points.
+
 ### Theme presets
 
 You can select a built-in theme preset via `TuiConfig`:

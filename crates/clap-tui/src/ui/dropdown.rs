@@ -15,14 +15,6 @@ use crate::spec::choice_value_matches_default;
 
 use super::screen::ScreenView;
 
-pub(crate) const MAX_DROPDOWN_ROWS: u16 = 6;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DropdownLayout {
-    pub(crate) rect: Rect,
-    pub(crate) visible_rows: usize,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DropdownItem {
     label: String,
@@ -98,51 +90,6 @@ impl StatefulWidget for DropdownWidget<'_> {
             StatefulWidget::render(scrollbar, area, buf, &mut scrollbar_state);
         }
     }
-}
-
-pub(crate) fn dropdown_layout(
-    form_view: Rect,
-    input_rect: Rect,
-    total_options: usize,
-) -> Option<DropdownLayout> {
-    if total_options == 0 || form_view.height == 0 || input_rect.width < 3 {
-        return None;
-    }
-
-    let desired_rows = total_options.min(MAX_DROPDOWN_ROWS as usize);
-    let available_below = form_view
-        .y
-        .saturating_add(form_view.height)
-        .saturating_sub(input_rect.y.saturating_add(input_rect.height));
-    let available_above = input_rect.y.saturating_sub(form_view.y);
-
-    let rows_below = available_below.saturating_sub(2) as usize;
-    let rows_above = available_above.saturating_sub(2) as usize;
-
-    let place_below = if rows_below >= desired_rows || rows_above == 0 {
-        rows_below > 0
-    } else if rows_above >= desired_rows || rows_below == 0 {
-        false
-    } else {
-        rows_below >= rows_above
-    };
-
-    let visible_rows = if place_below { rows_below } else { rows_above }.min(desired_rows);
-    if visible_rows == 0 {
-        return None;
-    }
-
-    let popup_height = u16::try_from(visible_rows).unwrap_or(MAX_DROPDOWN_ROWS) + 2;
-    let y = if place_below {
-        input_rect.y.saturating_add(input_rect.height)
-    } else {
-        input_rect.y.saturating_sub(popup_height)
-    };
-
-    Some(DropdownLayout {
-        rect: Rect::new(input_rect.x, y, input_rect.width, popup_height),
-        visible_rows,
-    })
 }
 
 pub(crate) fn render_dropdown(
@@ -241,14 +188,14 @@ fn build_dropdown_view(
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_DROPDOWN_ROWS, dropdown_layout};
+    use crate::frame_snapshot::{MAX_DROPDOWN_ROWS, dropdown_geometry};
     use ratatui::layout::Rect;
 
     #[test]
     fn dropdown_uses_input_width() {
         let form_view = Rect::new(10, 5, 60, 20);
         let input_rect = Rect::new(14, 8, 24, 3);
-        let layout = dropdown_layout(form_view, input_rect, 4).expect("layout");
+        let layout = dropdown_geometry(form_view, input_rect, 4).expect("layout");
 
         assert_eq!(layout.rect.x, input_rect.x);
         assert_eq!(layout.rect.width, input_rect.width);
@@ -258,7 +205,7 @@ mod tests {
     fn dropdown_prefers_below_when_space_exists() {
         let form_view = Rect::new(10, 5, 60, 20);
         let input_rect = Rect::new(14, 8, 24, 3);
-        let layout = dropdown_layout(form_view, input_rect, 4).expect("layout");
+        let layout = dropdown_geometry(form_view, input_rect, 4).expect("layout");
 
         assert_eq!(layout.rect.y, input_rect.y + input_rect.height);
         assert_eq!(layout.visible_rows, 4);
@@ -268,7 +215,7 @@ mod tests {
     fn dropdown_flips_above_when_below_is_too_tight() {
         let form_view = Rect::new(10, 5, 60, 12);
         let input_rect = Rect::new(14, 12, 24, 3);
-        let layout = dropdown_layout(form_view, input_rect, 4).expect("layout");
+        let layout = dropdown_geometry(form_view, input_rect, 4).expect("layout");
 
         assert_eq!(layout.rect.y + layout.rect.height, input_rect.y);
         assert_eq!(layout.visible_rows, 4);
@@ -278,13 +225,13 @@ mod tests {
     fn dropdown_height_respects_space_and_max_rows() {
         let form_view = Rect::new(10, 5, 60, 11);
         let input_rect = Rect::new(14, 8, 24, 3);
-        let layout = dropdown_layout(form_view, input_rect, 20).expect("layout");
+        let layout = dropdown_geometry(form_view, input_rect, 20).expect("layout");
 
         assert_eq!(layout.visible_rows, 3);
         assert_eq!(layout.rect.height, 5);
 
         let roomy_form = Rect::new(10, 5, 60, 30);
-        let roomy_layout = dropdown_layout(roomy_form, input_rect, 20).expect("layout");
+        let roomy_layout = dropdown_geometry(roomy_form, input_rect, 20).expect("layout");
         assert_eq!(roomy_layout.visible_rows, MAX_DROPDOWN_ROWS as usize);
         assert_eq!(roomy_layout.rect.height, MAX_DROPDOWN_ROWS + 2);
     }
@@ -294,6 +241,6 @@ mod tests {
         let form_view = Rect::new(0, 0, 40, 3);
         let input_rect = Rect::new(2, 1, 20, 1);
 
-        assert_eq!(dropdown_layout(form_view, input_rect, 2), None);
+        assert_eq!(dropdown_geometry(form_view, input_rect, 2), None);
     }
 }

@@ -1,9 +1,9 @@
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, Focus};
+use crate::query::form;
 use crate::runtime::{AppKeyCode, AppKeyEvent};
 use crate::update::Action;
-use crate::view::form;
 
 pub(crate) fn handle_key_event(
     key: AppKeyEvent,
@@ -18,10 +18,12 @@ pub(crate) fn handle_key_event(
         return Some(Action::Run);
     }
     if state.ui.help_open {
+        if matches!(key.code, AppKeyCode::Esc | AppKeyCode::F(1))
+            || matches!(key.code, AppKeyCode::Char(c) if c == config.keymap.help)
+        {
+            return Some(Action::ToggleHelp);
+        }
         return match key.code {
-            AppKeyCode::Esc => Some(Action::ToggleHelp),
-            AppKeyCode::Char(c) if c == config.keymap.help => Some(Action::ToggleHelp),
-            AppKeyCode::F(1) => Some(Action::ToggleHelp),
             AppKeyCode::Up => Some(Action::ScrollForm(-1)),
             AppKeyCode::Down => Some(Action::ScrollForm(1)),
             AppKeyCode::PageUp => Some(Action::ScrollForm(-10)),

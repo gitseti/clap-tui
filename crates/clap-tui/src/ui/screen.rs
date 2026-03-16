@@ -8,10 +8,9 @@ use std::collections::HashSet;
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, CommandFormState, Focus, UiState};
+use crate::pipeline::{self, ValidationState};
+use crate::query::{form, tree::{self, TreeItem}};
 use crate::spec::{CommandPath, CommandSpec};
-use crate::view::argv::build_argv;
-use crate::view::command_tree::{self, TreeItem};
-use crate::view::form;
 
 use super::{dropdown, footer, form as form_ui, header, layout, preview, sidebar, styles, toast};
 
@@ -22,6 +21,7 @@ pub(crate) struct ScreenView<'a> {
     pub(crate) tree_items: Vec<TreeItem>,
     pub(crate) active_args: Vec<form::OrderedArg<'a>>,
     pub(crate) preview_argv: Vec<String>,
+    pub(crate) validation: ValidationState,
     pub(crate) inputs: Option<&'a CommandFormState>,
 }
 
@@ -33,14 +33,15 @@ impl<'a> ScreenView<'a> {
         search_query: &str,
         active_tab: ActiveTab,
         inputs: Option<&'a CommandFormState>,
-        preview_argv: Vec<String>,
+        derived: pipeline::DerivedState,
     ) -> Self {
         Self {
             command,
             root,
-            tree_items: command_tree::tree_items(root, expanded, search_query),
+            tree_items: tree::tree_items(root, expanded, search_query),
             active_args: form::visible_args(command, active_tab),
-            preview_argv,
+            preview_argv: derived.argv,
+            validation: derived.validation,
             inputs,
         }
     }
@@ -59,7 +60,7 @@ pub(crate) fn render(
         .border_style(styles::panel_border(config, false))
         .style(styles::panel(config));
     frame.render_widget(background, size);
-    let preview_argv = build_argv(state);
+    let derived = pipeline::derive(state);
     let selected_path = state.domain.selected_path().clone();
     let vm = ScreenView::build(
         state.domain.current_command(),
@@ -68,7 +69,7 @@ pub(crate) fn render(
         &state.ui.search_query,
         state.ui.active_tab,
         state.domain.current_form(),
-        preview_argv,
+        derived,
     );
     let screen_layout = layout::build_screen_layout(&state.ui, config, size, &vm);
     let frame_snapshot = screen_layout.snapshot.clone();

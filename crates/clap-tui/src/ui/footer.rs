@@ -10,6 +10,7 @@ use crate::frame_snapshot::{FooterButtonLayout, FrameLayout};
 #[cfg(test)]
 use crate::input::AppState;
 use crate::input::{HoverTarget, UiState};
+use crate::pipeline::ValidationState;
 
 use super::screen::ScreenView;
 use super::styles;
@@ -63,10 +64,10 @@ pub(crate) fn render_footer(
     ui: &UiState,
     config: &TuiConfig,
     area: Rect,
-    _vm: &ScreenView<'_>,
+    vm: &ScreenView<'_>,
     _frame_layout: &FrameLayout,
 ) {
-    let view = build_footer_view(ui, area);
+    let view = build_footer_view(ui, area, &vm.validation);
     frame.render_widget(
         FooterWidget {
             config,
@@ -77,12 +78,12 @@ pub(crate) fn render_footer(
 }
 
 pub(crate) fn populate_layout(ui: &UiState, area: Rect, frame_layout: &mut FrameLayout) {
-    let view = build_footer_view(ui, area);
+    let view = build_footer_view(ui, area, &ValidationState::default());
     frame_layout.footer = Some(area);
     frame_layout.footer_buttons = layout_footer_buttons(area, &view);
 }
 
-fn build_footer_view(ui: &UiState, area: Rect) -> FooterView {
+fn build_footer_view(ui: &UiState, area: Rect, _validation: &ValidationState) -> FooterView {
     let actions = vec![
         build_chip(
             ui,
@@ -271,11 +272,12 @@ mod tests {
 
     use super::{build_footer_view, build_test_state, layout_footer_buttons};
     use crate::input::HoverTarget;
+    use crate::pipeline::ValidationState;
 
     #[test]
     fn footer_layout_preserves_button_order_and_spacing() {
         let state = build_test_state();
-        let view = build_footer_view(&state.ui, Rect::new(0, 0, 60, 1));
+        let view = build_footer_view(&state.ui, Rect::new(0, 0, 60, 1), &ValidationState::default());
         let layouts = layout_footer_buttons(Rect::new(0, 0, 60, 1), &view);
 
         let targets = layouts.iter().map(|item| item.target).collect::<Vec<_>>();
@@ -308,7 +310,7 @@ mod tests {
         let mut state = build_test_state();
         state.ui.hover = Some(HoverTarget::Run);
 
-        let view = build_footer_view(&state.ui, Rect::new(0, 0, 60, 1));
+        let view = build_footer_view(&state.ui, Rect::new(0, 0, 60, 1), &ValidationState::default());
 
         assert!(view.actions[0].hovered);
         assert!(!view.actions[1].hovered);

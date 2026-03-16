@@ -70,8 +70,7 @@ mod tests {
         let combined = lines
             .iter()
             .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
-            .collect::<Vec<_>>()
-            .join("");
+            .collect::<String>();
         assert!(!combined.contains('>'));
         assert!(!combined.contains("root"));
     }

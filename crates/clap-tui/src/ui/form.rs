@@ -8,13 +8,13 @@ use ratatui::widgets::{
 
 use crate::config::TuiConfig;
 use crate::form_editor;
-use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot};
+use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot, dropdown_geometry};
 use crate::input::{ArgValue, Focus, UiState};
+use crate::query::form::{self, field_metrics};
 use crate::spec::CommandPath;
 use crate::spec::{ArgSpec, choice_value_matches_default};
-use crate::view::form::{self, field_metrics};
 
-use super::{dropdown, screen::ScreenView, styles};
+use super::{screen::ScreenView, styles};
 
 pub(crate) fn populate_layout(
     ui: &UiState,
@@ -66,7 +66,7 @@ pub(crate) fn populate_layout(
             continue;
         };
         let description = field_help_text(item.arg)
-            .map(|_| {
+            .and_then(|_| {
                 clipped_rect(
                     area.x,
                     area.width,
@@ -74,8 +74,7 @@ pub(crate) fn populate_layout(
                     metrics.description_height.max(1),
                     content_area,
                 )
-            })
-            .flatten();
+            });
 
         frame_layout.form_inputs.insert(item.arg.id.clone(), input);
         frame_layout.form_fields.push(FormFieldLayout {
@@ -88,10 +87,8 @@ pub(crate) fn populate_layout(
         if ui.dropdown_open.as_deref() == Some(&item.arg.id) {
             frame_layout.dropdown = frame_layout
                 .form_view
-                .and_then(|form_view| {
-                    dropdown::dropdown_layout(form_view, input, item.arg.choices.len())
-                })
-                .map(|layout| layout.rect);
+                .and_then(|form_view| dropdown_geometry(form_view, input, item.arg.choices.len()))
+                .map(|geometry| geometry.rect);
         }
 
         y += i32::from(metrics.total_height);
@@ -502,7 +499,7 @@ mod tests {
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
     use crate::ui::screen::ScreenView;
-    use crate::view::form::visible_args;
+    use crate::query::form::visible_args;
     use crate::TuiConfig;
 
     fn command() -> CommandSpec {
@@ -555,7 +552,7 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .map(|cell| cell.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect::<String>()
     }
 
@@ -568,6 +565,7 @@ mod tests {
             tree_items: Vec::new(),
             active_args: Vec::new(),
             preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -595,6 +593,7 @@ mod tests {
             tree_items: Vec::new(),
             active_args: Vec::new(),
             preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -632,6 +631,7 @@ mod tests {
             tree_items: Vec::new(),
             active_args: Vec::new(),
             preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -657,6 +657,7 @@ mod tests {
             tree_items: Vec::new(),
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -704,6 +705,7 @@ mod tests {
             tree_items: Vec::new(),
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();

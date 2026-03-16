@@ -7,8 +7,8 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use crate::config::TuiConfig;
 use crate::frame_snapshot::{FrameLayout, SidebarItemLayout};
 use crate::input::{Focus, UiState};
+use crate::query::tree::TreeItem;
 use crate::spec::CommandPath;
-use crate::view::command_tree::TreeItem;
 
 use super::screen::ScreenView;
 use super::styles;
@@ -221,7 +221,7 @@ mod tests {
     use super::{sidebar_line, sidebar_title};
     use crate::config::TuiConfig;
     use crate::spec::{CommandPath, CommandSpec};
-    use crate::view::command_tree::TreeItem;
+    use crate::query::tree::TreeItem;
 
     #[test]
     fn sidebar_title_uses_binary_styling_and_shows_version() {
