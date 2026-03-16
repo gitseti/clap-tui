@@ -87,6 +87,28 @@ pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
     }
 }
 
+pub(crate) fn field_input_offset(arg: &ArgSpec) -> u16 {
+    let metrics = field_metrics(arg);
+    if metrics.label_height > 0 {
+        metrics
+            .label_height
+            .saturating_add(metrics.description_height)
+    } else {
+        0
+    }
+}
+
+pub(crate) fn field_description_offset(arg: &ArgSpec) -> Option<u16> {
+    let metrics = field_metrics(arg);
+    if metrics.description_height == 0 {
+        None
+    } else if metrics.label_height > 0 {
+        Some(metrics.label_height)
+    } else {
+        Some(metrics.input_height)
+    }
+}
+
 pub(crate) fn measure_fields_height(args: &[OrderedArg<'_>]) -> u16 {
     args.iter()
         .map(|item| field_metrics(item.arg).total_height)
@@ -104,7 +126,7 @@ pub(crate) fn field_content_bounds(
     let mut y: u16 = 0;
     for item in args {
         let metrics = field_metrics(item.arg);
-        let input_top = y.saturating_add(metrics.label_height);
+        let input_top = y.saturating_add(field_input_offset(item.arg));
         let input_bottom = input_top.saturating_add(metrics.input_height);
         if item.order_index == selected_index {
             return Some((input_top, input_bottom));
@@ -118,14 +140,15 @@ pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> 
     let mut y: u16 = 0;
     for item in args {
         let metrics = field_metrics(item.arg);
-        let input_top = y.saturating_add(metrics.label_height);
+        let input_top = y.saturating_add(field_input_offset(item.arg));
         let input_bottom = input_top.saturating_add(metrics.input_height);
-        let description_top = input_bottom;
+        let description_top = field_description_offset(item.arg).map(|offset| y.saturating_add(offset));
+        let label_bottom = y.saturating_add(metrics.label_height);
 
-        let in_label = metrics.label_height > 0 && content_y >= y && content_y < input_top;
-        let in_description = metrics.description_height > 0
-            && content_y >= description_top
-            && content_y < description_top.saturating_add(metrics.description_height);
+        let in_label = metrics.label_height > 0 && content_y >= y && content_y < label_bottom;
+        let in_description = description_top.is_some_and(|top| {
+            content_y >= top && content_y < top.saturating_add(metrics.description_height)
+        });
         let in_input = content_y >= input_top && content_y < input_bottom;
         if in_label || in_description || in_input {
             return Some(FormHit {
@@ -151,8 +174,8 @@ fn is_help_arg(arg: &ArgSpec) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        field_content_bounds, field_metrics, hit_test_form_content, measure_fields_height,
-        ordered_args, visible_args,
+        field_content_bounds, field_description_offset, field_input_offset, field_metrics,
+        hit_test_form_content, measure_fields_height, ordered_args, visible_args,
     };
     use crate::input::ActiveTab;
     use crate::spec::{ArgKind, ArgSpec, CommandSpec};
@@ -240,6 +263,18 @@ mod tests {
     }
 
     #[test]
+    fn described_options_place_help_before_input() {
+        let mut option = arg("config", "--config", ArgKind::Option);
+        option.help = Some("Path to config".to_string());
+        let flag = arg("quiet", "--quiet", ArgKind::Flag);
+
+        assert_eq!(field_description_offset(&option), Some(1));
+        assert_eq!(field_input_offset(&option), 2);
+        assert_eq!(field_description_offset(&flag), None);
+        assert_eq!(field_input_offset(&flag), 0);
+    }
+
+    #[test]
     fn field_bounds_and_hit_testing_share_same_geometry() {
         let mut positional = arg("path", "path", ArgKind::Positional);
         positional.position = Some(1);
@@ -248,23 +283,23 @@ mod tests {
         let visible = visible_args(&command, ActiveTab::Inputs);
 
         assert_eq!(measure_fields_height(&visible), 6);
-        assert_eq!(field_content_bounds(&visible, 0), Some((1, 4)));
+        assert_eq!(field_content_bounds(&visible, 0), Some((2, 5)));
 
         let label_hit = hit_test_form_content(&visible, 0).expect("label hit");
         assert!(label_hit.in_label);
         assert!(!label_hit.in_input);
         assert!(!label_hit.in_description);
 
-        let input_hit = hit_test_form_content(&visible, 1).expect("input hit");
+        let description_hit = hit_test_form_content(&visible, 1).expect("description hit");
+        assert!(description_hit.in_description);
+        assert!(!description_hit.in_label);
+        assert!(!description_hit.in_input);
+
+        let input_hit = hit_test_form_content(&visible, 2).expect("input hit");
         assert!(input_hit.accepts_text_input);
         assert!(input_hit.in_input);
         assert!(!input_hit.in_label);
         assert!(!input_hit.in_description);
-
-        let description_hit = hit_test_form_content(&visible, 4).expect("description hit");
-        assert!(description_hit.in_description);
-        assert!(!description_hit.in_label);
-        assert!(!description_hit.in_input);
 
         assert!(hit_test_form_content(&visible, 5).is_none());
     }

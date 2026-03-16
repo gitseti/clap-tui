@@ -10,7 +10,7 @@ use crate::config::TuiConfig;
 use crate::form_editor;
 use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot, dropdown_geometry};
 use crate::input::{ArgValue, Focus, UiState};
-use crate::query::form::{self, field_metrics};
+use crate::query::form::{self, field_description_offset, field_input_offset, field_metrics};
 use crate::spec::CommandPath;
 use crate::spec::{ArgSpec, choice_value_matches_default};
 
@@ -54,7 +54,7 @@ pub(crate) fn populate_layout(
         } else {
             None
         };
-        let input_y = y + i32::from(metrics.label_height);
+        let input_y = y + i32::from(field_input_offset(item.arg));
         let Some(input) = clipped_rect(
             area.x,
             area.width,
@@ -67,10 +67,11 @@ pub(crate) fn populate_layout(
         };
         let description = field_help_text(item.arg)
             .and_then(|_| {
+                let description_y = y + i32::from(field_description_offset(item.arg)?);
                 clipped_rect(
                     area.x,
                     area.width,
-                    input_y + i32::from(metrics.input_height),
+                    description_y,
                     metrics.description_height.max(1),
                     content_area,
                 )
@@ -690,6 +691,48 @@ mod tests {
         let rendered = buffer_text(terminal.backend());
         assert!(rendered.contains("Command help"));
         assert!(!rendered.contains("--config"));
+    }
+
+    #[test]
+    fn layout_places_option_description_between_label_and_input() {
+        let mut config = option_arg("config", "--config");
+        config.help = Some("Path to the main config file".to_string());
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![config],
+            subcommands: Vec::new(),
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            tree_items: Vec::new(),
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+
+        populate_layout(
+            &ui_state(),
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
+
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("field layout");
+        let label = field.label.expect("label rect");
+        let description = field.description.expect("description rect");
+
+        assert_eq!(description.y, label.y + label.height);
+        assert_eq!(field.input.y, description.y + description.height);
     }
 
     #[test]
