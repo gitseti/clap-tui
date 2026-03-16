@@ -102,11 +102,7 @@ impl TextEditor {
 
     pub(crate) fn apply_key(&mut self, key: AppKeyEvent) -> bool {
         let cursor_before = self.cursor;
-        let selection_anchor = if extends_selection(key) {
-            self.selection_anchor.or(Some(cursor_before))
-        } else {
-            None
-        };
+        let selection_anchor = selection_anchor_for_key(self.selection_anchor, cursor_before, key);
 
         let mut textarea = self.to_textarea(selection_anchor);
         let modified = textarea.input(Input::from(key));
@@ -116,7 +112,11 @@ impl TextEditor {
             row: cursor.0,
             col: cursor.1,
         };
-        self.selection_anchor = selection_anchor.filter(|anchor| *anchor != self.cursor);
+        self.selection_anchor = if textarea.is_selecting() {
+            selection_anchor.filter(|anchor| *anchor != self.cursor)
+        } else {
+            None
+        };
         modified
     }
 
@@ -188,6 +188,34 @@ fn extends_selection(key: AppKeyEvent) -> bool {
     )
 }
 
+fn selection_anchor_for_key(
+    selection_anchor: Option<TextPosition>,
+    cursor_before: TextPosition,
+    key: AppKeyEvent,
+) -> Option<TextPosition> {
+    if extends_selection(key) {
+        return selection_anchor.or(Some(cursor_before));
+    }
+    if consumes_selection(key) {
+        return selection_anchor;
+    }
+    None
+}
+
+fn consumes_selection(key: AppKeyEvent) -> bool {
+    match key.code {
+        AppKeyCode::Backspace | AppKeyCode::Delete => true,
+        AppKeyCode::Char(_) if !key.modifiers.control && !key.modifiers.alt => true,
+        AppKeyCode::Char(c) if key.modifiers.control && !key.modifiers.alt => {
+            matches!(c, 'c' | 'd' | 'h' | 'j' | 'k' | 'm' | 'w' | 'x' | 'y')
+        }
+        AppKeyCode::Char(c) if !key.modifiers.control && key.modifiers.alt => {
+            matches!(c, 'd' | 'h')
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{TextEditor, TextPosition};
@@ -219,5 +247,31 @@ mod tests {
             Some(TextPosition { row: 0, col: 1 })
         );
         assert_eq!(editor.cursor(), TextPosition { row: 0, col: 4 });
+    }
+
+    #[test]
+    fn backspace_deletes_the_entire_selected_range() {
+        let mut editor = TextEditor::from_displayed("alpha");
+        editor.start_selection(0, 1);
+        editor.move_cursor_to(0, 4);
+
+        editor.apply_key(key(AppKeyCode::Backspace));
+
+        assert_eq!(editor.text(), "aa");
+        assert_eq!(editor.cursor(), TextPosition { row: 0, col: 1 });
+        assert_eq!(editor.selection_anchor(), None);
+    }
+
+    #[test]
+    fn typing_replaces_the_current_selection() {
+        let mut editor = TextEditor::from_displayed("alpha");
+        editor.start_selection(0, 1);
+        editor.move_cursor_to(0, 4);
+
+        editor.apply_key(key(AppKeyCode::Char('x')));
+
+        assert_eq!(editor.text(), "axa");
+        assert_eq!(editor.cursor(), TextPosition { row: 0, col: 2 });
+        assert_eq!(editor.selection_anchor(), None);
     }
 }
