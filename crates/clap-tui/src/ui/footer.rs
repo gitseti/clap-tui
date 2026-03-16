@@ -88,7 +88,7 @@ fn build_footer_view(ui: &UiState, area: Rect, _validation: &ValidationState) ->
         build_chip(
             ui,
             HoverTarget::Run,
-            "Ctrl+Enter Run",
+            "Ctrl+R Run",
             FooterChipVariant::Primary,
         ),
         build_chip(
@@ -277,7 +277,11 @@ mod tests {
     #[test]
     fn footer_layout_preserves_button_order_and_spacing() {
         let state = build_test_state();
-        let view = build_footer_view(&state.ui, Rect::new(0, 0, 60, 1), &ValidationState::default());
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 60, 1),
+            &ValidationState::default(),
+        );
         let layouts = layout_footer_buttons(Rect::new(0, 0, 60, 1), &view);
 
         let targets = layouts.iter().map(|item| item.target).collect::<Vec<_>>();
@@ -310,7 +314,11 @@ mod tests {
         let mut state = build_test_state();
         state.ui.hover = Some(HoverTarget::Run);
 
-        let view = build_footer_view(&state.ui, Rect::new(0, 0, 60, 1), &ValidationState::default());
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 60, 1),
+            &ValidationState::default(),
+        );
 
         assert!(view.actions[0].hovered);
         assert!(!view.actions[1].hovered);

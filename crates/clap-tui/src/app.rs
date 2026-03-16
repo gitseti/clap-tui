@@ -224,8 +224,7 @@ fn handle_app_event<R: Runtime>(
 ) -> EventOutcome {
     match event {
         AppEvent::Key(key) => {
-            if let Some(action) =
-                controller::handle_key_event(*key, state, frame_snapshot, config)
+            if let Some(action) = controller::handle_key_event(*key, state, frame_snapshot, config)
             {
                 let effect = update::apply_action(&action, state, frame_snapshot);
                 match handle_effect(effect, state, session) {
@@ -418,6 +417,29 @@ mod tests {
     fn event_loop_returns_built_argv_on_ctrl_enter() {
         let mut runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
             AppKeyCode::Enter,
+            AppKeyModifiers {
+                control: true,
+                alt: false,
+                shift: false,
+            },
+        ))]);
+        let terminal = runtime.init_terminal().expect("terminal");
+        let mut session = TerminalSession::new(&mut runtime, terminal);
+        let command = Command::new("tool").arg(
+            Arg::new("verbose")
+                .long("verbose")
+                .action(ArgAction::SetTrue),
+        );
+
+        let result = event_loop(&command, &TuiConfig::default(), &mut session);
+
+        assert_eq!(result.expect("run result"), vec!["tool".to_string()]);
+    }
+
+    #[test]
+    fn event_loop_returns_built_argv_on_ctrl_r() {
+        let mut runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('r'),
             AppKeyModifiers {
                 control: true,
                 alt: false,

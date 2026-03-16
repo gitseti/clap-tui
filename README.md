@@ -67,6 +67,7 @@ Available presets:
 - `Shift+Tab` cycle tabs
 - `?` toggle Help tab
 - `/` search in command tree
-- `Ctrl+Enter` run
+- `Ctrl+R` run
+- `Ctrl+Enter` run when supported by the terminal
 - `Ctrl+C` exit
 - Type to edit the focused field

@@ -14,6 +14,9 @@ pub(crate) fn handle_key_event(
     if key.code == AppKeyCode::Char('c') && key.modifiers.control {
         return Some(Action::Exit);
     }
+    if key.code == AppKeyCode::Char('r') && key.modifiers.control {
+        return Some(Action::Run);
+    }
     if key.code == AppKeyCode::Enter && key.modifiers.control {
         return Some(Action::Run);
     }
@@ -205,5 +208,26 @@ mod tests {
         );
 
         assert_eq!(action, Some(Action::Escape));
+    }
+
+    #[test]
+    fn ctrl_r_emits_run_action() {
+        let state = AppState::new(command());
+
+        let action = handle_key_event(
+            AppKeyEvent::new(
+                AppKeyCode::Char('r'),
+                AppKeyModifiers {
+                    control: true,
+                    alt: false,
+                    shift: false,
+                },
+            ),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::Run));
     }
 }
