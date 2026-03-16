@@ -84,7 +84,9 @@ mod tests {
                 help: String::new(),
                 args: Vec::new(),
                 subcommands: Vec::new(),
+                ..CommandSpec::default()
             }],
+            ..CommandSpec::default()
         });
         state
             .select_command_path(&["build".to_string()])

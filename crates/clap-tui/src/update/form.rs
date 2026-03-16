@@ -75,10 +75,10 @@ fn apply_choice_input(
             let current = state
                 .domain
                 .current_form()
-                .and_then(|inputs| inputs.values.get(&arg.id))
+                .and_then(|inputs| inputs.compatibility_value(arg))
                 .and_then(|value| match value {
                     ArgValue::Choice(selected) => {
-                        arg.choices.iter().position(|choice| choice == selected)
+                        arg.choices.iter().position(|choice| *choice == selected)
                     }
                     _ => None,
                 })
@@ -94,10 +94,10 @@ fn apply_choice_input(
             let current = state
                 .domain
                 .current_form()
-                .and_then(|inputs| inputs.values.get(&arg.id))
+                .and_then(|inputs| inputs.compatibility_value(arg))
                 .and_then(|value| match value {
                     ArgValue::Choice(selected) => {
-                        arg.choices.iter().position(|choice| choice == selected)
+                        arg.choices.iter().position(|choice| *choice == selected)
                     }
                     _ => None,
                 })

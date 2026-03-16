@@ -119,6 +119,7 @@ mod tests {
             position: None,
             value_cardinality: ValueCardinality::One,
             value_hint: None,
+            ..ArgSpec::default()
         }
     }
 
@@ -130,6 +131,7 @@ mod tests {
             help: String::new(),
             args,
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         }
     }
 
@@ -171,11 +173,16 @@ mod tests {
         assert!(matches!(state.ui.focus, Focus::Form));
         assert!(!state.domain.is_touched("verbose"));
         assert_eq!(
-            state
-                .domain
-                .current_form()
-                .and_then(|inputs| inputs.values.get("verbose")),
-            Some(&crate::input::ArgValue::Bool(false))
+            state.domain.current_form().and_then(|inputs| {
+                state
+                    .domain
+                    .current_command()
+                    .args
+                    .iter()
+                    .find(|arg| arg.id == "verbose")
+                    .and_then(|arg| inputs.compatibility_value(arg))
+            }),
+            Some(crate::input::ArgValue::Bool(false))
         );
 
         let action =
@@ -257,11 +264,16 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
-            state
-                .domain
-                .current_form()
-                .and_then(|inputs| inputs.values.get("color")),
-            Some(&crate::input::ArgValue::Choice("green".to_string()))
+            state.domain.current_form().and_then(|inputs| {
+                state
+                    .domain
+                    .current_command()
+                    .args
+                    .iter()
+                    .find(|arg| arg.id == "color")
+                    .and_then(|arg| inputs.compatibility_value(arg))
+            }),
+            Some(crate::input::ArgValue::Choice("green".to_string()))
         );
         assert!(state.domain.is_touched("color"));
         assert!(state.ui.dropdown_open.is_none());
@@ -308,11 +320,16 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
-            state
-                .domain
-                .current_form()
-                .and_then(|inputs| inputs.values.get("color")),
-            Some(&crate::input::ArgValue::Choice("choice-6".to_string()))
+            state.domain.current_form().and_then(|inputs| {
+                state
+                    .domain
+                    .current_command()
+                    .args
+                    .iter()
+                    .find(|arg| arg.id == "color")
+                    .and_then(|arg| inputs.compatibility_value(arg))
+            }),
+            Some(crate::input::ArgValue::Choice("choice-6".to_string()))
         );
     }
 
@@ -337,8 +354,11 @@ mod tests {
                     help: String::new(),
                     args: Vec::new(),
                     subcommands: Vec::new(),
+                    ..CommandSpec::default()
                 }],
+                ..CommandSpec::default()
             }],
+            ..CommandSpec::default()
         });
         state
             .select_command_path(&["build".to_string()])

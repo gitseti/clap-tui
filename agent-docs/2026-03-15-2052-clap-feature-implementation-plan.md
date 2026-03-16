@@ -1,5 +1,8 @@
 # clap feature implementation plan
 
+Status: Done on March 16, 2026.
+Remaining follow-up work moved to `agent-docs/2026-03-16-2239-clap-feature-remaining-work.md`.
+
 Based on `agent-docs/2026-03-15-1335-clap-feature-overview.md`.
 
 ## Current baseline

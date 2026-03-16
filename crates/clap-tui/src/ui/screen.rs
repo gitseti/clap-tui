@@ -25,7 +25,7 @@ pub(crate) struct ScreenView<'a> {
     pub(crate) active_args: Vec<form::OrderedArg<'a>>,
     pub(crate) preview_argv: Vec<String>,
     pub(crate) validation: ValidationState,
-    pub(crate) inputs: Option<&'a CommandFormState>,
+    pub(crate) inputs: Option<CommandFormState>,
 }
 
 impl<'a> ScreenView<'a> {
@@ -35,7 +35,7 @@ impl<'a> ScreenView<'a> {
         expanded: &HashSet<String>,
         search_query: &str,
         active_tab: ActiveTab,
-        inputs: Option<&'a CommandFormState>,
+        inputs: Option<CommandFormState>,
         derived: pipeline::DerivedState,
     ) -> Self {
         Self {

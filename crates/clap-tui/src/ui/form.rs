@@ -222,8 +222,8 @@ fn render_fields(
         let value = vm
             .inputs
             .as_ref()
-            .and_then(|inputs| inputs.values.get(&item.arg.id))
-            .map(|arg_value| match arg_value {
+            .and_then(|inputs| inputs.compatibility_value(item.arg))
+            .map(|arg_value| match &arg_value {
                 ArgValue::Bool(enabled) => {
                     if *enabled {
                         "[x]".to_string()
@@ -238,13 +238,14 @@ fn render_fields(
         let current_value = vm
             .inputs
             .as_ref()
-            .and_then(|inputs| inputs.values.get(&item.arg.id));
+            .and_then(|inputs| inputs.compatibility_value(item.arg));
         let shows_choice_placeholder = item.arg.uses_choice_input() && current_value.is_none();
         let is_default = value_matches_default(
             item.arg,
-            current_value,
+            current_value.as_ref(),
             vm.inputs
-                .is_some_and(|inputs| inputs.touched.contains(&item.arg.id)),
+                .as_ref()
+                .is_some_and(|inputs| inputs.is_touched(&item.arg.id)),
         );
 
         let block = Block::default()
@@ -511,6 +512,7 @@ mod tests {
             help: String::new(),
             args: Vec::new(),
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         }
     }
 
@@ -545,6 +547,7 @@ mod tests {
             position: None,
             value_cardinality: ValueCardinality::One,
             value_hint: None,
+            ..ArgSpec::default()
         }
     }
 
@@ -631,6 +634,7 @@ mod tests {
                 .join("\n"),
             args: Vec::new(),
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         };
         let vm = ScreenView {
             command: &command,
@@ -708,6 +712,7 @@ mod tests {
             help: String::new(),
             args: vec![config],
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         };
         let vm = ScreenView {
             command: &command,
@@ -748,6 +753,7 @@ mod tests {
                 option_arg("mode", "--mode"),
             ],
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         };
         let vm = ScreenView {
             command: &command,
@@ -810,6 +816,7 @@ mod tests {
             help: String::new(),
             args: vec![choice_arg("color", "--color", &["red", "green", "blue"])],
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         };
         let vm = ScreenView {
             command: &command,

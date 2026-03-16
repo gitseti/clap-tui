@@ -19,9 +19,10 @@ pub(crate) struct DerivedState {
 }
 
 pub(crate) fn derive(state: &AppState) -> DerivedState {
+    let argv = argv::build_command_line(state);
     DerivedState {
-        argv: argv::build_command_line(state),
-        validation: validation::build_validation_state(state),
+        validation: validation::validate_argv(state, &argv),
+        argv,
     }
 }
 
@@ -29,8 +30,14 @@ pub(crate) fn build_command_line(state: &AppState) -> Vec<String> {
     argv::build_command_line(state)
 }
 
+pub(crate) fn validate_argv(state: &AppState, argv: &[String]) -> ValidationState {
+    validation::validate_argv(state, argv)
+}
+
 #[cfg(test)]
 mod tests {
+    use clap::{Arg, ArgAction, Command};
+
     use super::derive;
     use crate::input::AppState;
     use crate::spec::{ArgKind, ArgSpec, CommandSpec};
@@ -47,6 +54,7 @@ mod tests {
             position: None,
             value_cardinality: crate::spec::ValueCardinality::One,
             value_hint: None,
+            ..ArgSpec::default()
         }
     }
 
@@ -58,6 +66,7 @@ mod tests {
             help: String::new(),
             args,
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         })
     }
 
@@ -90,7 +99,7 @@ mod tests {
         );
         assert_eq!(
             derived.validation.summary.as_deref(),
-            Some("Missing required: --name")
+            Some("Missing required argument: --name")
         );
     }
 
@@ -119,6 +128,226 @@ mod tests {
         assert_eq!(
             derived.validation.field_errors.get("color"),
             Some(&"Required argument".to_string())
+        );
+    }
+
+    #[test]
+    fn derived_state_builds_full_invocation_argv_from_owned_command_forms() {
+        let root = CommandSpec::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(clap::ArgAction::SetTrue)
+                        .global(true),
+                )
+                .subcommand(
+                    Command::new("build")
+                        .arg(Arg::new("target").long("target"))
+                        .subcommand(Command::new("release")),
+                ),
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        state
+            .domain
+            .set_text_value("target", "wasm32-unknown-unknown");
+        state.domain.mark_touched("target");
+        state
+            .select_command_path(&["build".to_string(), "release".to_string()])
+            .expect("valid path");
+        state.domain.toggle_flag_touched("verbose");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.argv,
+            vec![
+                "tool".to_string(),
+                "--verbose".to_string(),
+                "build".to_string(),
+                "--target".to_string(),
+                "wasm32-unknown-unknown".to_string(),
+                "release".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn clap_backed_validation_reports_conflicts_from_preview_argv() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("debug")
+                        .long("debug")
+                        .action(clap::ArgAction::SetTrue)
+                        .conflicts_with("quiet"),
+                )
+                .arg(
+                    Arg::new("quiet")
+                        .long("quiet")
+                        .action(clap::ArgAction::SetTrue),
+                ),
+        );
+        state.domain.toggle_flag_touched("debug");
+        state.domain.toggle_flag_touched("quiet");
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert!(
+            derived
+                .validation
+                .summary
+                .as_deref()
+                .is_some_and(|summary| summary == "Conflicting arguments: --debug, --quiet")
+        );
+        assert!(derived.validation.field_errors.contains_key("debug"));
+        assert!(derived.validation.field_errors.contains_key("quiet"));
+    }
+
+    #[test]
+    fn help_style_missing_positional_uses_missing_argument_summary_not_about() {
+        let state = AppState::from_command(
+            &Command::new("tool")
+                .about("Run the selected tool")
+                .arg_required_else_help(true)
+                .arg(Arg::new("path").required(true)),
+        );
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert_eq!(
+            derived.validation.summary.as_deref(),
+            Some("Missing required argument: path")
+        );
+        assert_eq!(
+            derived.validation.field_errors.get("path"),
+            Some(&"Required argument".to_string())
+        );
+        assert!(
+            derived
+                .validation
+                .summary
+                .as_deref()
+                .is_some_and(|summary| !summary.contains("Run the selected tool"))
+        );
+    }
+
+    #[test]
+    fn help_style_missing_input_without_required_args_uses_generic_summary() {
+        let state = AppState::from_command(
+            &Command::new("tool")
+                .about("Run the selected tool")
+                .arg_required_else_help(true)
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(ArgAction::SetTrue),
+                ),
+        );
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert_eq!(
+            derived.validation.summary.as_deref(),
+            Some("Missing required input")
+        );
+        assert!(derived.validation.field_errors.is_empty());
+    }
+
+    #[test]
+    fn missing_subcommand_uses_explicit_summary() {
+        let state = AppState::from_command(
+            &Command::new("tool")
+                .about("Run the selected tool")
+                .subcommand_required(true)
+                .subcommand(Command::new("build")),
+        );
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert_eq!(
+            derived.validation.summary.as_deref(),
+            Some("Missing required subcommand")
+        );
+        assert!(derived.validation.field_errors.is_empty());
+    }
+
+    #[test]
+    fn multiple_missing_required_args_are_pluralized() {
+        let state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("name").long("name").required(true))
+                .arg(Arg::new("path").required(true)),
+        );
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert_eq!(
+            derived.validation.summary.as_deref(),
+            Some("Missing required arguments: --name, path")
+        );
+        assert!(derived.validation.field_errors.contains_key("name"));
+        assert!(derived.validation.field_errors.contains_key("path"));
+    }
+
+    #[test]
+    fn invalid_value_summary_uses_arg_and_value_context() {
+        let state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .value_parser(["red", "green"]),
+            ),
+        );
+        let argv = vec![
+            "tool".to_string(),
+            "--color".to_string(),
+            "orange".to_string(),
+        ];
+
+        let validation = super::validate_argv(&state, &argv);
+
+        assert!(!validation.is_valid);
+        assert_eq!(
+            validation.summary.as_deref(),
+            Some("Invalid value for --color: orange")
+        );
+        assert_eq!(
+            validation.field_errors.get("color"),
+            Some(&"Invalid value for --color: orange".to_string())
+        );
+    }
+
+    #[test]
+    fn no_equals_summary_uses_option_specific_message() {
+        let state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(ArgAction::Set)
+                    .require_equals(true),
+            ),
+        );
+        let argv = vec!["tool".to_string(), "--color".to_string(), "red".to_string()];
+
+        let validation = super::validate_argv(&state, &argv);
+
+        assert!(!validation.is_valid);
+        assert_eq!(
+            validation.summary.as_deref(),
+            Some("Option requires '=': --color")
+        );
+        assert_eq!(
+            validation.field_errors.get("color"),
+            Some(&"Option requires '=': --color".to_string())
         );
     }
 }

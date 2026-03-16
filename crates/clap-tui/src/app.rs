@@ -10,7 +10,6 @@ use crate::error::TuiError;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
 use crate::runtime::{AppEvent, CrosstermRuntime, Runtime};
-use crate::spec::CommandSpec;
 use crate::ui;
 use crate::update::{self, Effect};
 
@@ -130,8 +129,7 @@ fn event_loop<R: Runtime>(
     config: &TuiConfig,
     session: &mut TerminalSession<'_, R>,
 ) -> Result<Vec<String>, TuiError> {
-    let spec = CommandSpec::from_command(command);
-    let mut state = AppState::new(spec);
+    let mut state = AppState::from_command(command);
     if let Some(start) = config.start_command.clone() {
         controller::navigation::apply_start_command(&mut state, &start);
     }
@@ -192,7 +190,21 @@ fn handle_effect<R: Runtime>(
 ) -> ActionOutcome {
     match effect {
         Effect::None => ActionOutcome::Continue,
-        Effect::Run(argv) => ActionOutcome::Run(argv),
+        Effect::Run(argv) => {
+            let validation = crate::pipeline::validate_argv(state, &argv);
+            if validation.is_valid {
+                ActionOutcome::Run(argv)
+            } else {
+                state.notifications.show_toast(
+                    validation
+                        .summary
+                        .unwrap_or_else(|| "Command is invalid".to_string()),
+                    Duration::from_secs(3),
+                    true,
+                );
+                ActionOutcome::Continue
+            }
+        }
         Effect::CopyToClipboard(command) => {
             let result = session.copy_to_clipboard(&command);
             match result {
@@ -395,6 +407,10 @@ mod tests {
         AppState::new(CommandSpec::from_command(&Command::new("tool")))
     }
 
+    fn app_state_from_command(command: &Command) -> AppState {
+        AppState::from_command(command)
+    }
+
     #[test]
     fn event_loop_returns_cancelled_on_ctrl_c() {
         let mut runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
@@ -498,6 +514,53 @@ mod tests {
         let toast = state.notifications.toast.as_ref().expect("toast");
         assert_eq!(toast.message, "Clipboard unavailable");
         assert!(toast.is_error);
+    }
+
+    #[test]
+    fn invalid_run_effect_is_blocked_and_surfaces_validation_summary() {
+        let command = Command::new("tool").arg(
+            Arg::new("name")
+                .long("name")
+                .required(true)
+                .action(ArgAction::Set),
+        );
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        let mut state = app_state_from_command(&command);
+
+        let outcome = handle_effect(
+            Effect::Run(vec!["tool".to_string()]),
+            &mut state,
+            &mut session,
+        );
+
+        assert!(matches!(outcome, ActionOutcome::Continue));
+        let toast = state.notifications.toast.as_ref().expect("toast");
+        assert!(toast.is_error);
+        assert_eq!(toast.message, "Missing required argument: --name");
+    }
+
+    #[test]
+    fn help_style_invalid_run_toast_does_not_show_about_text() {
+        let command = Command::new("tool")
+            .about("Run the selected tool")
+            .arg_required_else_help(true)
+            .arg(Arg::new("path").required(true));
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        let mut state = app_state_from_command(&command);
+
+        let outcome = handle_effect(
+            Effect::Run(vec!["tool".to_string()]),
+            &mut state,
+            &mut session,
+        );
+
+        assert!(matches!(outcome, ActionOutcome::Continue));
+        let toast = state.notifications.toast.as_ref().expect("toast");
+        assert!(toast.is_error);
+        assert_eq!(toast.message, "Missing required argument: path");
+        assert!(!toast.message.contains("Run the selected tool"));
     }
 
     #[test]

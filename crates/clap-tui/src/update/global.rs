@@ -100,7 +100,9 @@ mod tests {
                 help: String::new(),
                 args: Vec::new(),
                 subcommands: Vec::new(),
+                ..CommandSpec::default()
             }],
+            ..CommandSpec::default()
         }
     }
 
@@ -113,6 +115,7 @@ mod tests {
             help: String::new(),
             args: Vec::new(),
             subcommands: Vec::new(),
+            ..crate::spec::CommandSpec::default()
         });
         state.ui.focus_search();
         let snapshot = FrameSnapshot::default();

@@ -193,6 +193,7 @@ mod tests {
             position: None,
             value_cardinality: crate::spec::ValueCardinality::One,
             value_hint: None,
+            ..ArgSpec::default()
         }
     }
 
@@ -204,6 +205,7 @@ mod tests {
             help: String::new(),
             args,
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         }
     }
 

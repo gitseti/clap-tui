@@ -133,18 +133,19 @@ fn build_dropdown_view(
         .iter()
         .find(|arg| &arg.id == arg_id)?;
 
-    let is_touched = domain
-        .current_form()
-        .is_some_and(|form| form.touched.contains(&arg.id));
+    let current_form = domain.current_form();
+    let is_touched = current_form
+        .as_ref()
+        .is_some_and(|form| form.is_touched(&arg.id));
     let total_rows = arg.choices.len();
     let visible_rows = rect.height.saturating_sub(2) as usize;
     let scroll_position = ui.dropdown_scroll(total_rows, visible_rows);
-    let selected_row = domain
-        .current_form()
-        .and_then(|inputs| inputs.values.get(&arg.id))
+    let selected_row = current_form
+        .as_ref()
+        .and_then(|inputs| inputs.compatibility_value(arg))
         .and_then(|value| match value {
             crate::input::ArgValue::Choice(selected) => {
-                arg.choices.iter().position(|choice| choice == selected)
+                arg.choices.iter().position(|choice| *choice == selected)
             }
             _ => None,
         })

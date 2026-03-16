@@ -225,7 +225,15 @@ pub(crate) fn open_enum_dropdown(
     let current = state
         .domain
         .current_form()
-        .and_then(|inputs| inputs.values.get(arg_id))
+        .and_then(|inputs| {
+            state
+                .domain
+                .current_command()
+                .args
+                .iter()
+                .find(|arg| arg.id == arg_id)
+                .and_then(|arg| inputs.compatibility_value(arg))
+        })
         .and_then(|value| match value {
             ArgValue::Choice(selected) => state
                 .domain
@@ -233,7 +241,7 @@ pub(crate) fn open_enum_dropdown(
                 .args
                 .iter()
                 .find(|arg| arg.id == arg_id)
-                .and_then(|arg| arg.choices.iter().position(|choice| choice == selected)),
+                .and_then(|arg| arg.choices.iter().position(|choice| *choice == selected)),
             _ => None,
         })
         .unwrap_or(0);
@@ -395,6 +403,7 @@ mod tests {
             position: None,
             value_cardinality: ValueCardinality::One,
             value_hint: None,
+            ..ArgSpec::default()
         }
     }
 
@@ -406,6 +415,7 @@ mod tests {
             help: String::new(),
             args,
             subcommands,
+            ..CommandSpec::default()
         }
     }
 

@@ -11,10 +11,10 @@ pub(crate) enum EditResult {
 }
 
 pub(crate) fn displayed_text(state: &AppState, arg: &ArgModel) -> String {
-    if let Some(inputs) = state.domain.current_form() {
-        if let Some(ArgValue::Text(text)) = inputs.values.get(&arg.id) {
-            return text.clone();
-        }
+    if let Some(inputs) = state.domain.current_form()
+        && let Some(ArgValue::Text(text)) = inputs.compatibility_value(arg)
+    {
+        return text;
     }
     if arg.default_value().is_some() && !state.domain.is_touched(&arg.id) {
         return arg.default_value().unwrap_or_default().to_string();
@@ -50,7 +50,7 @@ pub(crate) fn apply_key_to_text_field(
     key: AppKeyEvent,
 ) -> EditResult {
     let displayed = displayed_text(state, arg);
-    let command_key = state.domain.selected_path().clone();
+    let command_key = arg.owner_path().clone();
     let is_touched = state.domain.is_touched(&arg.id);
     let has_default = arg.default_value().is_some();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
@@ -69,7 +69,7 @@ pub(crate) fn apply_key_to_text_field(
     if text.is_empty() && has_default {
         state.domain.clear_value_and_untouch(&arg.id);
     } else {
-        state.domain.set_text_value(&arg.id, text);
+        state.domain.set_text_value(&arg.id, &text);
         state.domain.mark_touched(&arg.id);
     }
     EditResult::Handled
@@ -77,21 +77,21 @@ pub(crate) fn apply_key_to_text_field(
 
 pub(crate) fn clear_selection(state: &mut AppState, arg: &ArgModel) {
     let displayed = displayed_text(state, arg);
-    let command_key = state.domain.selected_path().clone();
+    let command_key = arg.owner_path().clone();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     textarea.cancel_selection();
 }
 
 pub(crate) fn start_selection(state: &mut AppState, arg: &ArgModel, row: u16, col: u16) {
     let displayed = displayed_text(state, arg);
-    let command_key = state.domain.selected_path().clone();
+    let command_key = arg.owner_path().clone();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     textarea.start_selection(row, col);
 }
 
 pub(crate) fn set_cursor_from_click(state: &mut AppState, arg: &ArgModel, row: u16, col: u16) {
     let displayed = displayed_text(state, arg);
-    let command_key = state.domain.selected_path().clone();
+    let command_key = arg.owner_path().clone();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     textarea.move_cursor_to(row, col);
 }

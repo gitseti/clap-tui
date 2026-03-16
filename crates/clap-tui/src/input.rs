@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use clap::Command;
+
 use crate::editor_state::EditorState;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::query::form as form_query;
@@ -25,10 +27,43 @@ pub enum ArgValue {
     Choice(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputSource {
+    User,
+    Default,
+    Env,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputValueOccurrence {
+    pub values: Vec<String>,
+    pub source: InputSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArgInput {
+    Flag {
+        present: bool,
+        source: InputSource,
+    },
+    Count {
+        occurrences: usize,
+        source: InputSource,
+    },
+    Values {
+        occurrences: Vec<InputValueOccurrence>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArgInputState {
+    pub value: ArgInput,
+    pub touched: bool,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct CommandFormState {
-    pub values: HashMap<String, ArgValue>,
-    pub touched: HashSet<String>,
+    pub inputs: HashMap<String, ArgInputState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +94,7 @@ pub struct Toast {
 #[derive(Debug)]
 pub struct DomainState {
     pub root: CommandSpec,
+    pub validation_command: Option<Command>,
     pub selected_path: CommandPath,
     pub expanded: HashSet<String>,
     pub forms: HashMap<String, CommandFormState>,
@@ -95,11 +131,17 @@ pub struct AppState {
 }
 
 impl DomainState {
+    #[allow(dead_code)]
     pub fn new(root: CommandSpec) -> Self {
+        Self::new_with_command(root, None)
+    }
+
+    pub fn new_with_command(root: CommandSpec, validation_command: Option<Command>) -> Self {
         let mut expanded = HashSet::new();
         expanded.insert(root.name.clone());
         Self {
             root,
+            validation_command,
             selected_path: CommandPath::default(),
             expanded,
             forms: HashMap::new(),
@@ -118,65 +160,74 @@ impl DomainState {
         self.root.resolved(&self.selected_path)
     }
 
+    #[allow(dead_code)]
     pub fn command_path_key(&self) -> String {
-        self.selected_path.to_key(&self.root.name)
+        self.command_path_key_for(&self.selected_path)
     }
 
-    pub fn current_form(&self) -> Option<&CommandFormState> {
-        let key = self.command_path_key();
-        self.forms.get(&key)
+    pub fn command_path_key_for(&self, path: &CommandPath) -> String {
+        path.to_key(&self.root.name)
+    }
+
+    pub fn current_form(&self) -> Option<CommandFormState> {
+        self.effective_form_for_path(&self.selected_path)
     }
 
     pub fn initialize_current_form_defaults(&mut self) {
-        let args = self.current_command().args.clone();
-        let key = self.command_path_key();
-        let mut defaults = Vec::new();
-        for arg in &args {
-            let value = match arg.input_presentation() {
-                crate::spec::InputPresentation::Toggle => Some(ArgValue::Bool(false)),
-                crate::spec::InputPresentation::ChoiceList { .. } => arg
-                    .default_value()
-                    .map(|value| ArgValue::Choice(value.to_string())),
-                crate::spec::InputPresentation::FreeText { .. } => arg
-                    .default_value()
-                    .map(|value| ArgValue::Text(value.to_string())),
-            };
-            if let Some(value) = value {
-                defaults.push((arg.id.clone(), value));
-            }
-        }
-        if defaults.is_empty() {
-            return;
-        }
+        let args = self
+            .root
+            .args_defined_on_path(&self.selected_path)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(owner_path, arg)| (owner_path.clone(), arg.clone()))
+            .collect::<Vec<_>>();
 
-        let form = self.forms.entry(key).or_default();
-        for (arg_id, value) in defaults {
-            form.values.entry(arg_id).or_insert(value);
+        for (owner_path, arg) in args {
+            let key = self.command_path_key_for(&owner_path);
+            let default_input = Self::initial_input_state(&arg);
+            let should_remove = {
+                let form = self.forms.entry(key.clone()).or_default();
+                if let Some(input) = default_input {
+                    form.inputs.entry(arg.id.clone()).or_insert(input);
+                }
+                form.is_empty()
+            };
+            if should_remove {
+                self.forms.remove(&key);
+            }
         }
     }
 
-    pub fn set_text_value(&mut self, arg_id: &str, text: String) {
-        self.with_current_form_mut(|form| {
-            form.values.insert(arg_id.to_string(), ArgValue::Text(text));
-        });
+    pub fn set_text_value(&mut self, arg_id: &str, text: &str) {
+        let Some(arg) = self.arg_for_input(arg_id).cloned() else {
+            return;
+        };
+        self.replace_values(arg_id, text_value_lines(&arg, text));
     }
 
     pub fn set_choice_value(&mut self, arg_id: &str, value: String) {
-        self.with_current_form_mut(|form| {
-            form.values
-                .insert(arg_id.to_string(), ArgValue::Choice(value));
-        });
+        self.replace_values(arg_id, vec![value]);
     }
 
     pub fn toggle_flag(&mut self, arg_id: &str) {
-        self.with_current_form_mut(|form| {
-            let entry = form
-                .values
-                .entry(arg_id.to_string())
-                .or_insert(ArgValue::Bool(false));
-            if let ArgValue::Bool(value) = entry {
-                *value = !*value;
-            }
+        if !self
+            .arg_for_input(arg_id)
+            .is_some_and(crate::spec::ArgSpec::uses_toggle_semantics)
+        {
+            return;
+        }
+        let current = self
+            .effective_arg_input(arg_id)
+            .and_then(|input| match input.value {
+                ArgInput::Flag { present, .. } => Some(present),
+                _ => None,
+            })
+            .unwrap_or(false);
+        self.with_arg_input_state_mut(arg_id, |_arg, input| {
+            input.value = ArgInput::Flag {
+                present: !current,
+                source: InputSource::User,
+            };
         });
     }
 
@@ -186,9 +237,12 @@ impl DomainState {
         }
         let next_index = self
             .current_form()
-            .and_then(|inputs| inputs.values.get(arg_id))
+            .and_then(|inputs| {
+                self.arg_for_input(arg_id)
+                    .and_then(|arg| inputs.compatibility_value(arg))
+            })
             .and_then(|value| match value {
-                ArgValue::Choice(selected) => choices.iter().position(|choice| choice == selected),
+                ArgValue::Choice(selected) => choices.iter().position(|choice| choice == &selected),
                 _ => None,
             })
             .map_or(0, |index| (index + 1) % choices.len());
@@ -196,8 +250,8 @@ impl DomainState {
     }
 
     pub fn mark_touched(&mut self, arg_id: &str) {
-        self.with_current_form_mut(|form| {
-            form.touched.insert(arg_id.to_string());
+        self.with_arg_input_state_mut(arg_id, |_arg, input| {
+            input.touched = true;
         });
     }
 
@@ -217,36 +271,33 @@ impl DomainState {
     }
 
     pub fn clear_value_and_untouch(&mut self, arg_id: &str) {
-        let default_value = self
-            .current_command()
-            .args
-            .iter()
-            .find(|arg| arg.id == arg_id)
-            .and_then(|arg| match arg.input_presentation() {
-                crate::spec::InputPresentation::Toggle => Some(ArgValue::Bool(false)),
-                crate::spec::InputPresentation::ChoiceList { .. } => arg
-                    .default_value()
-                    .map(|value| ArgValue::Choice(value.to_string())),
-                crate::spec::InputPresentation::FreeText { .. } => arg
-                    .default_value()
-                    .map(|value| ArgValue::Text(value.to_string())),
-            });
-        self.with_current_form_mut(|form| {
-            match default_value.clone() {
-                Some(value) => {
-                    form.values.insert(arg_id.to_string(), value);
+        let Some(arg) = self.arg_for_input(arg_id).cloned() else {
+            return;
+        };
+        let Some(owner_key) = self.owner_key_for_arg(arg_id) else {
+            return;
+        };
+        let default_input = Self::initial_input_state(&arg);
+        let should_remove = {
+            let form = self.forms.entry(owner_key.clone()).or_default();
+            match default_input {
+                Some(input) => {
+                    form.inputs.insert(arg_id.to_string(), input);
                 }
                 None => {
-                    form.values.remove(arg_id);
+                    form.inputs.remove(arg_id);
                 }
             }
-            form.touched.remove(arg_id);
-        });
+            form.is_empty()
+        };
+        if should_remove {
+            self.forms.remove(&owner_key);
+        }
     }
 
     pub fn is_touched(&self, arg_id: &str) -> bool {
         self.current_form()
-            .is_some_and(|form| form.touched.contains(arg_id))
+            .is_some_and(|form| form.is_touched(arg_id))
     }
 
     pub fn select_command_path(&mut self, path: &[String]) -> Result<(), SelectionError> {
@@ -271,19 +322,342 @@ impl DomainState {
         self.select_command_path(normalized.as_slice())
     }
 
-    fn with_current_form_mut<F>(&mut self, mutate: F)
+    pub fn replace_values(&mut self, arg_id: &str, values: Vec<String>) {
+        self.with_arg_input_state_mut(arg_id, move |arg, input| {
+            *input = ArgInputState::from_values(arg, values, InputSource::User, true);
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn append_value(&mut self, arg_id: &str, value: String) {
+        self.with_arg_input_state_mut(arg_id, move |arg, input| match &mut input.value {
+            ArgInput::Values { occurrences } => {
+                occurrences.push(InputValueOccurrence {
+                    values: vec![value],
+                    source: InputSource::User,
+                });
+                input.touched = true;
+            }
+            _ => {
+                *input = ArgInputState::from_values(arg, vec![value], InputSource::User, true);
+            }
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn remove_value(&mut self, arg_id: &str, occurrence_index: usize, value_index: usize) {
+        self.with_arg_input_state_mut(arg_id, |_arg, input| {
+            if let ArgInput::Values { occurrences } = &mut input.value {
+                if let Some(occurrence) = occurrences.get_mut(occurrence_index)
+                    && value_index < occurrence.values.len()
+                {
+                    occurrence.values.remove(value_index);
+                }
+                occurrences.retain(|occurrence| !occurrence.values.is_empty());
+                input.touched = true;
+            }
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn reorder_occurrence(&mut self, arg_id: &str, from: usize, to: usize) {
+        self.with_arg_input_state_mut(arg_id, |_arg, input| {
+            if let ArgInput::Values { occurrences } = &mut input.value {
+                if from >= occurrences.len() || to >= occurrences.len() || from == to {
+                    return;
+                }
+                let occurrence = occurrences.remove(from);
+                occurrences.insert(to, occurrence);
+                input.touched = true;
+            }
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn increment_counter(&mut self, arg_id: &str) {
+        self.with_arg_input_state_mut(arg_id, |_arg, input| {
+            let current = match input.value {
+                ArgInput::Count { occurrences, .. } => occurrences,
+                _ => 0,
+            };
+            input.value = ArgInput::Count {
+                occurrences: current.saturating_add(1),
+                source: InputSource::User,
+            };
+            input.touched = true;
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn decrement_counter(&mut self, arg_id: &str) {
+        self.with_arg_input_state_mut(arg_id, |_arg, input| {
+            let current = match input.value {
+                ArgInput::Count { occurrences, .. } => occurrences,
+                _ => 0,
+            };
+            input.value = ArgInput::Count {
+                occurrences: current.saturating_sub(1),
+                source: InputSource::User,
+            };
+            input.touched = true;
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn toggle_optional_value_flag(&mut self, arg_id: &str, enabled: bool) {
+        self.with_arg_input_state_mut(arg_id, |_arg, input| {
+            input.value = ArgInput::Flag {
+                present: enabled,
+                source: InputSource::User,
+            };
+            input.touched = true;
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn resolve_invocation_state(&self) -> Vec<(CommandPath, CommandFormState)> {
+        self.root
+            .command_lineage(&self.selected_path)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|command| {
+                let key = self.command_path_key_for(&command.path);
+                (
+                    command.path.clone(),
+                    self.forms.get(&key).cloned().unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    fn effective_form_for_path(&self, path: &CommandPath) -> Option<CommandFormState> {
+        let command = self.root.resolve_path(path.as_slice())?;
+        let mut form = CommandFormState::default();
+
+        for arg in command.args.iter().filter(|arg| !arg.is_help_action()) {
+            let key = self.command_path_key_for(arg.owner_path());
+            let input = self
+                .forms
+                .get(&key)
+                .and_then(|owner_form| owner_form.inputs.get(&arg.id))
+                .cloned()
+                .or_else(|| Self::initial_input_state(arg));
+            if let Some(input) = input {
+                form.inputs.insert(arg.id.clone(), input);
+            }
+        }
+
+        (!form.is_empty()).then_some(form)
+    }
+
+    fn arg_for_input(&self, arg_id: &str) -> Option<&ArgSpec> {
+        self.current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == arg_id && !arg.is_help_action())
+    }
+
+    fn owner_key_for_arg(&self, arg_id: &str) -> Option<String> {
+        let owner_path = self
+            .arg_for_input(arg_id)
+            .map(|arg| arg.owner_path().clone())?;
+        Some(self.command_path_key_for(&owner_path))
+    }
+
+    fn effective_arg_input(&self, arg_id: &str) -> Option<ArgInputState> {
+        let arg = self.arg_for_input(arg_id)?;
+        let key = self.command_path_key_for(arg.owner_path());
+        self.forms
+            .get(&key)
+            .and_then(|form| form.inputs.get(arg_id))
+            .cloned()
+            .or_else(|| Self::initial_input_state(arg))
+    }
+
+    fn with_arg_input_state_mut<F>(&mut self, arg_id: &str, mutate: F)
     where
-        F: FnOnce(&mut CommandFormState),
+        F: FnOnce(&ArgSpec, &mut ArgInputState),
     {
-        let key = self.command_path_key();
+        let Some(arg) = self.arg_for_input(arg_id).cloned() else {
+            return;
+        };
+        let key = self.command_path_key_for(arg.owner_path());
+        let default_input = Self::initial_input_state(&arg);
         let should_remove = {
             let form = self.forms.entry(key.clone()).or_default();
-            mutate(form);
-            form.values.is_empty() && form.touched.is_empty()
+            let mut input = form
+                .inputs
+                .get(arg_id)
+                .cloned()
+                .or_else(|| default_input.clone())
+                .unwrap_or_else(|| ArgInputState::empty_for(&arg));
+            mutate(&arg, &mut input);
+            if input.is_effectively_empty() {
+                form.inputs.remove(arg_id);
+            } else {
+                form.inputs.insert(arg_id.to_string(), input);
+            }
+            form.is_empty()
         };
         if should_remove {
             self.forms.remove(&key);
         }
+    }
+
+    fn initial_input_state(arg: &ArgSpec) -> Option<ArgInputState> {
+        if matches!(arg.action_kind(), crate::spec::ArgActionKind::Count) {
+            return Some(ArgInputState {
+                value: ArgInput::Count {
+                    occurrences: 0,
+                    source: InputSource::Default,
+                },
+                touched: false,
+            });
+        }
+
+        if arg.uses_toggle_semantics() {
+            return Some(ArgInputState {
+                value: ArgInput::Flag {
+                    present: false,
+                    source: InputSource::Default,
+                },
+                touched: false,
+            });
+        }
+
+        if let Some(env) = arg.metadata.defaults.env.as_deref()
+            && let Ok(value) = std::env::var(env)
+        {
+            return Some(ArgInputState::from_values(
+                arg,
+                vec![value],
+                InputSource::Env,
+                false,
+            ));
+        }
+
+        if !arg.default_values.is_empty() {
+            return Some(ArgInputState::from_values(
+                arg,
+                arg.default_values.clone(),
+                InputSource::Default,
+                false,
+            ));
+        }
+
+        None
+    }
+}
+
+impl CommandFormState {
+    pub fn input(&self, arg_id: &str) -> Option<&ArgInputState> {
+        self.inputs.get(arg_id)
+    }
+
+    pub fn compatibility_value(&self, arg: &ArgSpec) -> Option<ArgValue> {
+        self.input(&arg.id)
+            .and_then(|input| input.compatibility_value(arg))
+    }
+
+    pub fn is_touched(&self, arg_id: &str) -> bool {
+        self.input(arg_id).is_some_and(|input| input.touched)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inputs.is_empty()
+    }
+}
+
+impl ArgInput {
+    fn values_from_arg(arg: &ArgSpec, values: Vec<String>, source: InputSource) -> Self {
+        let occurrences = if arg.accepts_multiple_values() {
+            values
+                .into_iter()
+                .map(|value| InputValueOccurrence {
+                    values: vec![value],
+                    source,
+                })
+                .collect()
+        } else {
+            vec![InputValueOccurrence { values, source }]
+        };
+        Self::Values { occurrences }
+    }
+}
+
+impl ArgInputState {
+    fn from_values(arg: &ArgSpec, values: Vec<String>, source: InputSource, touched: bool) -> Self {
+        Self {
+            value: ArgInput::values_from_arg(arg, values, source),
+            touched,
+        }
+    }
+
+    fn empty_for(arg: &ArgSpec) -> Self {
+        if arg.uses_toggle_semantics() {
+            Self {
+                value: ArgInput::Flag {
+                    present: false,
+                    source: InputSource::Default,
+                },
+                touched: false,
+            }
+        } else {
+            Self {
+                value: ArgInput::Values {
+                    occurrences: Vec::new(),
+                },
+                touched: false,
+            }
+        }
+    }
+
+    pub fn compatibility_value(&self, arg: &ArgSpec) -> Option<ArgValue> {
+        match &self.value {
+            ArgInput::Flag { present, .. } => Some(ArgValue::Bool(*present)),
+            ArgInput::Count { occurrences, .. } => Some(ArgValue::Text(occurrences.to_string())),
+            ArgInput::Values { occurrences } => {
+                let values = occurrences
+                    .iter()
+                    .flat_map(|occurrence| occurrence.values.iter())
+                    .filter(|value| !value.is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if values.is_empty() {
+                    return None;
+                }
+                if arg.uses_choice_input() && !arg.accepts_multiple_values() {
+                    values.first().cloned().map(ArgValue::Choice)
+                } else {
+                    Some(ArgValue::Text(values.join("\n")))
+                }
+            }
+        }
+    }
+
+    pub fn is_effectively_empty(&self) -> bool {
+        match &self.value {
+            ArgInput::Flag { present, source } => {
+                !present && !self.touched && *source == InputSource::Default
+            }
+            ArgInput::Count {
+                occurrences,
+                source,
+            } => *occurrences == 0 && !self.touched && *source == InputSource::Default,
+            ArgInput::Values { occurrences } => occurrences.is_empty(),
+        }
+    }
+}
+
+fn text_value_lines(arg: &ArgSpec, text: &str) -> Vec<String> {
+    if arg.accepts_multiple_values() {
+        text.lines()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect()
+    } else {
+        vec![text.to_string()]
     }
 }
 
@@ -467,9 +841,18 @@ impl NotificationState {
 }
 
 impl AppState {
+    #[allow(dead_code)]
     pub fn new(root: CommandSpec) -> Self {
+        Self::new_with_command(root, None)
+    }
+
+    pub fn from_command(command: &Command) -> Self {
+        Self::new_with_command(CommandSpec::from_command(command), Some(command.clone()))
+    }
+
+    pub fn new_with_command(root: CommandSpec, validation_command: Option<Command>) -> Self {
         let mut state = Self {
-            domain: DomainState::new(root),
+            domain: DomainState::new_with_command(root, validation_command),
             ui: UiState {
                 focus: Focus::Sidebar,
                 active_tab: ActiveTab::Inputs,
@@ -527,7 +910,9 @@ fn clamp_dropdown_scroll(current: usize, total_rows: usize, visible_rows: usize)
 
 #[cfg(test)]
 mod tests {
-    use super::{AppState, ArgValue};
+    use clap::{Arg, ArgAction, Command};
+
+    use super::{AppState, ArgInput, ArgValue, InputSource};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
@@ -542,6 +927,7 @@ mod tests {
             position: None,
             value_cardinality: ValueCardinality::One,
             value_hint: None,
+            ..ArgSpec::default()
         }
     }
 
@@ -554,16 +940,22 @@ mod tests {
             help: String::new(),
             args: vec![arg("verbose", "--verbose", ArgKind::Flag)],
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         };
 
         let state = AppState::new(root);
 
         assert_eq!(
-            state
-                .domain
-                .current_form()
-                .and_then(|form| form.values.get("verbose")),
-            Some(&ArgValue::Bool(false))
+            state.domain.current_form().and_then(|form| {
+                state
+                    .domain
+                    .current_command()
+                    .args
+                    .iter()
+                    .find(|arg| arg.id == "verbose")
+                    .and_then(|arg| form.compatibility_value(arg))
+            }),
+            Some(ArgValue::Bool(false))
         );
     }
 
@@ -576,13 +968,114 @@ mod tests {
             help: String::new(),
             args: vec![arg("target", "--target", ArgKind::Option)],
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         };
         let mut state = AppState::new(root);
 
-        state.domain.set_text_value("target", "value".to_string());
+        state.domain.set_text_value("target", "value");
         state.domain.mark_touched("target");
         state.domain.clear_value_and_untouch("target");
 
         assert!(state.domain.current_form().is_none());
+    }
+
+    #[test]
+    fn global_values_are_stored_on_owner_and_projected_into_descendants() {
+        let root = CommandSpec::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(ArgAction::SetTrue)
+                        .global(true),
+                )
+                .subcommand(
+                    Command::new("build")
+                        .arg(Arg::new("target").long("target"))
+                        .subcommand(Command::new("release")),
+                ),
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["build".to_string(), "release".to_string()])
+            .expect("valid path");
+
+        state.domain.toggle_flag_touched("verbose");
+
+        let root_form = state
+            .domain
+            .forms
+            .get("tool")
+            .expect("root form should own global state");
+        let verbose = root_form
+            .inputs
+            .get("verbose")
+            .expect("global flag should be stored");
+        assert_eq!(
+            verbose,
+            &super::ArgInputState {
+                value: ArgInput::Flag {
+                    present: true,
+                    source: InputSource::User,
+                },
+                touched: true,
+            }
+        );
+
+        let effective = state.domain.current_form().expect("effective form");
+        let verbose_arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "verbose")
+            .expect("verbose arg");
+        assert_eq!(
+            effective.compatibility_value(verbose_arg),
+            Some(ArgValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn invocation_helpers_cover_append_reorder_and_counter_mutations() {
+        let root = CommandSpec::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("include")
+                        .long("include")
+                        .action(ArgAction::Append)
+                        .num_args(1..),
+                )
+                .arg(Arg::new("verbose").short('v').action(ArgAction::Count)),
+        );
+        let mut state = AppState::new(root);
+
+        state
+            .domain
+            .replace_values("include", vec!["src".to_string()]);
+        state.domain.append_value("include", "tests".to_string());
+        state.domain.reorder_occurrence("include", 1, 0);
+        state.domain.remove_value("include", 1, 0);
+        state.domain.increment_counter("verbose");
+        state.domain.increment_counter("verbose");
+        state.domain.decrement_counter("verbose");
+        state.domain.toggle_optional_value_flag("verbose", true);
+
+        let invocation = state.domain.resolve_invocation_state();
+        assert_eq!(invocation.len(), 1);
+        assert_eq!(state.domain.command_path_key(), "tool");
+
+        let include = invocation[0]
+            .1
+            .inputs
+            .get("include")
+            .expect("include input should exist");
+        match &include.value {
+            ArgInput::Values { occurrences } => {
+                assert_eq!(occurrences.len(), 1);
+                assert_eq!(occurrences[0].values, vec!["tests".to_string()]);
+            }
+            other => panic!("expected values input, got {other:?}"),
+        }
     }
 }

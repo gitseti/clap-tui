@@ -136,6 +136,7 @@ mod tests {
             help: String::new(),
             args: Vec::<ArgSpec>::new(),
             subcommands,
+            ..CommandSpec::default()
         }
     }
 

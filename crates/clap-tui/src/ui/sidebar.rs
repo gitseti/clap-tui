@@ -233,6 +233,7 @@ mod tests {
             help: String::new(),
             args: Vec::new(),
             subcommands: Vec::new(),
+            ..CommandSpec::default()
         };
 
         let line = sidebar_title(&config, &root, false);

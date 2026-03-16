@@ -83,7 +83,7 @@ pub(crate) fn populate_layout(ui: &UiState, area: Rect, frame_layout: &mut Frame
     frame_layout.footer_buttons = layout_footer_buttons(area, &view);
 }
 
-fn build_footer_view(ui: &UiState, area: Rect, _validation: &ValidationState) -> FooterView {
+fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> FooterView {
     let actions = vec![
         build_chip(
             ui,
@@ -98,7 +98,7 @@ fn build_footer_view(ui: &UiState, area: Rect, _validation: &ValidationState) ->
             FooterChipVariant::Secondary,
         ),
     ];
-    let hints = vec![
+    let mut hints = vec![
         build_chip(
             ui,
             HoverTarget::Search,
@@ -113,6 +113,12 @@ fn build_footer_view(ui: &UiState, area: Rect, _validation: &ValidationState) ->
         ),
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
     ];
+    if let Some(summary) = validation.summary.as_ref() {
+        hints.insert(
+            0,
+            build_chip(ui, HoverTarget::Preview, summary, FooterChipVariant::Subtle),
+        );
+    }
     FooterView {
         gap_width: footer_gap_width(area, &actions, &hints),
         actions,
@@ -263,6 +269,7 @@ fn build_test_state() -> AppState {
         help: String::new(),
         args: Vec::new(),
         subcommands: Vec::new(),
+        ..crate::spec::CommandSpec::default()
     })
 }
 
@@ -323,5 +330,22 @@ mod tests {
         assert!(view.actions[0].hovered);
         assert!(!view.actions[1].hovered);
         assert_eq!(view.hints.len(), 3);
+    }
+
+    #[test]
+    fn footer_view_includes_validation_summary_chip() {
+        let state = build_test_state();
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 80, 1),
+            &ValidationState {
+                is_valid: false,
+                summary: Some("Missing required argument: --name".to_string()),
+                field_errors: std::collections::BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(view.hints[0].label, " Missing required argument: --name ");
+        assert_eq!(view.hints[0].target, HoverTarget::Preview);
     }
 }
