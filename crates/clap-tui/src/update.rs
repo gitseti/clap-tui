@@ -8,11 +8,12 @@ use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, HoverTarget};
 use crate::runtime::{AppKeyEvent, AppMouseEvent};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Action {
     Exit,
     Run,
     CopyPreview,
+    Escape,
     SearchInput(AppKeyEvent),
     ChoiceInput { arg_id: String, key: AppKeyEvent },
     FormTextInput(AppKeyEvent),
@@ -22,8 +23,8 @@ pub(crate) enum Action {
     FocusSearch,
     MoveSidebarSelection(isize),
     MoveFormSelection(isize),
+    SidebarRight,
     CollapseSelected,
-    ExpandSelected,
     SelectSidebar,
     ActivateFormField,
     UpdateHover { x: u16, y: u16 },
@@ -54,7 +55,8 @@ pub(crate) fn apply_action(
 ) -> Effect {
     match action {
         Action::Exit | Action::Run | Action::CopyPreview => command::apply(action, state),
-        Action::SearchInput(_)
+        Action::Escape
+        | Action::SearchInput(_)
         | Action::ToggleFocus
         | Action::ToggleHelp
         | Action::CycleTabs
@@ -63,8 +65,8 @@ pub(crate) fn apply_action(
         | Action::ClickFooter(_)
         | Action::SwitchTab(_) => global::apply(action, state),
         Action::MoveSidebarSelection(_)
+        | Action::SidebarRight
         | Action::CollapseSelected
-        | Action::ExpandSelected
         | Action::SelectSidebar
         | Action::ClickSidebar { .. } => sidebar::apply(action, state, frame_snapshot),
         Action::ChoiceInput { .. }

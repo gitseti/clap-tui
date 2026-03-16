@@ -163,7 +163,8 @@ impl DomainState {
 
     pub fn set_choice_value(&mut self, arg_id: &str, value: String) {
         self.with_current_form_mut(|form| {
-            form.values.insert(arg_id.to_string(), ArgValue::Choice(value));
+            form.values
+                .insert(arg_id.to_string(), ArgValue::Choice(value));
         });
     }
 
@@ -254,7 +255,9 @@ impl DomainState {
             .normalize_path(path)
             .ok_or(SelectionError::UnknownPath)?;
         self.selected_path = normalized.clone();
-        for key in self.root.expand_prefix_keys(&normalized) {
+        let prefix_path_len = normalized.as_slice().len().saturating_sub(1);
+        let prefix_path = CommandPath::new(normalized.as_slice()[..prefix_path_len].to_vec());
+        for key in self.root.expand_prefix_keys(&prefix_path) {
             self.expanded.insert(key);
         }
         Ok(())

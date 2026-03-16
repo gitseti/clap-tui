@@ -17,8 +17,11 @@ pub(crate) fn handle_key_event(
     if key.code == AppKeyCode::Enter && key.modifiers.control {
         return Some(Action::Run);
     }
+    if key.code == AppKeyCode::Esc {
+        return Some(Action::Escape);
+    }
     if state.ui.help_open {
-        if matches!(key.code, AppKeyCode::Esc | AppKeyCode::F(1))
+        if matches!(key.code, AppKeyCode::F(1))
             || matches!(key.code, AppKeyCode::Char(c) if c == config.keymap.help)
         {
             return Some(Action::ToggleHelp);
@@ -85,7 +88,7 @@ pub(crate) fn handle_key_event(
         }
         AppKeyCode::Right => {
             if matches!(state.ui.focus, Focus::Sidebar) {
-                Some(Action::ExpandSelected)
+                Some(Action::SidebarRight)
             } else {
                 None
             }
@@ -124,8 +127,83 @@ fn is_form_text_input(key: AppKeyEvent, state: &AppState, config: &TuiConfig) ->
     }
 
     match key.code {
-        AppKeyCode::Tab | AppKeyCode::Up | AppKeyCode::Down | AppKeyCode::Enter => false,
+        AppKeyCode::Tab
+        | AppKeyCode::Up
+        | AppKeyCode::Down
+        | AppKeyCode::Enter
+        | AppKeyCode::Esc => false,
         AppKeyCode::Char(c) if c == config.keymap.search => false,
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::TuiConfig;
+    use crate::frame_snapshot::FrameSnapshot;
+    use crate::input::{AppState, Focus};
+    use crate::runtime::{AppKeyCode, AppKeyEvent, AppKeyModifiers};
+    use crate::spec::CommandSpec;
+    use crate::update::Action;
+
+    use super::handle_key_event;
+
+    fn command() -> CommandSpec {
+        CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+        }
+    }
+
+    fn key(code: AppKeyCode) -> AppKeyEvent {
+        AppKeyEvent::new(code, AppKeyModifiers::default())
+    }
+
+    #[test]
+    fn right_in_sidebar_emits_sidebar_right_action() {
+        let state = AppState::new(command());
+
+        let action = handle_key_event(
+            key(AppKeyCode::Right),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::SidebarRight));
+    }
+
+    #[test]
+    fn right_outside_sidebar_preserves_existing_behavior() {
+        let mut state = AppState::new(command());
+        state.ui.focus = Focus::Form;
+
+        let action = handle_key_event(
+            key(AppKeyCode::Right),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn escape_emits_centralized_escape_action() {
+        let mut state = AppState::new(command());
+        state.ui.focus = Focus::Search;
+
+        let action = handle_key_event(
+            key(AppKeyCode::Esc),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::Escape));
     }
 }

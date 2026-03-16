@@ -5,11 +5,15 @@ use crate::query::{form, tree};
 
 use super::{Action, Effect};
 
-pub(crate) fn apply(action: &Action, state: &mut AppState, frame_snapshot: &FrameSnapshot) -> Effect {
+pub(crate) fn apply(
+    action: &Action,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) -> Effect {
     match action {
         Action::MoveSidebarSelection(delta) => navigation::move_sidebar_selection(state, *delta),
+        Action::SidebarRight => navigation::sidebar_right(state),
         Action::CollapseSelected => navigation::collapse_selected(state),
-        Action::ExpandSelected => navigation::expand_selected(state),
         Action::SelectSidebar => navigation::select_sidebar(state),
         Action::ClickSidebar { x, y } => apply_sidebar_click(*x, *y, state, frame_snapshot),
         _ => {}

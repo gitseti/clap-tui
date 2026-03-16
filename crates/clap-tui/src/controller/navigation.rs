@@ -1,5 +1,5 @@
 use crate::frame_snapshot::FrameSnapshot;
-use crate::input::{ActiveTab, AppState, ArgValue, UiState};
+use crate::input::{ActiveTab, AppState, ArgValue, Focus, UiState};
 use crate::query::{form, tree};
 use crate::spec::{CommandPath, SelectionError};
 
@@ -140,6 +140,49 @@ pub(crate) fn expand_selected(state: &mut AppState) {
     }
 }
 
+pub(crate) fn sidebar_right(state: &mut AppState) {
+    if state.domain.selected_path().is_empty() {
+        state.ui.focus_form();
+        return;
+    }
+
+    let items = tree::tree_items(
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
+    );
+    let Some(item) = items
+        .iter()
+        .find(|item| item.path == *state.domain.selected_path())
+    else {
+        state.ui.focus_form();
+        return;
+    };
+
+    if item.has_children && !item.expanded {
+        toggle_expand(state, &item.path, false);
+    } else {
+        state.ui.focus_form();
+    }
+}
+
+pub(crate) fn handle_escape(state: &mut AppState) {
+    if state.ui.help_open {
+        state.ui.toggle_help();
+        return;
+    }
+    if state.ui.dropdown_open.is_some() {
+        state.ui.close_dropdown();
+        return;
+    }
+
+    match state.ui.focus {
+        Focus::Search | Focus::Form => state.ui.focus_sidebar(),
+        Focus::Sidebar if !state.domain.selected_path().is_empty() => select_root(state),
+        Focus::Sidebar => {}
+    }
+}
+
 pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
     if state.ui.help_open {
         return;
@@ -196,9 +239,10 @@ pub(crate) fn open_enum_dropdown(
         .unwrap_or(0);
     let visible_rows = frame_snapshot
         .dropdown_geometry_for_input(arg_id, total)
-        .map_or(total.min(usize::from(crate::frame_snapshot::MAX_DROPDOWN_ROWS)), |layout| {
-            layout.visible_rows
-        });
+        .map_or(
+            total.min(usize::from(crate::frame_snapshot::MAX_DROPDOWN_ROWS)),
+            |layout| layout.visible_rows,
+        );
     let max_scroll = total.saturating_sub(visible_rows);
     state
         .ui
@@ -330,12 +374,13 @@ mod tests {
     use ratatui::layout::Rect;
 
     use crate::frame_snapshot::FrameSnapshot;
-    use crate::input::AppState;
+    use crate::input::{AppState, Focus};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
 
     use super::{
         apply_start_command, collapse_selected, ensure_enum_visible, expand_selected,
-        move_form_selection, move_sidebar_selection, open_enum_dropdown,
+        handle_escape, move_form_selection, move_sidebar_selection, open_enum_dropdown,
+        sidebar_right,
     };
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
@@ -460,7 +505,10 @@ mod tests {
         move_sidebar_selection(&mut state, 1);
 
         assert_eq!(state.domain.current_command().name, "deploy");
-        assert_eq!(state.domain.selected_path().as_slice(), &["deploy".to_string()]);
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["deploy".to_string()]
+        );
     }
 
     #[test]
@@ -483,7 +531,10 @@ mod tests {
         move_sidebar_selection(&mut state, -1);
 
         assert_eq!(state.domain.current_command().name, "debug");
-        assert_eq!(state.domain.selected_path().as_slice(), &["debug".to_string()]);
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["debug".to_string()]
+        );
     }
 
     #[test]
@@ -524,6 +575,121 @@ mod tests {
 
         collapse_selected(&mut state);
         assert!(!state.domain.expanded.contains("tool::build"));
+    }
+
+    #[test]
+    fn sidebar_right_expands_collapsed_branch_and_keeps_sidebar_focus() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![command(
+                "build",
+                Vec::new(),
+                vec![command("release", Vec::new(), Vec::new())],
+            )],
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        state.ui.focus = Focus::Sidebar;
+
+        sidebar_right(&mut state);
+
+        assert!(state.domain.expanded.contains("tool::build"));
+        assert!(matches!(state.ui.focus, Focus::Sidebar));
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["build".to_string()]
+        );
+    }
+
+    #[test]
+    fn sidebar_right_moves_focus_to_form_for_expanded_branch() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![command(
+                "build",
+                Vec::new(),
+                vec![command("release", Vec::new(), Vec::new())],
+            )],
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        state.domain.expanded.insert("tool::build".to_string());
+        state.ui.focus = Focus::Sidebar;
+
+        sidebar_right(&mut state);
+
+        assert!(matches!(state.ui.focus, Focus::Form));
+        assert!(state.domain.expanded.contains("tool::build"));
+    }
+
+    #[test]
+    fn sidebar_right_moves_focus_to_form_for_leaf_and_root() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![command("build", Vec::new(), Vec::new())],
+        );
+        let mut state = AppState::new(root);
+        state.ui.focus = Focus::Sidebar;
+
+        sidebar_right(&mut state);
+        assert!(matches!(state.ui.focus, Focus::Form));
+
+        state.ui.focus = Focus::Sidebar;
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+
+        sidebar_right(&mut state);
+        assert!(matches!(state.ui.focus, Focus::Form));
+    }
+
+    #[test]
+    fn move_sidebar_selection_does_not_auto_expand_selected_branch() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![command(
+                "build",
+                Vec::new(),
+                vec![command("release", Vec::new(), Vec::new())],
+            )],
+        );
+        let mut state = AppState::new(root);
+
+        move_sidebar_selection(&mut state, 1);
+
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["build".to_string()]
+        );
+        assert!(!state.domain.expanded.contains("tool::build"));
+    }
+
+    #[test]
+    fn handle_escape_reselects_root_when_sidebar_has_non_root_selection() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![command("build", Vec::new(), Vec::new())],
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        state.ui.focus = Focus::Sidebar;
+
+        handle_escape(&mut state);
+
+        assert!(state.domain.selected_path().is_empty());
+        assert_eq!(state.domain.current_command().name, "tool");
+        assert!(matches!(state.ui.focus, Focus::Sidebar));
     }
 
     #[test]
