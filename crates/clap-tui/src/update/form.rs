@@ -21,7 +21,7 @@ pub(crate) fn apply(action: &Action, state: &mut AppState, frame_snapshot: &Fram
             apply_dropdown_click(*row, state, frame_snapshot, arg_id);
         }
         Action::ClickForm(event) => apply_form_click(*event, state, frame_snapshot),
-        Action::ScrollDropdown(delta) => navigation::scroll_enum(state, *delta),
+        Action::ScrollDropdown(delta) => navigation::scroll_enum(state, frame_snapshot, *delta),
         Action::ScrollForm(delta) => navigation::scroll_form(state, frame_snapshot, *delta),
         _ => {}
     }
@@ -172,7 +172,9 @@ fn apply_dropdown_click(
     let Some(arg) = command.args.iter().find(|arg| arg.id == arg_id) else {
         return;
     };
-    if let Some(index) = frame_snapshot.dropdown_choice_index(row, state.ui.dropdown_scroll)
+    let visible_rows = frame_snapshot.dropdown_visible_rows().unwrap_or(0);
+    let scroll = state.ui.dropdown_scroll(arg.choices.len(), visible_rows);
+    if let Some(index) = frame_snapshot.dropdown_choice_index(row, scroll)
         && let Some(choice) = arg.choices.get(index)
     {
         state

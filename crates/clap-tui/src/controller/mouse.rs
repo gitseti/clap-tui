@@ -261,7 +261,7 @@ mod tests {
                 .domain
                 .current_form()
                 .and_then(|inputs| inputs.values.get("color")),
-            Some(&crate::input::ArgValue::Choice("blue".to_string()))
+            Some(&crate::input::ArgValue::Choice("green".to_string()))
         );
         assert!(state.domain.is_touched("color"));
         assert!(state.ui.dropdown_open.is_none());
@@ -292,6 +292,31 @@ mod tests {
     }
 
     #[test]
+    fn dropdown_click_uses_clamped_scroll_position() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.choices = (0..8).map(|index| format!("choice-{index}")).collect();
+        let mut state = AppState::new(command(vec![color]));
+        let mut frame_snapshot = FrameSnapshot::default();
+        state.ui.dropdown_open = Some("color".to_string());
+        state.ui.dropdown_scroll = 20;
+        frame_snapshot.layout.dropdown = Some(Rect::new(0, 5, 20, 5));
+
+        let action =
+            handle_mouse_event(click(1, 7), &state, &frame_snapshot, &TuiConfig::default())
+                .expect("dropdown action");
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .and_then(|inputs| inputs.values.get("color")),
+            Some(&crate::input::ArgValue::Choice("choice-6".to_string()))
+        );
+    }
+
+    #[test]
     fn sidebar_caret_click_selects_command_and_expands_item() {
         let mut state = AppState::new(CommandSpec {
             name: "tool".to_string(),
@@ -316,7 +341,6 @@ mod tests {
             }],
         });
         state
-            .domain
             .select_command_path(&["build".to_string()])
             .expect("valid path");
         state.domain.expanded.remove("tool::build");

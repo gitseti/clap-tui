@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::editor_state::EditorState;
 use crate::frame_snapshot::FrameSnapshot;
+use crate::query::form as form_query;
 use crate::spec::{ArgSpec, CommandPath, CommandSpec, SelectionError};
 
 #[derive(Debug, Clone)]
@@ -121,64 +122,61 @@ impl DomainState {
         self.selected_path.to_key(&self.root.name)
     }
 
-    pub fn current_form_mut(&mut self) -> &mut CommandFormState {
-        let key = self.command_path_key();
-        self.forms.entry(key).or_default()
-    }
-
     pub fn current_form(&self) -> Option<&CommandFormState> {
         let key = self.command_path_key();
         self.forms.get(&key)
     }
 
-    pub fn ensure_defaults(&mut self) {
+    pub fn initialize_current_form_defaults(&mut self) {
         let args = self.current_command().args.clone();
-        let inputs = self.current_form_mut();
+        let key = self.command_path_key();
+        let mut defaults = Vec::new();
         for arg in &args {
-            if inputs.values.contains_key(&arg.id) {
-                continue;
-            }
             let value = match arg.input_presentation() {
                 crate::spec::InputPresentation::Toggle => Some(ArgValue::Bool(false)),
                 crate::spec::InputPresentation::ChoiceList { .. } => arg
                     .default_value()
-                    .or_else(|| arg.choices.first().map(String::as_str))
                     .map(|value| ArgValue::Choice(value.to_string())),
                 crate::spec::InputPresentation::FreeText { .. } => arg
                     .default_value()
                     .map(|value| ArgValue::Text(value.to_string())),
             };
             if let Some(value) = value {
-                inputs.values.insert(arg.id.clone(), value);
+                defaults.push((arg.id.clone(), value));
             }
+        }
+        if defaults.is_empty() {
+            return;
+        }
+
+        let form = self.forms.entry(key).or_default();
+        for (arg_id, value) in defaults {
+            form.values.entry(arg_id).or_insert(value);
         }
     }
 
     pub fn set_text_value(&mut self, arg_id: &str, text: String) {
-        self.current_form_mut()
-            .values
-            .insert(arg_id.to_string(), ArgValue::Text(text));
+        self.with_current_form_mut(|form| {
+            form.values.insert(arg_id.to_string(), ArgValue::Text(text));
+        });
     }
 
     pub fn set_choice_value(&mut self, arg_id: &str, value: String) {
-        self.current_form_mut()
-            .values
-            .insert(arg_id.to_string(), ArgValue::Choice(value));
-    }
-
-    pub fn clear_value(&mut self, arg_id: &str) {
-        self.current_form_mut().values.remove(arg_id);
+        self.with_current_form_mut(|form| {
+            form.values.insert(arg_id.to_string(), ArgValue::Choice(value));
+        });
     }
 
     pub fn toggle_flag(&mut self, arg_id: &str) {
-        let entry = self
-            .current_form_mut()
-            .values
-            .entry(arg_id.to_string())
-            .or_insert(ArgValue::Bool(false));
-        if let ArgValue::Bool(value) = entry {
-            *value = !*value;
-        }
+        self.with_current_form_mut(|form| {
+            let entry = form
+                .values
+                .entry(arg_id.to_string())
+                .or_insert(ArgValue::Bool(false));
+            if let ArgValue::Bool(value) = entry {
+                *value = !*value;
+            }
+        });
     }
 
     pub fn cycle_choice(&mut self, arg_id: &str, choices: &[String]) {
@@ -197,7 +195,9 @@ impl DomainState {
     }
 
     pub fn mark_touched(&mut self, arg_id: &str) {
-        self.current_form_mut().touched.insert(arg_id.to_string());
+        self.with_current_form_mut(|form| {
+            form.touched.insert(arg_id.to_string());
+        });
     }
 
     pub fn toggle_flag_touched(&mut self, arg_id: &str) {
@@ -216,12 +216,31 @@ impl DomainState {
     }
 
     pub fn clear_value_and_untouch(&mut self, arg_id: &str) {
-        self.clear_value(arg_id);
-        self.clear_touched(arg_id);
-    }
-
-    pub fn clear_touched(&mut self, arg_id: &str) {
-        self.current_form_mut().touched.remove(arg_id);
+        let default_value = self
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == arg_id)
+            .and_then(|arg| match arg.input_presentation() {
+                crate::spec::InputPresentation::Toggle => Some(ArgValue::Bool(false)),
+                crate::spec::InputPresentation::ChoiceList { .. } => arg
+                    .default_value()
+                    .map(|value| ArgValue::Choice(value.to_string())),
+                crate::spec::InputPresentation::FreeText { .. } => arg
+                    .default_value()
+                    .map(|value| ArgValue::Text(value.to_string())),
+            });
+        self.with_current_form_mut(|form| {
+            match default_value.clone() {
+                Some(value) => {
+                    form.values.insert(arg_id.to_string(), value);
+                }
+                None => {
+                    form.values.remove(arg_id);
+                }
+            }
+            form.touched.remove(arg_id);
+        });
     }
 
     pub fn is_touched(&self, arg_id: &str) -> bool {
@@ -247,6 +266,21 @@ impl DomainState {
             .find_path_by_search_path(start)
             .ok_or(SelectionError::UnknownPath)?;
         self.select_command_path(normalized.as_slice())
+    }
+
+    fn with_current_form_mut<F>(&mut self, mutate: F)
+    where
+        F: FnOnce(&mut CommandFormState),
+    {
+        let key = self.command_path_key();
+        let should_remove = {
+            let form = self.forms.entry(key.clone()).or_default();
+            mutate(form);
+            form.values.is_empty() && form.touched.is_empty()
+        };
+        if should_remove {
+            self.forms.remove(&key);
+        }
     }
 }
 
@@ -341,7 +375,15 @@ impl UiState {
         self.dropdown_scroll = scroll;
     }
 
-    pub fn adjust_dropdown_scroll(&mut self, delta: i16) {
+    pub fn dropdown_scroll(&self, total_rows: usize, visible_rows: usize) -> usize {
+        clamp_dropdown_scroll(self.dropdown_scroll, total_rows, visible_rows)
+    }
+
+    pub fn clamp_dropdown_scroll(&mut self, total_rows: usize, visible_rows: usize) {
+        self.dropdown_scroll = self.dropdown_scroll(total_rows, visible_rows);
+    }
+
+    pub fn adjust_dropdown_scroll(&mut self, delta: i16, total_rows: usize, visible_rows: usize) {
         if delta.is_negative() {
             self.dropdown_scroll = self
                 .dropdown_scroll
@@ -351,6 +393,7 @@ impl UiState {
                 .dropdown_scroll
                 .saturating_add(usize::from(delta.unsigned_abs()));
         }
+        self.clamp_dropdown_scroll(total_rows, visible_rows);
     }
 
     pub fn set_form_scroll(&mut self, scroll: u16) {
@@ -422,7 +465,7 @@ impl NotificationState {
 
 impl AppState {
     pub fn new(root: CommandSpec) -> Self {
-        Self {
+        let mut state = Self {
             domain: DomainState::new(root),
             ui: UiState {
                 focus: Focus::Sidebar,
@@ -441,6 +484,102 @@ impl AppState {
                 mouse_select: None,
             },
             notifications: NotificationState::default(),
+        };
+        state.initialize_current_command();
+        state
+    }
+
+    pub fn initialize_current_command(&mut self) {
+        self.domain.initialize_current_form_defaults();
+        self.sync_visible_form_selection();
+    }
+
+    pub fn sync_visible_form_selection(&mut self) {
+        let current_command = self.domain.current_command().clone();
+        let active_args = form_query::visible_args(&current_command, self.ui.active_tab);
+        let visible = form_query::visible_arg_pairs(&active_args);
+        self.ui.ensure_active_tab_visible(&visible);
+        self.ui.ensure_selected_arg_visible(&visible);
+    }
+
+    pub fn select_command_path(&mut self, path: &[String]) -> Result<(), SelectionError> {
+        self.domain.select_command_path(path)?;
+        self.initialize_current_command();
+        Ok(())
+    }
+
+    pub fn select_command_by_search_path(&mut self, start: &str) -> Result<(), SelectionError> {
+        self.domain.select_command_by_search_path(start)?;
+        self.initialize_current_command();
+        Ok(())
+    }
+}
+
+fn clamp_dropdown_scroll(current: usize, total_rows: usize, visible_rows: usize) -> usize {
+    if total_rows == 0 || visible_rows == 0 {
+        return 0;
+    }
+    current.min(total_rows.saturating_sub(visible_rows.min(total_rows)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppState, ArgValue};
+    use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
+
+    fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
+        ArgSpec {
+            id: id.to_string(),
+            display_name: name.to_string(),
+            help: None,
+            required: false,
+            kind,
+            default_values: Vec::new(),
+            choices: Vec::new(),
+            position: None,
+            value_cardinality: ValueCardinality::One,
+            value_hint: None,
         }
+    }
+
+    #[test]
+    fn new_state_initializes_materialized_defaults_without_normalize() {
+        let root = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![arg("verbose", "--verbose", ArgKind::Flag)],
+            subcommands: Vec::new(),
+        };
+
+        let state = AppState::new(root);
+
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .and_then(|form| form.values.get("verbose")),
+            Some(&ArgValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn clearing_last_optional_value_removes_empty_form_state() {
+        let root = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![arg("target", "--target", ArgKind::Option)],
+            subcommands: Vec::new(),
+        };
+        let mut state = AppState::new(root);
+
+        state.domain.set_text_value("target", "value".to_string());
+        state.domain.mark_touched("target");
+        state.domain.clear_value_and_untouch("target");
+
+        assert!(state.domain.current_form().is_none());
     }
 }

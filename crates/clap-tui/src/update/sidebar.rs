@@ -36,9 +36,7 @@ fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &Fr
         return;
     };
 
-    if *state.domain.selected_path() != path
-        && state.domain.select_command_path(path.as_slice()).is_ok()
-    {
+    if *state.domain.selected_path() != path && state.select_command_path(path.as_slice()).is_ok() {
         let command = state.domain.current_command().clone();
         let args = form::visible_args(&command, state.ui.active_tab);
         state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
@@ -85,7 +83,6 @@ mod tests {
             }],
         });
         state
-            .domain
             .select_command_path(&["build".to_string()])
             .expect("valid path");
         let mut snapshot = FrameSnapshot::default();

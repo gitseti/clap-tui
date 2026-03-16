@@ -6,7 +6,6 @@ mod sidebar;
 
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, HoverTarget};
-use crate::query::form as form_query;
 use crate::runtime::{AppKeyEvent, AppMouseEvent};
 
 #[derive(Debug, Clone)]
@@ -53,53 +52,31 @@ pub(crate) fn apply_action(
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
-    let effect = if matches!(action, Action::Exit | Action::Run | Action::CopyPreview) {
-        command::apply(action, state)
-    } else if matches!(
-        action,
+    match action {
+        Action::Exit | Action::Run | Action::CopyPreview => command::apply(action, state),
         Action::SearchInput(_)
-            | Action::ToggleFocus
-            | Action::ToggleHelp
-            | Action::CycleTabs
-            | Action::FocusSearch
-            | Action::CloseDropdown
-            | Action::ClickFooter(_)
-            | Action::SwitchTab(_)
-    ) {
-        global::apply(action, state)
-    } else if matches!(
-        action,
+        | Action::ToggleFocus
+        | Action::ToggleHelp
+        | Action::CycleTabs
+        | Action::FocusSearch
+        | Action::CloseDropdown
+        | Action::ClickFooter(_)
+        | Action::SwitchTab(_) => global::apply(action, state),
         Action::MoveSidebarSelection(_)
-            | Action::CollapseSelected
-            | Action::ExpandSelected
-            | Action::SelectSidebar
-            | Action::ClickSidebar { .. }
-    ) {
-        sidebar::apply(action, state, frame_snapshot)
-    } else if matches!(
-        action,
+        | Action::CollapseSelected
+        | Action::ExpandSelected
+        | Action::SelectSidebar
+        | Action::ClickSidebar { .. } => sidebar::apply(action, state, frame_snapshot),
         Action::ChoiceInput { .. }
-            | Action::FormTextInput(_)
-            | Action::MoveFormSelection(_)
-            | Action::ActivateFormField
-            | Action::ClickDropdownChoice { .. }
-            | Action::ClickForm(_)
-            | Action::ScrollDropdown(_)
-            | Action::ScrollForm(_)
-    ) {
-        form::apply(action, state, frame_snapshot)
-    } else {
-        pointer::apply(action, state, frame_snapshot)
-    };
-    normalize_state(state);
-    effect
-}
-
-pub(crate) fn normalize_state(state: &mut AppState) {
-    state.domain.ensure_defaults();
-    let current_command = state.domain.current_command().clone();
-    let active_args = form_query::visible_args(&current_command, state.ui.active_tab);
-    let visible = form_query::visible_arg_pairs(&active_args);
-    state.ui.ensure_active_tab_visible(&visible);
-    state.ui.ensure_selected_arg_visible(&visible);
+        | Action::FormTextInput(_)
+        | Action::MoveFormSelection(_)
+        | Action::ActivateFormField
+        | Action::ClickDropdownChoice { .. }
+        | Action::ClickForm(_)
+        | Action::ScrollDropdown(_)
+        | Action::ScrollForm(_) => form::apply(action, state, frame_snapshot),
+        Action::UpdateHover { .. }
+        | Action::UpdateMouseSelection(_)
+        | Action::ClearMouseSelection => pointer::apply(action, state, frame_snapshot),
+    }
 }

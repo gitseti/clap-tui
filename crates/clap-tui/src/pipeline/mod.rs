@@ -90,4 +90,32 @@ mod tests {
             Some("Missing required: --name")
         );
     }
+
+    #[test]
+    fn optional_choice_without_explicit_default_is_omitted_from_argv() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.choices = vec!["red".to_string(), "green".to_string(), "blue".to_string()];
+        let state = app_state(vec![color]);
+
+        let derived = derive(&state);
+
+        assert_eq!(derived.argv, vec!["tool".to_string()]);
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn required_choice_without_explicit_default_stays_invalid_until_selected() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.required = true;
+        color.choices = vec!["red".to_string(), "green".to_string(), "blue".to_string()];
+        let state = app_state(vec![color]);
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert_eq!(
+            derived.validation.field_errors.get("color"),
+            Some(&"Required argument".to_string())
+        );
+    }
 }

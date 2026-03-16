@@ -239,6 +239,7 @@ fn render_fields(
             .inputs
             .as_ref()
             .and_then(|inputs| inputs.values.get(&item.arg.id));
+        let shows_choice_placeholder = item.arg.uses_choice_input() && current_value.is_none();
         let is_default = value_matches_default(
             item.arg,
             current_value,
@@ -255,7 +256,7 @@ fn render_fields(
                 Style::default().fg(config.theme.border)
             });
         let fill_style = styles::input(config, selected);
-        let text_style = if is_default {
+        let text_style = if is_default || shows_choice_placeholder {
             styles::placeholder(config)
         } else {
             Style::default().fg(config.theme.text)
@@ -282,7 +283,7 @@ fn render_fields(
                 display,
                 field.input.width,
                 selected,
-                is_default,
+                is_default || shows_choice_placeholder,
                 ui.dropdown_open.as_deref() == Some(&item.arg.id),
             ))
             .style(styles::compact_control(config, selected));
@@ -547,6 +548,12 @@ mod tests {
         }
     }
 
+    fn choice_arg(id: &str, name: &str, choices: &[&str]) -> ArgSpec {
+        let mut arg = option_arg(id, name);
+        arg.choices = choices.iter().map(|choice| (*choice).to_string()).collect();
+        arg
+    }
+
     fn buffer_text(backend: &TestBackend) -> String {
         backend
             .buffer()
@@ -749,5 +756,46 @@ mod tests {
             &multi,
             ratatui::layout::Rect::new(0, 0, 20, 4)
         ));
+    }
+
+    #[test]
+    fn optional_choice_without_value_renders_select_placeholder() {
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![choice_arg("color", "--color", &["red", "green", "blue"])],
+            subcommands: Vec::new(),
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            tree_items: Vec::new(),
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(&ui, ratatui::layout::Rect::new(0, 0, 40, 8), &vm, &mut snapshot);
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(
+                    frame,
+                    &ui,
+                    &Vec::<String>::new().into(),
+                    &TuiConfig::default(),
+                    &vm,
+                    &snapshot,
+                );
+            })
+            .expect("draw");
+
+        assert!(buffer_text(terminal.backend()).contains("Select..."));
     }
 }

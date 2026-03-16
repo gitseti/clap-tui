@@ -14,9 +14,7 @@ pub(crate) fn switch_tab(state: &mut AppState, tab: ActiveTab) {
     }
     state.ui.active_tab = target;
     state.ui.last_non_help_tab = state.ui.active_tab;
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
-    state.ui.ensure_selected_arg_visible(&form::visible_arg_pairs(&args));
+    state.sync_visible_form_selection();
     state.ui.reset_transient_form_ui();
 }
 
@@ -247,8 +245,21 @@ pub(crate) fn scroll_form(state: &mut AppState, frame_snapshot: &FrameSnapshot, 
     state.ui.clamp_form_scroll(frame_snapshot);
 }
 
-pub(crate) fn scroll_enum(state: &mut AppState, delta: i16) {
-    state.ui.adjust_dropdown_scroll(delta);
+pub(crate) fn scroll_enum(state: &mut AppState, frame_snapshot: &FrameSnapshot, delta: i16) {
+    let Some(arg_id) = state.ui.dropdown_open.as_deref() else {
+        return;
+    };
+    let total = state
+        .domain
+        .current_command()
+        .args
+        .iter()
+        .find(|arg| arg.id == arg_id)
+        .map_or(0, |arg| arg.choices.len());
+    let Some(visible) = frame_snapshot.dropdown_visible_rows() else {
+        return;
+    };
+    state.ui.adjust_dropdown_scroll(delta, total, visible);
 }
 
 pub(crate) fn ensure_enum_visible(
@@ -277,7 +288,7 @@ pub(crate) fn ensure_enum_visible(
 }
 
 pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
-    match state.domain.select_command_by_search_path(start) {
+    match state.select_command_by_search_path(start) {
         Ok(()) => {
             let command = state.domain.current_command().clone();
             let args = form::visible_args(&command, state.ui.active_tab);
@@ -298,7 +309,7 @@ pub(crate) fn select_root(state: &mut AppState) {
 }
 
 fn select_command(state: &mut AppState, path: &[String]) {
-    if state.domain.select_command_path(path).is_ok() {
+    if state.select_command_path(path).is_ok() {
         let command = state.domain.current_command().clone();
         let args = form::visible_args(&command, state.ui.active_tab);
         state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
@@ -378,11 +389,7 @@ mod tests {
 
     #[test]
     fn invalid_start_command_keeps_root_selected_and_does_not_create_orphan_form_state() {
-        let root = command(
-            "tool",
-            vec![arg("verbose", "--verbose", ArgKind::Flag)],
-            Vec::new(),
-        );
+        let root = command("tool", Vec::new(), Vec::new());
         let mut state = AppState::new(root);
 
         apply_start_command(&mut state, "missing");
@@ -390,6 +397,7 @@ mod tests {
         assert!(state.domain.selected_path().is_empty());
         assert_eq!(state.domain.current_command().name, "tool");
         assert!(state.domain.current_form().is_none());
+        assert_eq!(state.domain.forms.len(), 0);
         let toast = state.notifications.toast.as_ref().expect("toast");
         assert_eq!(toast.message, "Unknown start command: missing");
         assert!(!toast.is_error);
@@ -445,7 +453,6 @@ mod tests {
         );
         let mut state = AppState::new(root);
         state
-            .domain
             .select_command_path(&["build".to_string()])
             .expect("valid path");
         state.ui.search_query = "de".to_string();
@@ -469,7 +476,6 @@ mod tests {
         );
         let mut state = AppState::new(root);
         state
-            .domain
             .select_command_path(&["build".to_string()])
             .expect("valid path");
         state.ui.search_query = "de".to_string();
@@ -489,7 +495,7 @@ mod tests {
         );
         let mut state = AppState::new(root);
 
-        let result = state.domain.select_command_path(&["missing".to_string()]);
+        let result = state.select_command_path(&["missing".to_string()]);
 
         assert!(result.is_err());
         assert!(state.domain.selected_path().is_empty());
@@ -509,7 +515,6 @@ mod tests {
         );
         let mut state = AppState::new(root);
         state
-            .domain
             .select_command_path(&["build".to_string()])
             .expect("valid path");
         state.domain.expanded.remove("tool::build");

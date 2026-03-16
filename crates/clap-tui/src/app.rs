@@ -135,7 +135,6 @@ fn event_loop<R: Runtime>(
     if let Some(start) = config.start_command.clone() {
         controller::navigation::apply_start_command(&mut state, &start);
     }
-    update::normalize_state(&mut state);
     let mut frame_snapshot = FrameSnapshot::default();
     let mut needs_redraw = true;
 
