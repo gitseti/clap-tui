@@ -24,19 +24,7 @@ pub(crate) fn handle_key_event(
         return Some(Action::Escape);
     }
     if state.ui.help_open {
-        if matches!(key.code, AppKeyCode::F(1))
-            || matches!(key.code, AppKeyCode::Char(c) if c == config.keymap.help)
-        {
-            return Some(Action::ToggleHelp);
-        }
-        return match key.code {
-            AppKeyCode::Up => Some(Action::ScrollForm(-1)),
-            AppKeyCode::Down => Some(Action::ScrollForm(1)),
-            AppKeyCode::PageUp => Some(Action::ScrollForm(-10)),
-            AppKeyCode::PageDown => Some(Action::ScrollForm(10)),
-            AppKeyCode::Tab => Some(Action::ToggleFocus),
-            _ => None,
-        };
+        return handle_help_key_event(key, config);
     }
     if matches!(state.ui.focus, Focus::Search) {
         return Some(Action::SearchInput(key));
@@ -60,6 +48,31 @@ pub(crate) fn handle_key_event(
         return Some(Action::FormTextInput(key));
     }
 
+    handle_focused_key_event(key, state, config)
+}
+
+fn handle_help_key_event(key: AppKeyEvent, config: &TuiConfig) -> Option<Action> {
+    if matches!(key.code, AppKeyCode::F(1))
+        || matches!(key.code, AppKeyCode::Char(c) if c == config.keymap.help)
+    {
+        return Some(Action::ToggleHelp);
+    }
+
+    match key.code {
+        AppKeyCode::Up => Some(Action::ScrollForm(-1)),
+        AppKeyCode::Down => Some(Action::ScrollForm(1)),
+        AppKeyCode::PageUp => Some(Action::ScrollForm(-10)),
+        AppKeyCode::PageDown => Some(Action::ScrollForm(10)),
+        AppKeyCode::Tab => Some(Action::ToggleFocus),
+        _ => None,
+    }
+}
+
+fn handle_focused_key_event(
+    key: AppKeyEvent,
+    state: &AppState,
+    config: &TuiConfig,
+) -> Option<Action> {
     match key.code {
         AppKeyCode::Tab => Some(Action::ToggleFocus),
         AppKeyCode::Char(c) if c == config.keymap.help => Some(Action::ToggleHelp),
