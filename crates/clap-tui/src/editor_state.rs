@@ -36,18 +36,22 @@ impl EditorState {
             .and_then(|editors| editors.get(arg_id))
     }
 
-    pub fn ensure_editor<'a>(
+    pub fn ensure_editor_with<'a, F>(
         &'a mut self,
         command_key: &CommandPath,
         arg_id: &str,
         displayed: &str,
-    ) -> &'a mut TextEditor {
+        matches_displayed: F,
+    ) -> &'a mut TextEditor
+    where
+        F: Fn(&TextEditor, &str) -> bool,
+    {
         let key = command_key.storage_key();
         let editors = self.editors.entry(key).or_default();
         let editor = editors
             .entry(arg_id.to_string())
             .or_insert_with(|| TextEditor::from_displayed(displayed));
-        if editor.text() != displayed {
+        if !matches_displayed(editor, displayed) {
             *editor = TextEditor::from_displayed(displayed);
         }
         editor
@@ -70,6 +74,14 @@ impl TextEditor {
 
     pub(crate) fn text(&self) -> String {
         self.lines.join("\n")
+    }
+
+    pub(crate) fn row_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub(crate) fn current_row(&self) -> usize {
+        self.cursor.row.min(self.lines.len().saturating_sub(1))
     }
 
     #[cfg(test)]
@@ -118,6 +130,64 @@ impl TextEditor {
             None
         };
         modified
+    }
+
+    pub(crate) fn insert_row_below(&mut self) {
+        let insert_at = self.current_row().saturating_add(1).min(self.lines.len());
+        self.lines.insert(insert_at, String::new());
+        self.cursor = TextPosition {
+            row: insert_at,
+            col: 0,
+        };
+        self.selection_anchor = None;
+    }
+
+    pub(crate) fn remove_current_row(&mut self) {
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+            self.cursor = TextPosition::default();
+            self.selection_anchor = None;
+            return;
+        }
+
+        let row = self.current_row();
+        self.lines.remove(row);
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        let next_row = row.min(self.lines.len().saturating_sub(1));
+        let next_col = self.cursor.col.min(self.lines[next_row].len());
+        self.cursor = TextPosition {
+            row: next_row,
+            col: next_col,
+        };
+        self.selection_anchor = None;
+    }
+
+    pub(crate) fn move_current_row_up(&mut self) {
+        let row = self.current_row();
+        if row == 0 || row >= self.lines.len() {
+            return;
+        }
+        self.lines.swap(row, row - 1);
+        self.cursor = TextPosition {
+            row: row - 1,
+            col: self.cursor.col.min(self.lines[row - 1].len()),
+        };
+        self.selection_anchor = None;
+    }
+
+    pub(crate) fn move_current_row_down(&mut self) {
+        let row = self.current_row();
+        if row + 1 >= self.lines.len() {
+            return;
+        }
+        self.lines.swap(row, row + 1);
+        self.cursor = TextPosition {
+            row: row + 1,
+            col: self.cursor.col.min(self.lines[row + 1].len()),
+        };
+        self.selection_anchor = None;
     }
 
     pub(crate) fn to_textarea(&self, selection_anchor: Option<TextPosition>) -> TextArea<'static> {
@@ -273,5 +343,27 @@ mod tests {
         assert_eq!(editor.text(), "axa");
         assert_eq!(editor.cursor(), TextPosition { row: 0, col: 2 });
         assert_eq!(editor.selection_anchor(), None);
+    }
+
+    #[test]
+    fn row_operations_insert_remove_and_reorder_lines() {
+        let mut editor = TextEditor::from_displayed("alpha\nbeta\ngamma");
+        editor.move_cursor_to(1, 2);
+
+        editor.insert_row_below();
+        assert_eq!(editor.text(), "alpha\nbeta\n\ngamma");
+        assert_eq!(editor.cursor(), TextPosition { row: 2, col: 0 });
+
+        editor.remove_current_row();
+        assert_eq!(editor.text(), "alpha\nbeta\ngamma");
+        assert_eq!(editor.cursor(), TextPosition { row: 2, col: 0 });
+
+        editor.move_current_row_up();
+        assert_eq!(editor.text(), "alpha\ngamma\nbeta");
+        assert_eq!(editor.cursor(), TextPosition { row: 1, col: 0 });
+
+        editor.move_current_row_down();
+        assert_eq!(editor.text(), "alpha\nbeta\ngamma");
+        assert_eq!(editor.cursor(), TextPosition { row: 2, col: 0 });
     }
 }

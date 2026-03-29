@@ -8,129 +8,28 @@ use ratatui::widgets::{
 
 use crate::config::TuiConfig;
 use crate::form_editor;
-use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot, dropdown_geometry};
-use crate::input::{ArgValue, Focus, UiState};
-use crate::query::form::{self, field_description_offset, field_input_offset, field_metrics};
+use crate::frame_snapshot::FrameSnapshot;
+use crate::input::{ArgValue, Focus, InputSource, UiState};
+use crate::query::form::{self, FieldWidget, field_metrics};
 use crate::spec::CommandPath;
 use crate::spec::{ArgSpec, choice_value_matches_default};
 
 use super::{screen::ScreenView, styles};
 
+#[allow(dead_code)]
 pub(crate) fn populate_layout(
     ui: &UiState,
     area: Rect,
     vm: &ScreenView<'_>,
     frame_snapshot: &mut FrameSnapshot,
 ) {
-    let content_area = area;
-    let content_height = form::measure_fields_height(&vm.active_args);
-    let help_height = form::measure_help_height(&vm.command.help);
-    let viewport_height = content_area.height;
-    let help_viewport_height = viewport_height.saturating_sub(4);
-    frame_snapshot.form_scroll_max = content_height.saturating_sub(viewport_height);
-    frame_snapshot.help_scroll_max = help_height.saturating_sub(help_viewport_height);
-    let form_scroll = ui.form_scroll(frame_snapshot);
-    let frame_layout = &mut frame_snapshot.layout;
-    frame_layout.form = Some(area);
-    frame_layout.dropdown = None;
-    frame_layout.form_fields.clear();
-    frame_layout.form_inputs.clear();
-    frame_layout.form_tabs.clear();
-    frame_layout.form_view = Some(content_area);
-
-    let mut y = i32::from(content_area.y) - i32::from(form_scroll);
-    for item in &vm.active_args {
-        let metrics = field_metrics(item.arg);
-        let item_bottom = y + i32::from(metrics.total_height);
-        if y >= i32::from(content_area.y) + i32::from(content_area.height) {
-            break;
-        }
-        if item_bottom <= i32::from(content_area.y) {
-            y += i32::from(metrics.total_height);
-            continue;
-        }
-        let label = if metrics.label_height > 0 {
-            clipped_rect(area.x, area.width, y, metrics.label_height, content_area)
-        } else {
-            None
-        };
-        let input_y = y + i32::from(field_input_offset(item.arg));
-        let Some(input) = clipped_rect(
-            area.x,
-            area.width,
-            input_y,
-            metrics.input_height,
-            content_area,
-        ) else {
-            y += i32::from(metrics.total_height);
-            continue;
-        };
-        let description = field_help_text(item.arg).and_then(|_| {
-            let description_y = y + i32::from(field_description_offset(item.arg)?);
-            clipped_rect(
-                area.x,
-                area.width,
-                description_y,
-                metrics.description_height.max(1),
-                content_area,
-            )
-        });
-
-        frame_layout.form_inputs.insert(item.arg.id.clone(), input);
-        frame_layout.form_fields.push(FormFieldLayout {
-            arg_id: item.arg.id.clone(),
-            label,
-            input,
-            description,
-        });
-
-        if ui.dropdown_open.as_deref() == Some(&item.arg.id) {
-            frame_layout.dropdown = frame_layout
-                .form_view
-                .and_then(|form_view| dropdown_geometry(form_view, input, item.arg.choices.len()))
-                .map(|geometry| geometry.rect);
-        }
-
-        y += i32::from(metrics.total_height);
-    }
-}
-
-fn intersect_rects(rect: Rect, bounds: Rect) -> Option<Rect> {
-    let left = rect.x.max(bounds.x);
-    let top = rect.y.max(bounds.y);
-    let right = rect
-        .x
-        .saturating_add(rect.width)
-        .min(bounds.x.saturating_add(bounds.width));
-    let bottom = rect
-        .y
-        .saturating_add(rect.height)
-        .min(bounds.y.saturating_add(bounds.height));
-
-    if left >= right || top >= bottom {
-        return None;
-    }
-
-    Some(Rect::new(
-        left,
-        top,
-        right.saturating_sub(left),
-        bottom.saturating_sub(top),
-    ))
-}
-
-fn clipped_rect(x: u16, width: u16, top: i32, height: u16, bounds: Rect) -> Option<Rect> {
-    let bounded_top = top.max(i32::from(bounds.y));
-    let bounded_bottom = top
-        .saturating_add(i32::from(height))
-        .min(i32::from(bounds.y.saturating_add(bounds.height)));
-    if bounded_top >= bounded_bottom {
-        return None;
-    }
-
-    let y = u16::try_from(bounded_top).ok()?;
-    let clipped_height = u16::try_from(bounded_bottom.saturating_sub(bounded_top)).ok()?;
-    intersect_rects(Rect::new(x, y, width, clipped_height), bounds)
+    crate::frame_snapshot::populate_form_layout(
+        ui,
+        area,
+        &vm.active_args,
+        &vm.command.help,
+        frame_snapshot,
+    );
 }
 
 pub(crate) fn render_form(
@@ -206,40 +105,43 @@ fn render_fields(
         };
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
         let input_is_truncated = text_input_is_truncated(item.arg, field.input);
+        let field_error = vm.validation.field_errors.get(&item.arg.id);
+        let source_badge = vm
+            .inputs
+            .as_ref()
+            .filter(|inputs| !inputs.is_touched(&item.arg.id))
+            .and_then(|inputs| inputs.input_source(&item.arg.id));
 
         if let Some(label_rect) = field.label {
             let mut spans = vec![Span::styled(
                 item.arg.display_name.clone(),
-                styles::label(config, selected),
+                if field_error.is_some() {
+                    styles::label(config, selected).fg(config.theme.error)
+                } else {
+                    styles::label(config, selected)
+                },
             )];
             if item.arg.required {
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled("*", Style::default().fg(config.theme.accent)));
             }
+            spans.extend(field_badges(config, item.arg, source_badge));
             frame.render_widget(Paragraph::new(Line::from(spans)), label_rect);
         }
 
-        let value = vm
-            .inputs
-            .as_ref()
-            .and_then(|inputs| inputs.compatibility_value(item.arg))
-            .map(|arg_value| match &arg_value {
-                ArgValue::Bool(enabled) => {
-                    if *enabled {
-                        "[x]".to_string()
-                    } else {
-                        "[ ]".to_string()
-                    }
-                }
-                ArgValue::Text(text) => text.clone(),
-                ArgValue::Choice(value) => value.clone(),
-            })
-            .unwrap_or_default();
         let current_value = vm
             .inputs
             .as_ref()
             .and_then(|inputs| inputs.compatibility_value(item.arg));
-        let shows_choice_placeholder = item.arg.uses_choice_input() && current_value.is_none();
+        let selected_values = vm
+            .inputs
+            .as_ref()
+            .map_or_else(Vec::new, |inputs| inputs.selected_values(item.arg));
+        let value = display_value(item.widget, current_value.as_ref(), &selected_values);
+        let shows_choice_placeholder = matches!(
+            item.widget,
+            FieldWidget::SingleChoice | FieldWidget::MultiChoice
+        ) && value.is_empty();
         let is_default = value_matches_default(
             item.arg,
             current_value.as_ref(),
@@ -251,11 +153,7 @@ fn render_fields(
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(if selected {
-                Style::default().fg(config.theme.panel_focus_border)
-            } else {
-                Style::default().fg(config.theme.border)
-            });
+            .border_style(field_border_style(config, selected, field_error.is_some()));
         let fill_style = styles::input(config, selected);
         let text_style = if is_default || shows_choice_placeholder {
             styles::placeholder(config)
@@ -263,7 +161,7 @@ fn render_fields(
             Style::default().fg(config.theme.text)
         };
 
-        if item.arg.is_flag() {
+        if matches!(item.widget, FieldWidget::Toggle) {
             render_flag_toggle(
                 frame,
                 config,
@@ -273,9 +171,12 @@ fn render_fields(
                 &value,
                 text_style,
             );
-        } else if item.arg.uses_choice_input() {
+        } else if matches!(
+            item.widget,
+            FieldWidget::SingleChoice | FieldWidget::MultiChoice | FieldWidget::Counter
+        ) {
             let display = if value.is_empty() {
-                "Select..."
+                compact_placeholder(item.widget)
             } else {
                 value.as_str()
             };
@@ -285,13 +186,31 @@ fn render_fields(
                 field.input.width,
                 selected,
                 is_default || shows_choice_placeholder,
-                ui.dropdown_open.as_deref() == Some(&item.arg.id),
+                matches!(
+                    item.widget,
+                    FieldWidget::SingleChoice | FieldWidget::MultiChoice
+                ) && ui.dropdown_open.as_deref() == Some(&item.arg.id),
             ))
             .style(styles::compact_control(config, selected));
             frame.render_widget(input, field.input);
+        } else if matches!(item.widget, FieldWidget::OptionalValue) {
+            render_optional_value(
+                frame,
+                ui,
+                selected_path,
+                item.arg,
+                selected,
+                field.input,
+                config,
+                current_value.as_ref(),
+                &value,
+                block,
+                text_style,
+            );
         } else if input_is_truncated {
             frame.render_widget(
-                Paragraph::new(value).style(fill_style.patch(text_style)),
+                Paragraph::new(repeated_display_lines(item.widget, &value))
+                    .style(fill_style.patch(text_style)),
                 field.input,
             );
         } else if selected {
@@ -318,16 +237,28 @@ fn render_fields(
             place_textarea_cursor(frame, &textarea, field.input);
         } else {
             frame.render_widget(
-                Paragraph::new(value)
+                Paragraph::new(repeated_display_lines(item.widget, &value))
                     .block(block)
                     .style(fill_style.patch(text_style)),
                 field.input,
             );
         }
 
-        if let (Some(help), Some(help_rect)) = (field_help_text(item.arg), field.description) {
+        if let (Some(help), Some(help_rect)) = (
+            field_help_text(
+                item.arg,
+                item.widget,
+                selected,
+                field_error.map(String::as_str),
+            ),
+            field.description,
+        ) {
             frame.render_widget(
-                Paragraph::new(Line::from(Span::raw(help))).style(styles::help(config)),
+                Paragraph::new(Line::from(Span::raw(help))).style(if field_error.is_some() {
+                    Style::default().fg(config.theme.error)
+                } else {
+                    styles::help(config)
+                }),
                 help_rect,
             );
         }
@@ -335,7 +266,152 @@ fn render_fields(
 }
 
 fn text_input_is_truncated(arg: &ArgSpec, input: Rect) -> bool {
-    arg.accepts_text_input() && input.height < field_metrics(arg).input_height
+    form::widget_for(arg).accepts_text_input() && input.height < field_metrics(arg).input_height
+}
+
+fn display_value(
+    widget: FieldWidget,
+    current_value: Option<&ArgValue>,
+    selected_values: &[String],
+) -> String {
+    match widget {
+        FieldWidget::Toggle => match current_value {
+            Some(ArgValue::Bool(true)) => "[x]".to_string(),
+            _ => "[ ]".to_string(),
+        },
+        FieldWidget::Counter => match current_value {
+            Some(ArgValue::Text(text)) => text.clone(),
+            _ => "0".to_string(),
+        },
+        FieldWidget::SingleChoice => match current_value {
+            Some(ArgValue::Choice(value)) => value.clone(),
+            Some(ArgValue::Text(text)) => text.clone(),
+            _ => String::new(),
+        },
+        FieldWidget::MultiChoice => match selected_values {
+            [] => String::new(),
+            [single] => single.clone(),
+            many => format!("{} selected", many.len()),
+        },
+        FieldWidget::SingleText | FieldWidget::RepeatedText | FieldWidget::OptionalValue => {
+            match current_value {
+                Some(ArgValue::Text(text)) => text.clone(),
+                _ => String::new(),
+            }
+        }
+    }
+}
+
+fn compact_placeholder(widget: FieldWidget) -> &'static str {
+    match widget {
+        FieldWidget::Counter => "0",
+        _ => "Select...",
+    }
+}
+
+fn repeated_display_lines(widget: FieldWidget, value: &str) -> Vec<Line<'static>> {
+    if !matches!(widget, FieldWidget::RepeatedText) {
+        return vec![Line::from(value.to_string())];
+    }
+
+    if value.is_empty() {
+        return vec![Line::from("No values added".to_string())];
+    }
+
+    value
+        .lines()
+        .enumerate()
+        .map(|(index, line)| Line::from(format!("{:>2}. {}", index + 1, line)))
+        .collect()
+}
+
+fn field_border_style(config: &TuiConfig, selected: bool, has_error: bool) -> Style {
+    if has_error {
+        Style::default().fg(config.theme.error)
+    } else if selected {
+        Style::default().fg(config.theme.panel_focus_border)
+    } else {
+        Style::default().fg(config.theme.border)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_optional_value(
+    frame: &mut Frame<'_>,
+    ui: &UiState,
+    selected_path: &CommandPath,
+    arg: &ArgSpec,
+    selected: bool,
+    area: Rect,
+    config: &TuiConfig,
+    current_value: Option<&ArgValue>,
+    value: &str,
+    block: Block<'_>,
+    text_style: Style,
+) {
+    match current_value {
+        Some(ArgValue::Text(_)) if selected => {
+            let editor = form_editor::editor_for_render(ui, selected_path, arg, value);
+            let mut textarea = editor.to_textarea(editor.selection_anchor());
+            textarea.set_block(block);
+            let base_style = Style::default()
+                .fg(text_style.fg.unwrap_or(config.theme.text))
+                .bg(config.theme.surface_raised);
+            textarea.set_style(base_style);
+            textarea.set_cursor_line_style(base_style);
+            textarea.set_cursor_style(
+                Style::default()
+                    .bg(config.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            );
+            textarea.set_selection_style(
+                Style::default()
+                    .fg(config.theme.text)
+                    .bg(config.theme.surface_raised)
+                    .add_modifier(Modifier::REVERSED),
+            );
+            frame.render_widget(textarea.widget(), area);
+            place_textarea_cursor(frame, &textarea, area);
+        }
+        Some(ArgValue::Text(_)) => {
+            frame.render_widget(
+                Paragraph::new(value.to_string())
+                    .block(block)
+                    .style(styles::input(config, selected).patch(text_style)),
+                area,
+            );
+        }
+        Some(ArgValue::Bool(true)) => {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        " Present ",
+                        styles::compact_control_affordance(config, selected, true),
+                    ),
+                    Span::raw(" "),
+                    Span::styled("type to add a value", styles::placeholder(config)),
+                ]))
+                .block(block)
+                .style(styles::input(config, selected)),
+                area,
+            );
+        }
+        _ => {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        " Disabled ",
+                        styles::compact_control_affordance(config, selected, false),
+                    ),
+                    Span::raw(" "),
+                    Span::styled("Right/Space to enable", styles::placeholder(config)),
+                ]))
+                .block(block)
+                .style(styles::input(config, selected)),
+                area,
+            );
+        }
+    }
 }
 
 fn value_matches_default(arg: &ArgSpec, value: Option<&ArgValue>, is_touched: bool) -> bool {
@@ -486,8 +562,85 @@ fn render_help_overlay(
     }
 }
 
-fn field_help_text(arg: &ArgSpec) -> Option<String> {
-    arg.help.clone().or_else(|| arg.value_hint.clone())
+fn field_help_text(
+    arg: &ArgSpec,
+    widget: FieldWidget,
+    selected: bool,
+    field_error: Option<&str>,
+) -> Option<String> {
+    if let Some(field_error) = field_error {
+        return Some(field_error.to_string());
+    }
+
+    let mut parts = Vec::new();
+    if let Some(help) = arg.help.clone().or_else(|| arg.value_hint.clone()) {
+        parts.push(help);
+    }
+    if selected && let Some(hint) = widget_help_hint(widget) {
+        parts.push(hint.to_string());
+    }
+
+    (!parts.is_empty()).then(|| parts.join("  "))
+}
+
+fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
+    match widget {
+        FieldWidget::RepeatedText => {
+            Some("Enter adds rows. Alt+Up/Down reorders. Ctrl+Delete removes.")
+        }
+        FieldWidget::Counter => Some("Right/+ increments. Left/- decrements."),
+        FieldWidget::OptionalValue => Some("Right enables. Left/Delete disables."),
+        _ => None,
+    }
+}
+
+fn field_badges(
+    config: &TuiConfig,
+    arg: &ArgSpec,
+    source: Option<InputSource>,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+
+    if arg.is_inherited_global() {
+        spans.extend(chip_spans(
+            "Inherited",
+            Style::default()
+                .fg(config.theme.text)
+                .bg(config.theme.pill_bg),
+        ));
+    } else if arg.is_global() {
+        spans.extend(chip_spans(
+            "Global",
+            Style::default()
+                .fg(config.theme.text)
+                .bg(config.theme.pill_bg),
+        ));
+    }
+
+    if let Some(source) = source {
+        let label = match source {
+            InputSource::User => None,
+            InputSource::Default => Some("Default"),
+            InputSource::Env => Some("Env"),
+        };
+        if let Some(label) = label {
+            spans.extend(chip_spans(
+                label,
+                Style::default()
+                    .fg(config.theme.dim)
+                    .bg(config.theme.pill_bg),
+            ));
+        }
+    }
+
+    spans
+}
+
+fn chip_spans(label: &str, style: Style) -> Vec<Span<'static>> {
+    vec![
+        Span::raw(" "),
+        Span::styled(format!(" {label} "), style.add_modifier(Modifier::BOLD)),
+    ]
 }
 
 #[cfg(test)]
@@ -528,6 +681,7 @@ mod tests {
             editors: crate::editor_state::EditorState::default(),
             dropdown_open: None,
             dropdown_scroll: 0,
+            dropdown_cursor: 0,
             form_scroll: 0,
             hover: None,
             hover_tab: None,

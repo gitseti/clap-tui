@@ -1,6 +1,9 @@
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, ArgValue, Focus, UiState};
-use crate::query::{form, tree};
+use crate::query::{
+    form::{self, FieldWidget},
+    tree,
+};
 use crate::spec::{CommandPath, SelectionError};
 
 pub(crate) fn switch_tab(state: &mut AppState, tab: ActiveTab) {
@@ -196,13 +199,40 @@ pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSn
         return;
     };
     let arg = item.arg;
-    if arg.is_flag() {
+    if matches!(item.widget, FieldWidget::Toggle) {
         state.domain.toggle_flag_touched(&arg.id);
-    } else if arg.uses_choice_input() {
+    } else if matches!(
+        item.widget,
+        FieldWidget::SingleChoice | FieldWidget::MultiChoice
+    ) {
         if arg.choices.is_empty() || state.ui.dropdown_open.as_deref() == Some(arg.id.as_str()) {
             state.ui.close_dropdown();
         } else {
             open_enum_dropdown(state, frame_snapshot, &arg.id, arg.choices.len());
+        }
+    } else if matches!(item.widget, FieldWidget::Counter) {
+        state.domain.increment_counter(&arg.id);
+    } else if matches!(item.widget, FieldWidget::OptionalValue) {
+        let state_kind = state.domain.current_form().map(|form| {
+            if let Some(input) = form.input(&arg.id) {
+                match &input.value {
+                    crate::input::ArgInput::Flag { present: true, .. } => "flag",
+                    crate::input::ArgInput::Values { occurrences }
+                        if occurrences.iter().any(|occurrence| {
+                            occurrence.values.iter().any(|value| !value.is_empty())
+                        }) =>
+                    {
+                        "value"
+                    }
+                    _ => "empty",
+                }
+            } else {
+                "empty"
+            }
+        });
+        match state_kind {
+            Some("flag" | "value") => state.ui.focus_form(),
+            _ => state.domain.toggle_optional_value_flag(&arg.id, true),
         }
     } else {
         state.ui.focus_form();
@@ -221,28 +251,31 @@ pub(crate) fn open_enum_dropdown(
         return;
     }
 
-    state.ui.open_dropdown(arg_id.to_string(), 0);
+    state.ui.open_dropdown(arg_id.to_string(), 0, 0);
     let current = state
         .domain
-        .current_form()
-        .and_then(|inputs| {
+        .current_command()
+        .args
+        .iter()
+        .find(|arg| arg.id == arg_id)
+        .and_then(|arg| {
             state
                 .domain
-                .current_command()
-                .args
-                .iter()
-                .find(|arg| arg.id == arg_id)
-                .and_then(|arg| inputs.compatibility_value(arg))
-        })
-        .and_then(|value| match value {
-            ArgValue::Choice(selected) => state
-                .domain
-                .current_command()
-                .args
-                .iter()
-                .find(|arg| arg.id == arg_id)
-                .and_then(|arg| arg.choices.iter().position(|choice| *choice == selected)),
-            _ => None,
+                .current_form()
+                .and_then(|inputs| inputs.selected_values(arg).first().cloned())
+                .and_then(|selected| arg.choices.iter().position(|choice| *choice == selected))
+                .or_else(|| {
+                    state
+                        .domain
+                        .current_form()
+                        .and_then(|inputs| inputs.compatibility_value(arg))
+                        .and_then(|value| match value {
+                            ArgValue::Choice(selected) => {
+                                arg.choices.iter().position(|choice| *choice == selected)
+                            }
+                            _ => None,
+                        })
+                })
         })
         .unwrap_or(0);
     let visible_rows = frame_snapshot
@@ -255,6 +288,7 @@ pub(crate) fn open_enum_dropdown(
     state
         .ui
         .set_dropdown_scroll(current.saturating_sub(visible_rows / 2).min(max_scroll));
+    state.ui.set_dropdown_cursor(current);
 }
 
 pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
@@ -386,9 +420,9 @@ mod tests {
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
 
     use super::{
-        apply_start_command, collapse_selected, ensure_enum_visible, expand_selected,
-        handle_escape, move_form_selection, move_sidebar_selection, open_enum_dropdown,
-        sidebar_right,
+        activate_form_field, apply_start_command, collapse_selected, ensure_enum_visible,
+        expand_selected, handle_escape, move_form_selection, move_sidebar_selection,
+        open_enum_dropdown, sidebar_right,
     };
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
@@ -755,5 +789,32 @@ mod tests {
         ensure_enum_visible(&mut state, &frame_snapshot, 4, 6);
 
         assert_eq!(state.ui.dropdown_scroll, 2);
+    }
+
+    #[test]
+    fn activating_optional_value_with_existing_text_preserves_the_value() {
+        let mut color = arg("color", "--color", ArgKind::Flag);
+        color.metadata.action.value_arity = crate::spec::ArgValueArity::Optional;
+        let mut state = AppState::new(command("tool", vec![color], Vec::new()));
+        state.domain.set_text_value("color", "blue");
+        state.domain.mark_touched("color");
+        state.ui.focus_form();
+
+        activate_form_field(&mut state, &FrameSnapshot::default());
+
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "color")
+            .expect("color arg");
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .and_then(|form| form.compatibility_value(arg)),
+            Some(crate::input::ArgValue::Text("blue".to_string()))
+        );
     }
 }

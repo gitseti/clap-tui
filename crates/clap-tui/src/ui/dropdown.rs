@@ -11,6 +11,7 @@ use ratatui::widgets::{
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{DomainState, UiState};
+use crate::query::form::{self, FieldWidget};
 use crate::spec::choice_value_matches_default;
 
 use super::screen::ScreenView;
@@ -134,22 +135,17 @@ fn build_dropdown_view(
         .find(|arg| &arg.id == arg_id)?;
 
     let current_form = domain.current_form();
+    let widget = form::widget_for(arg);
     let is_touched = current_form
         .as_ref()
         .is_some_and(|form| form.is_touched(&arg.id));
+    let selected_values = current_form
+        .as_ref()
+        .map_or_else(Vec::new, |form| form.selected_values(arg));
     let total_rows = arg.choices.len();
     let visible_rows = rect.height.saturating_sub(2) as usize;
     let scroll_position = ui.dropdown_scroll(total_rows, visible_rows);
-    let selected_row = current_form
-        .as_ref()
-        .and_then(|inputs| inputs.compatibility_value(arg))
-        .and_then(|value| match value {
-            crate::input::ArgValue::Choice(selected) => {
-                arg.choices.iter().position(|choice| *choice == selected)
-            }
-            _ => None,
-        })
-        .unwrap_or(0);
+    let selected_row = ui.dropdown_cursor(total_rows);
     let selected_index = (selected_row >= scroll_position
         && selected_row < scroll_position.saturating_add(visible_rows))
     .then_some(selected_row - scroll_position);
@@ -163,13 +159,19 @@ fn build_dropdown_view(
         .map(|(index, value)| {
             let is_default = !is_touched && choice_value_matches_default(arg, value);
             let is_selected = index == selected_row;
+            let is_checked = selected_values.iter().any(|selected| selected == value);
             let text_style = match (is_selected, is_default) {
                 (true, false) => Style::default().fg(config.theme.selection_fg),
                 (_, true) => Style::default().fg(config.theme.dim),
                 (false, false) => Style::default().fg(config.theme.text),
             };
             DropdownItem {
-                label: value.clone(),
+                label: match widget {
+                    FieldWidget::MultiChoice => {
+                        format!("{} {}", if is_checked { "[x]" } else { "[ ]" }, value)
+                    }
+                    _ => value.clone(),
+                },
                 text_style,
             }
         })

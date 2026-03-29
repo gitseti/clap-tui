@@ -46,6 +46,26 @@ ongoing internal refactor:
 
 Internal modules and crate-private helper types are not stable extension points.
 
+### Public API review outcome
+
+The final refactor review kept the public API intentionally narrow and unchanged:
+- `TuiApp` remains the main entry point
+- `TuiConfig` and theme types remain the supported configuration surface
+- `Runtime` plus the exported `AppEvent` / key / mouse types remain the advanced integration seam
+
+No additional internal modules were promoted to public API, and no existing public seam
+was narrowed because the internal cleanup did not reveal a concrete simplification worth a
+breaking change.
+
+### Current form capabilities
+
+The current TUI supports:
+- repeated options and repeated values
+- count-style flags
+- optional-value flags
+- inherited global args across subcommands
+- clap-backed validation summaries and field-level form feedback
+
 ### Theme presets
 
 You can select a built-in theme preset via `TuiConfig`:

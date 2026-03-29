@@ -1,10 +1,35 @@
 use crate::input::ActiveTab;
 use crate::spec::{ArgSpec, CommandSpec};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldWidget {
+    Toggle,
+    SingleText,
+    RepeatedText,
+    SingleChoice,
+    MultiChoice,
+    Counter,
+    OptionalValue,
+}
+
+impl FieldWidget {
+    pub(crate) fn accepts_text_input(self) -> bool {
+        matches!(
+            self,
+            Self::SingleText | Self::RepeatedText | Self::OptionalValue
+        )
+    }
+
+    pub(crate) fn uses_choice_popup(self) -> bool {
+        matches!(self, Self::SingleChoice | Self::MultiChoice)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OrderedArg<'a> {
     pub(crate) order_index: usize,
     pub(crate) arg: &'a ArgSpec,
+    pub(crate) widget: FieldWidget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,12 +47,28 @@ pub(crate) struct FieldMetrics {
 pub(crate) struct FormHit {
     pub(crate) order_index: usize,
     pub(crate) arg_id: String,
-    pub(crate) is_flag: bool,
-    pub(crate) uses_choice_input: bool,
-    pub(crate) accepts_text_input: bool,
+    pub(crate) widget: FieldWidget,
     pub(crate) in_input: bool,
     pub(crate) in_label: bool,
     pub(crate) in_description: bool,
+}
+
+pub(crate) fn widget_for(arg: &ArgSpec) -> FieldWidget {
+    if arg.uses_count_semantics() {
+        FieldWidget::Counter
+    } else if arg.uses_optional_value_semantics() {
+        FieldWidget::OptionalValue
+    } else if arg.uses_toggle_semantics() {
+        FieldWidget::Toggle
+    } else if arg.has_value_choices() && arg.is_multi_value_input() {
+        FieldWidget::MultiChoice
+    } else if arg.has_value_choices() {
+        FieldWidget::SingleChoice
+    } else if arg.is_multi_value_input() {
+        FieldWidget::RepeatedText
+    } else {
+        FieldWidget::SingleText
+    }
 }
 
 pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
@@ -37,7 +78,7 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
         .filter(|arg| arg.is_positional())
         .filter(|arg| !is_help_arg(arg))
         .collect::<Vec<_>>();
-    positionals.sort_by_key(|arg| arg.position.unwrap_or(usize::MAX));
+    positionals.sort_by_key(|arg| (arg.position.unwrap_or(usize::MAX), arg.display_order()));
 
     let mut others = command
         .args
@@ -45,13 +86,17 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
         .filter(|arg| !arg.is_positional())
         .filter(|arg| !is_help_arg(arg))
         .collect::<Vec<_>>();
-    others.sort_by_key(|arg| arg.display_name.clone());
+    others.sort_by_key(|arg| (arg.display_order(), arg.display_name.clone()));
 
     positionals.extend(others);
     positionals
         .into_iter()
         .enumerate()
-        .map(|(order_index, arg)| OrderedArg { order_index, arg })
+        .map(|(order_index, arg)| OrderedArg {
+            order_index,
+            arg,
+            widget: widget_for(arg),
+        })
         .collect()
 }
 
@@ -68,14 +113,19 @@ pub(crate) fn visible_arg_pairs<'a>(args: &[OrderedArg<'a>]) -> Vec<(usize, &'a 
 }
 
 pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
-    let label_height = u16::from(!arg.is_flag());
+    let widget = widget_for(arg);
+    let label_height = u16::from(!matches!(
+        widget,
+        FieldWidget::Toggle | FieldWidget::Counter
+    ));
     let description_height = u16::from(arg.help.is_some() || arg.value_hint.is_some());
-    let input_height = if arg.is_flag() || arg.uses_choice_input() {
-        1
-    } else if arg.accepts_multiple_values() {
-        5
-    } else {
-        3
+    let input_height = match widget {
+        FieldWidget::Toggle
+        | FieldWidget::SingleChoice
+        | FieldWidget::MultiChoice
+        | FieldWidget::Counter => 1,
+        FieldWidget::SingleText | FieldWidget::OptionalValue => 3,
+        FieldWidget::RepeatedText => 5,
     };
     let gap_height = 1;
     FieldMetrics {
@@ -155,9 +205,7 @@ pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> 
             return Some(FormHit {
                 order_index: item.order_index,
                 arg_id: item.arg.id.clone(),
-                is_flag: item.arg.is_flag(),
-                uses_choice_input: item.arg.uses_choice_input(),
-                accepts_text_input: item.arg.accepts_text_input(),
+                widget: item.widget,
                 in_input,
                 in_label,
                 in_description,
@@ -175,8 +223,8 @@ fn is_help_arg(arg: &ArgSpec) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        field_content_bounds, field_description_offset, field_input_offset, field_metrics,
-        hit_test_form_content, measure_fields_height, ordered_args, visible_args,
+        FieldWidget, field_content_bounds, field_description_offset, field_input_offset,
+        field_metrics, hit_test_form_content, measure_fields_height, ordered_args, visible_args,
     };
     use crate::input::ActiveTab;
     use crate::spec::{ArgKind, ArgSpec, CommandSpec};
@@ -299,7 +347,7 @@ mod tests {
         assert!(!description_hit.in_input);
 
         let input_hit = hit_test_form_content(&visible, 2).expect("input hit");
-        assert!(input_hit.accepts_text_input);
+        assert!(matches!(input_hit.widget, FieldWidget::SingleText));
         assert!(input_hit.in_input);
         assert!(!input_hit.in_label);
         assert!(!input_hit.in_description);
@@ -318,7 +366,7 @@ mod tests {
         assert_eq!(field_content_bounds(&visible, 0), Some((0, 1)));
 
         let input_hit = hit_test_form_content(&visible, 0).expect("input hit");
-        assert!(input_hit.is_flag);
+        assert!(matches!(input_hit.widget, FieldWidget::Toggle));
         assert!(input_hit.in_input);
         assert!(!input_hit.in_label);
 
@@ -342,6 +390,6 @@ mod tests {
         let second_input = hit_test_form_content(&visible, 8).expect("second field input");
         assert_eq!(second_input.arg_id, "verbose");
         assert!(second_input.in_input);
-        assert!(second_input.is_flag);
+        assert!(matches!(second_input.widget, FieldWidget::Toggle));
     }
 }

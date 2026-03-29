@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use ratatui::layout::Rect;
 
-use crate::input::{ActiveTab, HoverTarget};
+use crate::input::{ActiveTab, HoverTarget, UiState};
+use crate::query::form::{self, OrderedArg};
 use crate::spec::CommandPath;
 
 pub(crate) const MAX_DROPDOWN_ROWS: u16 = 6;
@@ -217,6 +218,136 @@ pub(crate) fn dropdown_geometry(
         rect: Rect::new(input_rect.x, y, input_rect.width, popup_height),
         visible_rows,
     })
+}
+
+pub(crate) fn populate_form_layout(
+    ui: &UiState,
+    area: Rect,
+    active_args: &[OrderedArg<'_>],
+    help: &str,
+    frame_snapshot: &mut FrameSnapshot,
+) {
+    let content_area = area;
+    let content_height = form::measure_fields_height(active_args);
+    let help_height = form::measure_help_height(help);
+    let viewport_height = content_area.height;
+    let help_viewport_height = viewport_height.saturating_sub(4);
+    frame_snapshot.form_scroll_max = content_height.saturating_sub(viewport_height);
+    frame_snapshot.help_scroll_max = help_height.saturating_sub(help_viewport_height);
+    let form_scroll = ui.form_scroll(frame_snapshot);
+    let frame_layout = &mut frame_snapshot.layout;
+    frame_layout.form = Some(area);
+    frame_layout.dropdown = None;
+    frame_layout.form_fields.clear();
+    frame_layout.form_inputs.clear();
+    frame_layout.form_tabs.clear();
+    frame_layout.form_view = Some(content_area);
+
+    let mut y = i32::from(content_area.y) - i32::from(form_scroll);
+    for item in active_args {
+        let metrics = form::field_metrics(item.arg);
+        let item_bottom = y + i32::from(metrics.total_height);
+        if y >= i32::from(content_area.y) + i32::from(content_area.height) {
+            break;
+        }
+        if item_bottom <= i32::from(content_area.y) {
+            y += i32::from(metrics.total_height);
+            continue;
+        }
+        let label = if metrics.label_height > 0 {
+            clipped_rect(area.x, area.width, y, metrics.label_height, content_area)
+        } else {
+            None
+        };
+        let input_y = y + i32::from(form::field_input_offset(item.arg));
+        let Some(input) = clipped_rect(
+            area.x,
+            area.width,
+            input_y,
+            metrics.input_height,
+            content_area,
+        ) else {
+            y += i32::from(metrics.total_height);
+            continue;
+        };
+        let description = form_description_rect(item.arg, y, area, content_area);
+
+        frame_layout.form_inputs.insert(item.arg.id.clone(), input);
+        frame_layout.form_fields.push(FormFieldLayout {
+            arg_id: item.arg.id.clone(),
+            label,
+            input,
+            description,
+        });
+
+        if ui.dropdown_open.as_deref() == Some(&item.arg.id) {
+            frame_layout.dropdown = frame_layout
+                .form_view
+                .and_then(|form_view| dropdown_geometry(form_view, input, item.arg.choices.len()))
+                .map(|geometry| geometry.rect);
+        }
+
+        y += i32::from(metrics.total_height);
+    }
+}
+
+fn form_description_rect(
+    arg: &crate::spec::ArgSpec,
+    y: i32,
+    area: Rect,
+    content_area: Rect,
+) -> Option<Rect> {
+    form_field_has_description(arg)?;
+    let description_y = y + i32::from(form::field_description_offset(arg)?);
+    clipped_rect(
+        area.x,
+        area.width,
+        description_y,
+        form::field_metrics(arg).description_height.max(1),
+        content_area,
+    )
+}
+
+fn form_field_has_description(arg: &crate::spec::ArgSpec) -> Option<()> {
+    (arg.help.is_some() || arg.value_hint.is_some()).then_some(())
+}
+
+fn intersect_rects(rect: Rect, bounds: Rect) -> Option<Rect> {
+    let left = rect.x.max(bounds.x);
+    let top = rect.y.max(bounds.y);
+    let right = rect
+        .x
+        .saturating_add(rect.width)
+        .min(bounds.x.saturating_add(bounds.width));
+    let bottom = rect
+        .y
+        .saturating_add(rect.height)
+        .min(bounds.y.saturating_add(bounds.height));
+
+    if left >= right || top >= bottom {
+        return None;
+    }
+
+    Some(Rect::new(
+        left,
+        top,
+        right.saturating_sub(left),
+        bottom.saturating_sub(top),
+    ))
+}
+
+fn clipped_rect(x: u16, width: u16, top: i32, height: u16, bounds: Rect) -> Option<Rect> {
+    let bounded_top = top.max(i32::from(bounds.y));
+    let bounded_bottom = top
+        .saturating_add(i32::from(height))
+        .min(i32::from(bounds.y.saturating_add(bounds.height)));
+    if bounded_top >= bounded_bottom {
+        return None;
+    }
+
+    let y = u16::try_from(bounded_top).ok()?;
+    let clipped_height = u16::try_from(bounded_bottom.saturating_sub(bounded_top)).ok()?;
+    intersect_rects(Rect::new(x, y, width, clipped_height), bounds)
 }
 
 fn contains(area: Rect, x: u16, y: u16) -> bool {

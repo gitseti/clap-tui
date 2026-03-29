@@ -1,10 +1,10 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 
 use crate::config::TuiConfig;
-use crate::frame_snapshot::FrameSnapshot;
+use crate::frame_snapshot::{self, FrameSnapshot};
 use crate::input::UiState;
 
-use super::{footer, form, screen::ScreenView, sidebar};
+use super::{footer, screen::ScreenView, sidebar};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ScreenAreas {
@@ -91,7 +91,13 @@ pub(crate) fn build_screen_layout(
     snapshot.layout.preview = Some(preview_area);
     snapshot.layout.footer = Some(footer_area);
     sidebar::populate_layout(sidebar_area, vm, &mut snapshot.layout);
-    form::populate_layout(ui, areas.form, vm, &mut snapshot);
+    frame_snapshot::populate_form_layout(
+        ui,
+        areas.form,
+        &vm.active_args,
+        &vm.command.help,
+        &mut snapshot,
+    );
     footer::populate_layout(ui, footer_area, &mut snapshot.layout);
 
     ScreenLayout { areas, snapshot }

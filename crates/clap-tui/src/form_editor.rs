@@ -30,7 +30,7 @@ pub(crate) fn editor_for_render(
 ) -> TextEditor {
     ui.editors
         .editor(command_key, &arg.id)
-        .filter(|editor| editor.text() == displayed)
+        .filter(|editor| editor_matches_displayed(arg, editor, displayed))
         .cloned()
         .unwrap_or_else(|| TextEditor::from_displayed(displayed))
 }
@@ -41,7 +41,26 @@ pub(crate) fn ensure_editor<'a>(
     arg: &ArgModel,
     displayed: &str,
 ) -> &'a mut TextEditor {
-    ui.editors.ensure_editor(command_key, &arg.id, displayed)
+    ui.editors
+        .ensure_editor_with(command_key, &arg.id, displayed, |editor, current| {
+            editor_matches_displayed(arg, editor, current)
+        })
+}
+
+fn editor_matches_displayed(arg: &ArgModel, editor: &TextEditor, displayed: &str) -> bool {
+    if editor.text() == displayed {
+        return true;
+    }
+
+    arg.allows_multiple_occurrences() && normalize_repeated_editor_text(&editor.text()) == displayed
+}
+
+fn normalize_repeated_editor_text(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(crate) fn apply_key_to_text_field(
@@ -68,11 +87,18 @@ pub(crate) fn apply_key_to_text_field(
     let text = textarea.text();
     if text.is_empty() && has_default {
         state.domain.clear_value_and_untouch(&arg.id);
+    } else if text.is_empty() && arg.uses_optional_value_semantics() {
+        state.domain.toggle_optional_value_flag(&arg.id, true);
     } else {
         state.domain.set_text_value(&arg.id, &text);
         state.domain.mark_touched(&arg.id);
     }
     EditResult::Handled
+}
+
+fn sync_editor_to_domain(state: &mut AppState, arg_id: &str, text: &str) {
+    state.domain.set_text_value(arg_id, text);
+    state.domain.mark_touched(arg_id);
 }
 
 pub(crate) fn clear_selection(state: &mut AppState, arg: &ArgModel) {
@@ -94,4 +120,54 @@ pub(crate) fn set_cursor_from_click(state: &mut AppState, arg: &ArgModel, row: u
     let command_key = arg.owner_path().clone();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     textarea.move_cursor_to(row, col);
+}
+
+pub(crate) fn insert_repeated_row(state: &mut AppState, arg: &ArgModel) -> EditResult {
+    let displayed = displayed_text(state, arg);
+    let command_key = arg.owner_path().clone();
+    let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    editor.insert_row_below();
+    let text = editor.text();
+    sync_editor_to_domain(state, &arg.id, &text);
+    EditResult::Handled
+}
+
+pub(crate) fn remove_repeated_row(state: &mut AppState, arg: &ArgModel) -> EditResult {
+    let displayed = displayed_text(state, arg);
+    let command_key = arg.owner_path().clone();
+    let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    let before = editor.text();
+    editor.remove_current_row();
+    let text = editor.text();
+    if text == before {
+        return EditResult::Ignored;
+    }
+    sync_editor_to_domain(state, &arg.id, &text);
+    EditResult::Handled
+}
+
+pub(crate) fn move_repeated_row_up(state: &mut AppState, arg: &ArgModel) -> EditResult {
+    let displayed = displayed_text(state, arg);
+    let command_key = arg.owner_path().clone();
+    let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    if editor.row_count() <= 1 || editor.current_row() == 0 {
+        return EditResult::Ignored;
+    }
+    editor.move_current_row_up();
+    let text = editor.text();
+    sync_editor_to_domain(state, &arg.id, &text);
+    EditResult::Handled
+}
+
+pub(crate) fn move_repeated_row_down(state: &mut AppState, arg: &ArgModel) -> EditResult {
+    let displayed = displayed_text(state, arg);
+    let command_key = arg.owner_path().clone();
+    let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    if editor.row_count() <= 1 || editor.current_row() + 1 >= editor.row_count() {
+        return EditResult::Ignored;
+    }
+    editor.move_current_row_down();
+    let text = editor.text();
+    sync_editor_to_domain(state, &arg.id, &text);
+    EditResult::Handled
 }

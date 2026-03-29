@@ -1,7 +1,7 @@
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, Focus};
-use crate::query::form;
+use crate::query::form::{self, FieldWidget};
 use crate::runtime::{AppKeyCode, AppKeyEvent};
 use crate::update::Action;
 
@@ -44,11 +44,56 @@ pub(crate) fn handle_key_event(
             });
         }
     }
+    if matches!(state.ui.focus, Focus::Form)
+        && let Some(action) = handle_form_widget_key_event(key, state, config)
+    {
+        return Some(action);
+    }
     if matches!(state.ui.focus, Focus::Form) && is_form_text_input(key, state, config) {
         return Some(Action::FormTextInput(key));
     }
 
     handle_focused_key_event(key, state, config)
+}
+
+fn handle_form_widget_key_event(
+    key: AppKeyEvent,
+    state: &AppState,
+    config: &TuiConfig,
+) -> Option<Action> {
+    let command = state.domain.current_command().clone();
+    let args = form::visible_args(&command, state.ui.active_tab);
+    let item = args
+        .iter()
+        .find(|item| item.order_index == state.ui.selected_arg_index)?;
+
+    match item.widget {
+        FieldWidget::Counter => match key.code {
+            AppKeyCode::Right
+            | AppKeyCode::Char('+' | '=' | '-')
+            | AppKeyCode::Left
+            | AppKeyCode::Backspace => Some(Action::FormWidgetInput(key)),
+            _ => None,
+        },
+        FieldWidget::RepeatedText
+            if key.code == AppKeyCode::Enter || repeated_row_shortcut(key) =>
+        {
+            Some(Action::FormWidgetInput(key))
+        }
+        FieldWidget::OptionalValue => match key.code {
+            AppKeyCode::Left | AppKeyCode::Delete | AppKeyCode::Backspace | AppKeyCode::Right => {
+                Some(Action::FormWidgetInput(key))
+            }
+            AppKeyCode::Char(c) if c == config.keymap.search => None,
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn repeated_row_shortcut(key: AppKeyEvent) -> bool {
+    matches!(key.code, AppKeyCode::Up | AppKeyCode::Down) && key.modifiers.alt
+        || matches!(key.code, AppKeyCode::Delete | AppKeyCode::Backspace) && key.modifiers.control
 }
 
 fn handle_help_key_event(key: AppKeyEvent, config: &TuiConfig) -> Option<Action> {
@@ -138,16 +183,16 @@ fn is_form_text_input(key: AppKeyEvent, state: &AppState, config: &TuiConfig) ->
     else {
         return false;
     };
-    if !item.arg.accepts_text_input() {
+    if !item.widget.accepts_text_input() {
+        return false;
+    }
+
+    if key.code == AppKeyCode::Enter {
         return false;
     }
 
     match key.code {
-        AppKeyCode::Tab
-        | AppKeyCode::Up
-        | AppKeyCode::Down
-        | AppKeyCode::Enter
-        | AppKeyCode::Esc => false,
+        AppKeyCode::Tab | AppKeyCode::Up | AppKeyCode::Down | AppKeyCode::Esc => false,
         AppKeyCode::Char(c) if c == config.keymap.search => false,
         _ => true,
     }
@@ -155,6 +200,8 @@ fn is_form_text_input(key: AppKeyEvent, state: &AppState, config: &TuiConfig) ->
 
 #[cfg(test)]
 mod tests {
+    use clap::{Arg, ArgAction};
+
     use crate::config::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{AppState, Focus};
@@ -243,5 +290,98 @@ mod tests {
         );
 
         assert_eq!(action, Some(Action::Run));
+    }
+
+    #[test]
+    fn counter_fields_route_left_and_right_to_widget_input() {
+        let mut state = AppState::from_command(
+            &clap::Command::new("tool")
+                .arg(Arg::new("verbose").short('v').action(ArgAction::Count)),
+        );
+        state.ui.focus = Focus::Form;
+
+        let right = handle_key_event(
+            key(AppKeyCode::Right),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+        let left = handle_key_event(
+            key(AppKeyCode::Left),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(right, Some(Action::FormWidgetInput(key(AppKeyCode::Right))));
+        assert_eq!(left, Some(Action::FormWidgetInput(key(AppKeyCode::Left))));
+    }
+
+    #[test]
+    fn repeated_text_fields_route_enter_to_widget_input() {
+        let mut state = AppState::from_command(
+            &clap::Command::new("tool").arg(
+                Arg::new("include")
+                    .long("include")
+                    .action(ArgAction::Append)
+                    .num_args(1),
+            ),
+        );
+        state.ui.focus = Focus::Form;
+
+        let action = handle_key_event(
+            key(AppKeyCode::Enter),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(
+            action,
+            Some(Action::FormWidgetInput(key(AppKeyCode::Enter)))
+        );
+    }
+
+    #[test]
+    fn repeated_text_fields_route_row_shortcuts_to_widget_input() {
+        let mut state = AppState::from_command(
+            &clap::Command::new("tool").arg(
+                Arg::new("include")
+                    .long("include")
+                    .action(ArgAction::Append)
+                    .num_args(1),
+            ),
+        );
+        state.ui.focus = Focus::Form;
+        let alt_up = AppKeyEvent::new(
+            AppKeyCode::Up,
+            AppKeyModifiers {
+                alt: true,
+                ..AppKeyModifiers::default()
+            },
+        );
+        let ctrl_delete = AppKeyEvent::new(
+            AppKeyCode::Delete,
+            AppKeyModifiers {
+                control: true,
+                ..AppKeyModifiers::default()
+            },
+        );
+
+        let move_action = handle_key_event(
+            alt_up,
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+        let remove_action = handle_key_event(
+            ctrl_delete,
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(move_action, Some(Action::FormWidgetInput(alt_up)));
+        assert_eq!(remove_action, Some(Action::FormWidgetInput(ctrl_delete)));
     }
 }

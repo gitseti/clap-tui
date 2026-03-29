@@ -19,6 +19,9 @@ use crate::update::{self, Effect};
 /// - custom runtimes via [`TuiApp::with_runtime`]
 /// - theming and layout via [`TuiApp::with_config`]
 /// - startup command selection via [`crate::TuiConfig::start_command`]
+///
+/// Other public items are exported to support those seams, but internal controller,
+/// pipeline, and rendering details are not stable extension points.
 pub struct TuiApp<R: Runtime = CrosstermRuntime> {
     command: Command,
     config: TuiConfig,

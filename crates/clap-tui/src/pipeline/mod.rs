@@ -209,6 +209,55 @@ mod tests {
     }
 
     #[test]
+    fn append_options_serialize_as_repeated_occurrences() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("include")
+                    .long("include")
+                    .action(ArgAction::Append)
+                    .num_args(1),
+            ),
+        );
+        state.domain.set_text_value("include", "src\ntests");
+        state.domain.mark_touched("include");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.argv,
+            vec![
+                "tool".to_string(),
+                "--include".to_string(),
+                "src".to_string(),
+                "--include".to_string(),
+                "tests".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn optional_value_flags_serialize_presence_without_forcing_a_value() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(ArgAction::SetTrue)
+                    .num_args(0..=1),
+            ),
+        );
+        state.domain.toggle_optional_value_flag("color", true);
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.argv,
+            vec!["tool".to_string(), "--color".to_string()]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
     fn help_style_missing_positional_uses_missing_argument_summary_not_about() {
         let state = AppState::from_command(
             &Command::new("tool")
@@ -348,6 +397,179 @@ mod tests {
         assert_eq!(
             validation.field_errors.get("color"),
             Some(&"Option requires '=': --color".to_string())
+        );
+    }
+
+    #[test]
+    fn last_positional_inserts_double_dash_boundary() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("mode").long("mode"))
+                .arg(Arg::new("cmd").last(true).required(true)),
+        );
+        state.domain.set_text_value("mode", "fast");
+        state.domain.set_text_value("cmd", "--not-a-flag");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.argv,
+            vec![
+                "tool".to_string(),
+                "--mode".to_string(),
+                "fast".to_string(),
+                "--".to_string(),
+                "--not-a-flag".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn trailing_var_arg_inserts_double_dash_boundary() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("args")
+                    .trailing_var_arg(true)
+                    .num_args(1..)
+                    .required(true),
+            ),
+        );
+        state.domain.set_text_value("args", "--flag\nsubcommand");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.argv,
+            vec![
+                "tool".to_string(),
+                "--".to_string(),
+                "--flag".to_string(),
+                "subcommand".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn positional_value_terminator_is_emitted_before_following_positionals() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("inputs")
+                        .num_args(1..)
+                        .required(true)
+                        .value_terminator(";"),
+                )
+                .arg(Arg::new("target").required(true)),
+        );
+        state.domain.set_text_value("inputs", "alpha\nbeta");
+        state.domain.set_text_value("target", "release");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.argv,
+            vec![
+                "tool".to_string(),
+                "alpha".to_string(),
+                "beta".to_string(),
+                ";".to_string(),
+                "release".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn option_value_terminator_is_emitted_before_following_subcommand() {
+        let root = Command::new("tool")
+            .arg(
+                Arg::new("inputs")
+                    .long("input")
+                    .num_args(1..)
+                    .value_terminator(";"),
+            )
+            .subcommand(Command::new("run"));
+        let mut state = AppState::from_command(&root);
+        state.domain.set_text_value("inputs", "alpha\nbeta");
+        state
+            .select_command_path(&["run".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.argv,
+            vec![
+                "tool".to_string(),
+                "--input".to_string(),
+                "alpha".to_string(),
+                "beta".to_string(),
+                ";".to_string(),
+                "run".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn hyphen_prefixed_positional_values_are_preserved_when_allowed() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("pattern").allow_hyphen_values(true).required(true)),
+        );
+        state.domain.set_text_value("pattern", "-weird");
+
+        let derived = derive(&state);
+
+        assert_eq!(derived.argv, vec!["tool".to_string(), "-weird".to_string()]);
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn negative_positional_values_are_preserved_when_allowed() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("count")
+                    .allow_negative_numbers(true)
+                    .value_parser(clap::value_parser!(i64))
+                    .required(true),
+            ),
+        );
+        state.domain.set_text_value("count", "-42");
+
+        let derived = derive(&state);
+
+        assert_eq!(derived.argv, vec!["tool".to_string(), "-42".to_string()]);
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn args_conflicting_with_subcommands_are_reported_through_validation() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .args_conflicts_with_subcommands(true)
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(ArgAction::SetTrue),
+                )
+                .subcommand(Command::new("build")),
+        );
+        state.domain.toggle_flag_touched("verbose");
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert!(
+            derived
+                .validation
+                .summary
+                .as_deref()
+                .is_some_and(|summary| summary.contains("--verbose"))
         );
     }
 }

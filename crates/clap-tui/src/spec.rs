@@ -205,13 +205,6 @@ pub(crate) enum ChoiceSource {
     Static(Vec<String>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InputPresentation {
-    Toggle,
-    FreeText { multiple: bool, positional: bool },
-    ChoiceList { multiple: bool, positional: bool },
-}
-
 impl CommandPath {
     pub(crate) fn new(parts: Vec<String>) -> Self {
         Self(parts)
@@ -303,6 +296,62 @@ impl ArgModel {
         )
     }
 
+    pub(crate) fn uses_count_semantics(&self) -> bool {
+        self.action_kind() == ArgActionKind::Count
+    }
+
+    pub(crate) fn accepts_values(&self) -> bool {
+        self.metadata.action.value_arity != ArgValueArity::None
+    }
+
+    pub(crate) fn has_value_choices(&self) -> bool {
+        !self.choices.is_empty()
+    }
+
+    pub(crate) fn default_value(&self) -> Option<&str> {
+        self.default_values.first().map(String::as_str)
+    }
+
+    pub(crate) fn accepts_multiple_values_per_occurrence(&self) -> bool {
+        matches!(self.value_cardinality, ValueCardinality::Many)
+    }
+
+    pub(crate) fn accepts_multiple_values(&self) -> bool {
+        self.accepts_multiple_values_per_occurrence()
+    }
+
+    pub(crate) fn allows_multiple_occurrences(&self) -> bool {
+        self.action_kind() == ArgActionKind::Append
+    }
+
+    pub(crate) fn is_multi_value_input(&self) -> bool {
+        self.accepts_multiple_values_per_occurrence() || self.allows_multiple_occurrences()
+    }
+
+    pub(crate) fn uses_toggle_semantics(&self) -> bool {
+        self.is_flag() && !self.uses_count_semantics() && !self.uses_optional_value_semantics()
+    }
+
+    pub(crate) fn uses_optional_value_semantics(&self) -> bool {
+        self.is_flag() && self.accepts_optional_values()
+    }
+
+    pub(crate) fn serializes_as_positional(&self) -> bool {
+        self.is_positional()
+    }
+
+    pub(crate) fn is_last_positional(&self) -> bool {
+        self.metadata.placement.last
+    }
+
+    pub(crate) fn is_trailing_var_arg(&self) -> bool {
+        self.metadata.placement.trailing_var_arg
+    }
+
+    pub(crate) fn value_terminator(&self) -> Option<&str> {
+        self.metadata.syntax.value_terminator.as_deref()
+    }
+
     #[allow(dead_code)]
     pub(crate) fn choice_source(&self) -> ChoiceSource {
         if self.choices.is_empty() {
@@ -312,48 +361,12 @@ impl ArgModel {
         }
     }
 
-    pub(crate) fn uses_choice_input(&self) -> bool {
-        !self.choices.is_empty()
+    pub(crate) fn display_order(&self) -> usize {
+        self.metadata.display.display_order
     }
 
-    pub(crate) fn accepts_text_input(&self) -> bool {
-        !self.is_flag() && !self.uses_choice_input()
-    }
-
-    pub(crate) fn default_value(&self) -> Option<&str> {
-        self.default_values.first().map(String::as_str)
-    }
-
-    pub(crate) fn accepts_multiple_values(&self) -> bool {
-        matches!(self.value_cardinality, ValueCardinality::Many)
-    }
-
-    pub(crate) fn uses_toggle_semantics(&self) -> bool {
-        self.is_flag()
-    }
-
-    pub(crate) fn uses_choice_semantics(&self) -> bool {
-        self.uses_choice_input()
-    }
-
-    pub(crate) fn serializes_as_positional(&self) -> bool {
-        self.is_positional()
-    }
-
-    pub(crate) fn input_presentation(&self) -> InputPresentation {
-        if self.is_flag() {
-            InputPresentation::Toggle
-        } else if self.uses_choice_input() {
-            InputPresentation::ChoiceList {
-                multiple: self.accepts_multiple_values(),
-                positional: self.is_positional(),
-            }
-        } else {
-            InputPresentation::FreeText {
-                multiple: self.accepts_multiple_values(),
-                positional: self.is_positional(),
-            }
-        }
+    pub(crate) fn help_heading(&self) -> Option<&str> {
+        self.metadata.display.help_heading.as_deref()
     }
 }
 

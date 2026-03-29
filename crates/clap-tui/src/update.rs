@@ -17,6 +17,7 @@ pub(crate) enum Action {
     SearchInput(AppKeyEvent),
     ChoiceInput { arg_id: String, key: AppKeyEvent },
     FormTextInput(AppKeyEvent),
+    FormWidgetInput(AppKeyEvent),
     ToggleFocus,
     ToggleHelp,
     CycleTabs,
@@ -71,6 +72,7 @@ pub(crate) fn apply_action(
         | Action::ClickSidebar { .. } => sidebar::apply(action, state, frame_snapshot),
         Action::ChoiceInput { .. }
         | Action::FormTextInput(_)
+        | Action::FormWidgetInput(_)
         | Action::MoveFormSelection(_)
         | Action::ActivateFormField
         | Action::ClickDropdownChoice { .. }

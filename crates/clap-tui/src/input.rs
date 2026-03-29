@@ -112,6 +112,7 @@ pub struct UiState {
     pub editors: EditorState,
     pub dropdown_open: Option<String>,
     pub dropdown_scroll: usize,
+    pub dropdown_cursor: usize,
     pub form_scroll: u16,
     pub hover: Option<HoverTarget>,
     pub hover_tab: Option<ActiveTab>,
@@ -202,11 +203,17 @@ impl DomainState {
         let Some(arg) = self.arg_for_input(arg_id).cloned() else {
             return;
         };
-        self.replace_values(arg_id, text_value_lines(&arg, text));
+        self.replace_occurrences(arg_id, text_value_occurrences(&arg, text));
     }
 
     pub fn set_choice_value(&mut self, arg_id: &str, value: String) {
-        self.replace_values(arg_id, vec![value]);
+        self.replace_occurrences(
+            arg_id,
+            vec![InputValueOccurrence {
+                values: vec![value],
+                source: InputSource::User,
+            }],
+        );
     }
 
     pub fn toggle_flag(&mut self, arg_id: &str) {
@@ -231,24 +238,6 @@ impl DomainState {
         });
     }
 
-    pub fn cycle_choice(&mut self, arg_id: &str, choices: &[String]) {
-        if choices.is_empty() {
-            return;
-        }
-        let next_index = self
-            .current_form()
-            .and_then(|inputs| {
-                self.arg_for_input(arg_id)
-                    .and_then(|arg| inputs.compatibility_value(arg))
-            })
-            .and_then(|value| match value {
-                ArgValue::Choice(selected) => choices.iter().position(|choice| choice == &selected),
-                _ => None,
-            })
-            .map_or(0, |index| (index + 1) % choices.len());
-        self.set_choice_value(arg_id, choices[next_index].clone());
-    }
-
     pub fn mark_touched(&mut self, arg_id: &str) {
         self.with_arg_input_state_mut(arg_id, |_arg, input| {
             input.touched = true;
@@ -265,8 +254,19 @@ impl DomainState {
         self.mark_touched(arg_id);
     }
 
-    pub fn cycle_choice_touched(&mut self, arg_id: &str, choices: &[String]) {
-        self.cycle_choice(arg_id, choices);
+    pub fn toggle_choice_value_touched(&mut self, arg_id: &str, value: &str) {
+        let Some(arg) = self.arg_for_input(arg_id).cloned() else {
+            return;
+        };
+        let mut values = self
+            .current_form()
+            .map_or_else(Vec::new, |inputs| inputs.selected_values(&arg));
+        if let Some(index) = values.iter().position(|selected| selected == value) {
+            values.remove(index);
+        } else {
+            values.push(value.to_string());
+        }
+        self.replace_values(arg_id, values);
         self.mark_touched(arg_id);
     }
 
@@ -325,6 +325,15 @@ impl DomainState {
     pub fn replace_values(&mut self, arg_id: &str, values: Vec<String>) {
         self.with_arg_input_state_mut(arg_id, move |arg, input| {
             *input = ArgInputState::from_values(arg, values, InputSource::User, true);
+        });
+    }
+
+    pub fn replace_occurrences(&mut self, arg_id: &str, occurrences: Vec<InputValueOccurrence>) {
+        self.with_arg_input_state_mut(arg_id, move |_arg, input| {
+            *input = ArgInputState {
+                value: ArgInput::Values { occurrences },
+                touched: true,
+            };
         });
     }
 
@@ -566,11 +575,20 @@ impl CommandFormState {
     pub fn is_empty(&self) -> bool {
         self.inputs.is_empty()
     }
+
+    pub fn selected_values(&self, arg: &ArgSpec) -> Vec<String> {
+        self.input(&arg.id)
+            .map_or_else(Vec::new, ArgInputState::selected_values)
+    }
+
+    pub fn input_source(&self, arg_id: &str) -> Option<InputSource> {
+        self.input(arg_id).and_then(ArgInputState::input_source)
+    }
 }
 
 impl ArgInput {
     fn values_from_arg(arg: &ArgSpec, values: Vec<String>, source: InputSource) -> Self {
-        let occurrences = if arg.accepts_multiple_values() {
+        let occurrences = if arg.allows_multiple_occurrences() {
             values
                 .into_iter()
                 .map(|value| InputValueOccurrence {
@@ -617,21 +635,50 @@ impl ArgInputState {
             ArgInput::Flag { present, .. } => Some(ArgValue::Bool(*present)),
             ArgInput::Count { occurrences, .. } => Some(ArgValue::Text(occurrences.to_string())),
             ArgInput::Values { occurrences } => {
-                let values = occurrences
-                    .iter()
-                    .flat_map(|occurrence| occurrence.values.iter())
-                    .filter(|value| !value.is_empty())
-                    .cloned()
-                    .collect::<Vec<_>>();
+                let values = self.selected_values();
                 if values.is_empty() {
                     return None;
                 }
-                if arg.uses_choice_input() && !arg.accepts_multiple_values() {
+                if arg.has_value_choices() && !arg.is_multi_value_input() {
                     values.first().cloned().map(ArgValue::Choice)
                 } else {
-                    Some(ArgValue::Text(values.join("\n")))
+                    let rendered = occurrences
+                        .iter()
+                        .map(|occurrence| render_occurrence_text(arg, &occurrence.values))
+                        .filter(|value| !value.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Some(ArgValue::Text(rendered))
                 }
             }
+        }
+    }
+
+    pub fn selected_values(&self) -> Vec<String> {
+        match &self.value {
+            ArgInput::Flag { present, .. } => {
+                present.then(|| "true".to_string()).into_iter().collect()
+            }
+            ArgInput::Count { occurrences, .. } => (*occurrences > 0)
+                .then(|| occurrences.to_string())
+                .into_iter()
+                .collect(),
+            ArgInput::Values { occurrences } => occurrences
+                .iter()
+                .flat_map(|occurrence| occurrence.values.iter())
+                .filter(|value| !value.is_empty())
+                .cloned()
+                .collect(),
+        }
+    }
+
+    pub fn input_source(&self) -> Option<InputSource> {
+        match &self.value {
+            ArgInput::Flag { source, .. } | ArgInput::Count { source, .. } => Some(*source),
+            ArgInput::Values { occurrences } => occurrences
+                .iter()
+                .find(|occurrence| occurrence.values.iter().any(|value| !value.is_empty()))
+                .map(|occurrence| occurrence.source),
         }
     }
 
@@ -649,15 +696,54 @@ impl ArgInputState {
     }
 }
 
-fn text_value_lines(arg: &ArgSpec, text: &str) -> Vec<String> {
-    if arg.accepts_multiple_values() {
-        text.lines()
+fn text_value_occurrences(arg: &ArgSpec, text: &str) -> Vec<InputValueOccurrence> {
+    if arg.allows_multiple_occurrences() {
+        return text
+            .lines()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| InputValueOccurrence {
+                values: split_occurrence_values(arg, value),
+                source: InputSource::User,
+            })
+            .collect();
+    }
+
+    vec![InputValueOccurrence {
+        values: split_occurrence_values(arg, text),
+        source: InputSource::User,
+    }]
+}
+
+fn split_occurrence_values(arg: &ArgSpec, text: &str) -> Vec<String> {
+    if arg.accepts_multiple_values_per_occurrence() {
+        if let Some(delimiter) = arg.metadata.syntax.value_delimiter {
+            return text
+                .split(delimiter)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
+
+        return text
+            .lines()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
-            .collect()
+            .collect();
+    }
+
+    vec![text.to_string()]
+}
+
+fn render_occurrence_text(arg: &ArgSpec, values: &[String]) -> String {
+    if let Some(delimiter) = arg.metadata.syntax.value_delimiter {
+        values.join(&delimiter.to_string())
+    } else if arg.accepts_multiple_values_per_occurrence() {
+        values.join("\n")
     } else {
-        vec![text.to_string()]
+        values.first().cloned().unwrap_or_default()
     }
 }
 
@@ -741,19 +827,33 @@ impl UiState {
 
     pub fn close_dropdown(&mut self) {
         self.dropdown_open = None;
+        self.dropdown_cursor = 0;
     }
 
-    pub fn open_dropdown(&mut self, arg_id: impl Into<String>, scroll: usize) {
+    pub fn open_dropdown(&mut self, arg_id: impl Into<String>, scroll: usize, cursor: usize) {
         self.dropdown_open = Some(arg_id.into());
         self.dropdown_scroll = scroll;
+        self.dropdown_cursor = cursor;
     }
 
     pub fn set_dropdown_scroll(&mut self, scroll: usize) {
         self.dropdown_scroll = scroll;
     }
 
+    pub fn set_dropdown_cursor(&mut self, cursor: usize) {
+        self.dropdown_cursor = cursor;
+    }
+
     pub fn dropdown_scroll(&self, total_rows: usize, visible_rows: usize) -> usize {
         clamp_dropdown_scroll(self.dropdown_scroll, total_rows, visible_rows)
+    }
+
+    pub fn dropdown_cursor(&self, total_rows: usize) -> usize {
+        if total_rows == 0 {
+            0
+        } else {
+            self.dropdown_cursor.min(total_rows - 1)
+        }
     }
 
     pub fn clamp_dropdown_scroll(&mut self, total_rows: usize, visible_rows: usize) {
@@ -864,6 +964,7 @@ impl AppState {
                 editors: EditorState::default(),
                 dropdown_open: None,
                 dropdown_scroll: 0,
+                dropdown_cursor: 0,
                 form_scroll: 0,
                 hover: None,
                 hover_tab: None,
