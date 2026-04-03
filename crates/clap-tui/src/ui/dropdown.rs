@@ -165,12 +165,22 @@ fn build_dropdown_view(
                 (_, true) => Style::default().fg(config.theme.dim),
                 (false, false) => Style::default().fg(config.theme.text),
             };
+            let description = arg
+                .choice_metadata(value)
+                .and_then(|choice| choice.help.as_deref())
+                .map(|help| format!("  {help}"))
+                .unwrap_or_default();
             DropdownItem {
                 label: match widget {
                     FieldWidget::MultiChoice => {
-                        format!("{} {}", if is_checked { "[x]" } else { "[ ]" }, value)
+                        format!(
+                            "{} {}{}",
+                            if is_checked { "[x]" } else { "[ ]" },
+                            value,
+                            description
+                        )
                     }
-                    _ => value.clone(),
+                    _ => format!("{value}{description}"),
                 },
                 text_style,
             }
@@ -189,7 +199,11 @@ fn build_dropdown_view(
 
 #[cfg(test)]
 mod tests {
+    use crate::TuiConfig;
     use crate::frame_snapshot::{MAX_DROPDOWN_ROWS, dropdown_geometry};
+    use crate::input::AppState;
+    use crate::ui::dropdown::build_dropdown_view;
+    use clap::{Arg, Command, builder::PossibleValue};
     use ratatui::layout::Rect;
 
     #[test]
@@ -243,5 +257,24 @@ mod tests {
         let input_rect = Rect::new(2, 1, 20, 1);
 
         assert_eq!(dropdown_geometry(form_view, input_rect, 2), None);
+    }
+
+    #[test]
+    fn dropdown_hides_hidden_choices_and_shows_choice_help() {
+        let mut state = AppState::from_command(&Command::new("tool").arg(
+            Arg::new("mode").long("mode").value_parser([
+                PossibleValue::new("fast").help("Fast path"),
+                PossibleValue::new("secret").hide(true),
+            ]),
+        ));
+        state.ui.dropdown_open = Some("mode".to_string());
+        let mut snapshot = crate::frame_snapshot::FrameSnapshot::default();
+        snapshot.layout.dropdown = Some(Rect::new(0, 0, 30, 4));
+
+        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &TuiConfig::default())
+            .expect("dropdown view");
+
+        assert_eq!(view.total_rows, 1);
+        assert_eq!(view.items[0].label, "fast  Fast path");
     }
 }

@@ -1,6 +1,6 @@
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
-use crate::input::{AppState, Focus};
+use crate::input::{AppState, ArgValue, Focus};
 use crate::query::form::{self, FieldWidget};
 use crate::runtime::{AppKeyCode, AppKeyEvent};
 use crate::update::Action;
@@ -189,6 +189,15 @@ fn is_form_text_input(key: AppKeyEvent, state: &AppState, config: &TuiConfig) ->
 
     if key.code == AppKeyCode::Enter {
         return false;
+    }
+
+    if matches!(item.widget, FieldWidget::OptionalValue) && key.code == AppKeyCode::Char(' ') {
+        return state
+            .domain
+            .current_form()
+            .filter(|_| state.domain.is_touched(&item.arg.id))
+            .and_then(|form| form.compatibility_value(item.arg))
+            .is_some_and(|value| matches!(value, ArgValue::Text(_)));
     }
 
     match key.code {
@@ -383,5 +392,50 @@ mod tests {
 
         assert_eq!(move_action, Some(Action::FormWidgetInput(alt_up)));
         assert_eq!(remove_action, Some(Action::FormWidgetInput(ctrl_delete)));
+    }
+
+    #[test]
+    fn optional_value_space_activates_when_no_explicit_text() {
+        let mut state = AppState::from_command(
+            &clap::Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(ArgAction::Set)
+                    .num_args(0..=1),
+            ),
+        );
+        state.ui.focus = Focus::Form;
+
+        let action = handle_key_event(
+            key(AppKeyCode::Char(' ')),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::ActivateFormField));
+    }
+
+    #[test]
+    fn optional_value_space_activates_when_value_is_only_defaulted() {
+        let mut state = AppState::from_command(
+            &clap::Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(ArgAction::Set)
+                    .default_value("auto")
+                    .num_args(0..=1),
+            ),
+        );
+        state.ui.focus = Focus::Form;
+
+        let action = handle_key_event(
+            key(AppKeyCode::Char(' ')),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::ActivateFormField));
     }
 }

@@ -9,9 +9,9 @@ use ratatui::widgets::{
 use crate::config::TuiConfig;
 use crate::form_editor;
 use crate::frame_snapshot::FrameSnapshot;
-use crate::input::{ArgValue, Focus, InputSource, UiState};
+use crate::input::{ArgInput, ArgInputState, ArgValue, Focus, InputSource, UiState};
+use crate::pipeline::{EffectiveArgValue, EffectiveValueSource};
 use crate::query::form::{self, FieldWidget, field_metrics};
-use crate::spec::CommandPath;
 use crate::spec::{ArgSpec, choice_value_matches_default};
 
 use super::{screen::ScreenView, styles};
@@ -28,6 +28,7 @@ pub(crate) fn populate_layout(
         area,
         &vm.active_args,
         &vm.command.help,
+        &vm.validation,
         frame_snapshot,
     );
 }
@@ -35,7 +36,6 @@ pub(crate) fn populate_layout(
 pub(crate) fn render_form(
     frame: &mut Frame<'_>,
     ui: &UiState,
-    selected_path: &CommandPath,
     config: &TuiConfig,
     vm: &ScreenView<'_>,
     frame_snapshot: &FrameSnapshot,
@@ -45,7 +45,8 @@ pub(crate) fn render_form(
     };
     let frame_layout = &frame_snapshot.layout;
     let content_area = frame_layout.form_view.unwrap_or(area);
-    let content_height = form::measure_fields_height(&vm.active_args);
+    let content_height =
+        form::measure_fields_height_with_errors(&vm.active_args, &vm.validation.field_errors);
     let viewport_height = content_area.height;
     let form_scroll = ui.form_scroll(frame_snapshot);
 
@@ -60,7 +61,7 @@ pub(crate) fn render_form(
         return;
     }
 
-    render_fields(frame, ui, selected_path, config, vm, frame_snapshot);
+    render_fields(frame, ui, config, vm, frame_snapshot);
 
     if content_height > viewport_height {
         let scroll_steps = usize::from(frame_snapshot.form_scroll_max.saturating_add(1));
@@ -90,7 +91,6 @@ pub(crate) fn render_form(
 fn render_fields(
     frame: &mut Frame<'_>,
     ui: &UiState,
-    selected_path: &CommandPath,
     config: &TuiConfig,
     vm: &ScreenView<'_>,
     frame_snapshot: &FrameSnapshot,
@@ -106,15 +106,26 @@ fn render_fields(
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
         let input_is_truncated = text_input_is_truncated(item.arg, field.input);
         let field_error = vm.validation.field_errors.get(&item.arg.id);
-        let source_badge = vm
-            .inputs
-            .as_ref()
-            .filter(|inputs| !inputs.is_touched(&item.arg.id))
-            .and_then(|inputs| inputs.input_source(&item.arg.id));
+        let source_badge = effective_source_badge(vm, item.arg);
+        let badges = field_badges(config, item.arg, source_badge);
+
+        if let Some(heading_rect) = field.heading {
+            if let Some(heading) = item.arg.help_heading() {
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        heading.to_string(),
+                        Style::default()
+                            .fg(config.theme.dim)
+                            .add_modifier(Modifier::BOLD),
+                    ))),
+                    heading_rect,
+                );
+            }
+        }
 
         if let Some(label_rect) = field.label {
             let mut spans = vec![Span::styled(
-                item.arg.display_name.clone(),
+                item.arg.display_label().to_string(),
                 if field_error.is_some() {
                     styles::label(config, selected).fg(config.theme.error)
                 } else {
@@ -125,18 +136,12 @@ fn render_fields(
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled("*", Style::default().fg(config.theme.accent)));
             }
-            spans.extend(field_badges(config, item.arg, source_badge));
+            spans.extend(badges.clone());
             frame.render_widget(Paragraph::new(Line::from(spans)), label_rect);
         }
 
-        let current_value = vm
-            .inputs
-            .as_ref()
-            .and_then(|inputs| inputs.compatibility_value(item.arg));
-        let selected_values = vm
-            .inputs
-            .as_ref()
-            .map_or_else(Vec::new, |inputs| inputs.selected_values(item.arg));
+        let current_value = effective_compatibility_value(vm, item.arg);
+        let selected_values = effective_selected_values(vm, item.arg);
         let value = display_value(item.widget, current_value.as_ref(), &selected_values);
         let shows_choice_placeholder = matches!(
             item.widget,
@@ -167,8 +172,9 @@ fn render_fields(
                 config,
                 field.input,
                 selected,
-                &item.arg.display_name,
+                item.arg.display_label(),
                 &value,
+                &badges,
                 text_style,
             );
         } else if matches!(
@@ -197,13 +203,17 @@ fn render_fields(
             render_optional_value(
                 frame,
                 ui,
-                selected_path,
                 item.arg,
                 selected,
                 field.input,
                 config,
+                vm.inputs
+                    .as_ref()
+                    .and_then(|inputs| inputs.input(&item.arg.id)),
                 current_value.as_ref(),
                 &value,
+                source_badge,
+                vm.effective_values.get(&item.arg.id),
                 block,
                 text_style,
             );
@@ -214,7 +224,8 @@ fn render_fields(
                 field.input,
             );
         } else if selected {
-            let editor = form_editor::editor_for_render(ui, selected_path, item.arg, &value);
+            let editor =
+                form_editor::editor_for_render(ui, item.arg.owner_path(), item.arg, &value);
             let mut textarea = editor.to_textarea(editor.selection_anchor());
             textarea.set_block(block);
             let base_style = Style::default()
@@ -250,6 +261,7 @@ fn render_fields(
                 item.widget,
                 selected,
                 field_error.map(String::as_str),
+                vm.effective_values.get(&item.arg.id),
             ),
             field.description,
         ) {
@@ -339,41 +351,24 @@ fn field_border_style(config: &TuiConfig, selected: bool, has_error: bool) -> St
 fn render_optional_value(
     frame: &mut Frame<'_>,
     ui: &UiState,
-    selected_path: &CommandPath,
     arg: &ArgSpec,
     selected: bool,
     area: Rect,
     config: &TuiConfig,
+    current_input: Option<&ArgInputState>,
     current_value: Option<&ArgValue>,
     value: &str,
+    source: Option<EffectiveValueSource>,
+    effective_value: Option<&EffectiveArgValue>,
     block: Block<'_>,
     text_style: Style,
 ) {
-    match current_value {
-        Some(ArgValue::Text(_)) if selected => {
-            let editor = form_editor::editor_for_render(ui, selected_path, arg, value);
-            let mut textarea = editor.to_textarea(editor.selection_anchor());
-            textarea.set_block(block);
-            let base_style = Style::default()
-                .fg(text_style.fg.unwrap_or(config.theme.text))
-                .bg(config.theme.surface_raised);
-            textarea.set_style(base_style);
-            textarea.set_cursor_line_style(base_style);
-            textarea.set_cursor_style(
-                Style::default()
-                    .bg(config.theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            );
-            textarea.set_selection_style(
-                Style::default()
-                    .fg(config.theme.text)
-                    .bg(config.theme.surface_raised)
-                    .add_modifier(Modifier::REVERSED),
-            );
-            frame.render_widget(textarea.widget(), area);
-            place_textarea_cursor(frame, &textarea, area);
+    match optional_value_visual_state(current_input, current_value, value, source, effective_value)
+    {
+        OptionalValueVisualState::Explicit if selected => {
+            render_textarea_field(frame, ui, arg, value, None, area, config, block, text_style);
         }
-        Some(ArgValue::Text(_)) => {
+        OptionalValueVisualState::Explicit => {
             frame.render_widget(
                 Paragraph::new(value.to_string())
                     .block(block)
@@ -381,36 +376,181 @@ fn render_optional_value(
                 area,
             );
         }
-        Some(ArgValue::Bool(true)) => {
+        OptionalValueVisualState::Present { detail } if selected => {
+            render_textarea_field(
+                frame,
+                ui,
+                arg,
+                "",
+                Some(format!("Present · {detail}")),
+                area,
+                config,
+                block,
+                text_style,
+            );
+        }
+        OptionalValueVisualState::Present { detail } => {
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        " Present ",
-                        styles::compact_control_affordance(config, selected, true),
-                    ),
+                    Span::styled(" Present ", styles::checkbox_chip(config, selected, true)),
                     Span::raw(" "),
-                    Span::styled("type to add a value", styles::placeholder(config)),
+                    Span::styled(detail, styles::placeholder(config)),
                 ]))
                 .block(block)
                 .style(styles::input(config, selected)),
                 area,
             );
         }
-        _ => {
+        OptionalValueVisualState::Off { detail } if selected => {
+            render_textarea_field(
+                frame,
+                ui,
+                arg,
+                "",
+                Some(format!("Off · {detail}")),
+                area,
+                config,
+                block,
+                text_style,
+            );
+        }
+        OptionalValueVisualState::Off { detail } => {
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        " Disabled ",
-                        styles::compact_control_affordance(config, selected, false),
-                    ),
+                    Span::styled(" Off ", styles::checkbox_chip(config, selected, false)),
                     Span::raw(" "),
-                    Span::styled("Right/Space to enable", styles::placeholder(config)),
+                    Span::styled(detail, styles::placeholder(config)),
                 ]))
                 .block(block)
                 .style(styles::input(config, selected)),
                 area,
             );
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_textarea_field(
+    frame: &mut Frame<'_>,
+    ui: &UiState,
+    arg: &ArgSpec,
+    value: &str,
+    placeholder: Option<String>,
+    area: Rect,
+    config: &TuiConfig,
+    block: Block<'_>,
+    text_style: Style,
+) {
+    let editor = form_editor::editor_for_render(ui, arg.owner_path(), arg, value);
+    let mut textarea = editor.to_textarea(editor.selection_anchor());
+    textarea.set_block(block);
+    let base_style = Style::default()
+        .fg(text_style.fg.unwrap_or(config.theme.text))
+        .bg(config.theme.surface_raised);
+    textarea.set_style(base_style);
+    textarea.set_cursor_line_style(base_style);
+    textarea.set_cursor_style(
+        Style::default()
+            .bg(config.theme.accent)
+            .add_modifier(Modifier::BOLD),
+    );
+    textarea.set_selection_style(
+        Style::default()
+            .fg(config.theme.text)
+            .bg(config.theme.surface_raised)
+            .add_modifier(Modifier::REVERSED),
+    );
+    if let Some(placeholder) = placeholder {
+        textarea.set_placeholder_text(placeholder);
+        textarea.set_placeholder_style(styles::placeholder(config));
+    }
+    frame.render_widget(textarea.widget(), area);
+    place_textarea_cursor(frame, &textarea, area);
+}
+
+enum OptionalValueVisualState {
+    Explicit,
+    Present { detail: String },
+    Off { detail: String },
+}
+
+fn optional_value_visual_state(
+    current_input: Option<&ArgInputState>,
+    current_value: Option<&ArgValue>,
+    value: &str,
+    source: Option<EffectiveValueSource>,
+    effective_value: Option<&EffectiveArgValue>,
+) -> OptionalValueVisualState {
+    if let Some(input) = current_input {
+        match &input.value {
+            ArgInput::Flag { present: true, .. } => {
+                return OptionalValueVisualState::Present {
+                    detail: present_detail(effective_value),
+                };
+            }
+            ArgInput::Values { occurrences }
+                if occurrences
+                    .iter()
+                    .any(|occurrence| occurrence.values.iter().any(|entry| !entry.is_empty())) =>
+            {
+                let input_source = input.input_source().map(optional_input_source_label);
+                if input.touched || matches!(input.input_source(), Some(InputSource::User)) {
+                    return OptionalValueVisualState::Explicit;
+                }
+                return OptionalValueVisualState::Off {
+                    detail: off_detail(input_source, value),
+                };
+            }
+            _ => {}
+        }
+    }
+
+    match current_value {
+        Some(ArgValue::Bool(true)) => OptionalValueVisualState::Present {
+            detail: present_detail(effective_value),
+        },
+        Some(ArgValue::Text(_)) if !value.is_empty() => OptionalValueVisualState::Off {
+            detail: off_detail(source.map(optional_effective_source_label), value),
+        },
+        _ => OptionalValueVisualState::Off {
+            detail: "Right/Space enables".to_string(),
+        },
+    }
+}
+
+fn present_detail(effective_value: Option<&EffectiveArgValue>) -> String {
+    effective_value
+        .filter(|effective| effective.source == EffectiveValueSource::DefaultMissing)
+        .filter(|effective| !effective.values.is_empty())
+        .map_or_else(
+            || "bare flag, type to add a value".to_string(),
+            |effective| format!("bare flag, implicit: {}", effective.values.join(" ")),
+        )
+}
+
+fn off_detail(source: Option<&'static str>, value: &str) -> String {
+    match (source, value.is_empty()) {
+        (Some(source), false) => format!("{source}: {value}"),
+        (None, false) => format!("effective: {value}"),
+        _ => "Right/Space enables".to_string(),
+    }
+}
+
+fn optional_input_source_label(source: InputSource) -> &'static str {
+    match source {
+        InputSource::User => "value",
+        InputSource::Default => "default",
+        InputSource::Env => "env",
+    }
+}
+
+fn optional_effective_source_label(source: EffectiveValueSource) -> &'static str {
+    match source {
+        EffectiveValueSource::User => "value",
+        EffectiveValueSource::Default => "default",
+        EffectiveValueSource::Env => "env",
+        EffectiveValueSource::DefaultMissing => "default-missing",
+        EffectiveValueSource::ConditionalDefault => "conditional",
     }
 }
 
@@ -429,6 +569,7 @@ fn value_matches_default(arg: &ArgSpec, value: Option<&ArgValue>, is_touched: bo
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_flag_toggle(
     frame: &mut Frame<'_>,
     config: &TuiConfig,
@@ -436,10 +577,11 @@ fn render_flag_toggle(
     selected: bool,
     label: &str,
     value: &str,
+    badges: &[Span<'static>],
     text_style: Style,
 ) {
     let enabled = value == "[x]";
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             if enabled { " [x] " } else { " [ ] " },
             styles::checkbox_chip(config, selected, enabled),
@@ -455,7 +597,9 @@ fn render_flag_toggle(
                 text_style.add_modifier(Modifier::BOLD)
             },
         ),
-    ]);
+    ];
+    spans.extend(badges.iter().cloned());
+    let line = Line::from(spans);
     frame.render_widget(
         Paragraph::new(line).style(styles::flag_toggle(config, selected)),
         area,
@@ -567,14 +711,40 @@ fn field_help_text(
     widget: FieldWidget,
     selected: bool,
     field_error: Option<&str>,
+    effective_value: Option<&EffectiveArgValue>,
 ) -> Option<String> {
     if let Some(field_error) = field_error {
         return Some(field_error.to_string());
     }
 
     let mut parts = Vec::new();
-    if let Some(help) = arg.help.clone().or_else(|| arg.value_hint.clone()) {
+    let primary_help = if selected {
+        arg.long_help()
+            .filter(|long_help| Some(*long_help) != arg.help.as_deref())
+            .map(str::to_string)
+            .or_else(|| arg.help.clone())
+            .or_else(|| arg.value_hint.clone())
+    } else {
+        arg.help.clone().or_else(|| arg.value_hint.clone())
+    };
+    if let Some(help) = primary_help {
         parts.push(help);
+    }
+    if !arg.value_names().is_empty() {
+        parts.push(format!("Expects: {}", arg.value_names().join(" ")));
+    }
+    if let Some(effective_value) = effective_value {
+        match effective_value.source {
+            EffectiveValueSource::DefaultMissing if !effective_value.values.is_empty() => parts
+                .push(format!(
+                    "Implicit value: {}",
+                    render_effective_value(arg, &effective_value.values)
+                )),
+            EffectiveValueSource::ConditionalDefault => {
+                parts.push("Value is default-derived under the current conditions.".to_string());
+            }
+            _ => {}
+        }
     }
     if selected && let Some(hint) = widget_help_hint(widget) {
         parts.push(hint.to_string());
@@ -597,7 +767,7 @@ fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
 fn field_badges(
     config: &TuiConfig,
     arg: &ArgSpec,
-    source: Option<InputSource>,
+    source: Option<EffectiveValueSource>,
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
@@ -619,9 +789,11 @@ fn field_badges(
 
     if let Some(source) = source {
         let label = match source {
-            InputSource::User => None,
-            InputSource::Default => Some("Default"),
-            InputSource::Env => Some("Env"),
+            EffectiveValueSource::User => None,
+            EffectiveValueSource::Default => Some("Default"),
+            EffectiveValueSource::Env => Some("Env"),
+            EffectiveValueSource::DefaultMissing => Some("Default-missing"),
+            EffectiveValueSource::ConditionalDefault => Some("Conditional"),
         };
         if let Some(label) = label {
             spans.extend(chip_spans(
@@ -636,6 +808,86 @@ fn field_badges(
     spans
 }
 
+fn effective_source_badge(vm: &ScreenView<'_>, arg: &ArgSpec) -> Option<EffectiveValueSource> {
+    if let Some(source) = vm.effective_values.get(&arg.id).map(|value| value.source) {
+        return Some(source);
+    }
+
+    vm.inputs
+        .as_ref()
+        .filter(|inputs| !inputs.is_touched(&arg.id))
+        .and_then(|inputs| inputs.input_source(&arg.id))
+        .map(|source| match source {
+            InputSource::User => EffectiveValueSource::User,
+            InputSource::Default => EffectiveValueSource::Default,
+            InputSource::Env => EffectiveValueSource::Env,
+        })
+}
+
+fn effective_compatibility_value(vm: &ScreenView<'_>, arg: &ArgSpec) -> Option<ArgValue> {
+    let input_value = vm
+        .inputs
+        .as_ref()
+        .and_then(|inputs| inputs.compatibility_value(arg));
+    if input_value.is_some() {
+        return input_value;
+    }
+
+    let effective_value = vm.effective_values.get(&arg.id)?;
+    if effective_value.source == EffectiveValueSource::User {
+        return None;
+    }
+    if effective_value.values.is_empty() {
+        return None;
+    }
+
+    if arg.uses_optional_value_semantics() {
+        return Some(ArgValue::Text(render_effective_value(
+            arg,
+            &effective_value.values,
+        )));
+    }
+
+    if arg.has_value_choices() && !arg.is_multi_value_input() {
+        return effective_value
+            .values
+            .first()
+            .cloned()
+            .map(ArgValue::Choice);
+    }
+
+    Some(ArgValue::Text(render_effective_value(
+        arg,
+        &effective_value.values,
+    )))
+}
+
+fn effective_selected_values(vm: &ScreenView<'_>, arg: &ArgSpec) -> Vec<String> {
+    let selected_values = vm
+        .inputs
+        .as_ref()
+        .map_or_else(Vec::new, |inputs| inputs.selected_values(arg));
+    if !selected_values.is_empty() {
+        return selected_values;
+    }
+
+    vm.effective_values
+        .get(&arg.id)
+        .filter(|value| value.source != EffectiveValueSource::User)
+        .map(|value| value.values.clone())
+        .unwrap_or_default()
+}
+
+fn render_effective_value(arg: &ArgSpec, values: &[String]) -> String {
+    if let Some(delimiter) = arg.metadata.syntax.value_delimiter {
+        values.join(&delimiter.to_string())
+    } else if arg.accepts_multiple_values_per_occurrence() || arg.allows_multiple_occurrences() {
+        values.join("\n")
+    } else {
+        values.first().cloned().unwrap_or_default()
+    }
+}
+
 fn chip_spans(label: &str, style: Style) -> Vec<Span<'static>> {
     vec![
         Span::raw(" "),
@@ -645,13 +897,14 @@ fn chip_spans(label: &str, style: Style) -> Vec<Span<'static>> {
 
 #[cfg(test)]
 mod tests {
+    use clap::{Arg, ArgAction, Command};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use super::{populate_layout, text_input_is_truncated};
+    use super::{FieldWidget, field_help_text, populate_layout, text_input_is_truncated};
     use crate::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
-    use crate::input::{ActiveTab, Focus, UiState};
+    use crate::input::{ActiveTab, AppState, Focus, UiState};
     use crate::query::form::visible_args;
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
@@ -726,10 +979,11 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
-            tree_items: Vec::new(),
+            tree_rows: Vec::new(),
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -754,10 +1008,11 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
-            tree_items: Vec::new(),
+            tree_rows: Vec::new(),
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -793,10 +1048,11 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
-            tree_items: Vec::new(),
+            tree_rows: Vec::new(),
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -819,10 +1075,11 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
-            tree_items: Vec::new(),
+            tree_rows: Vec::new(),
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -839,14 +1096,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
         terminal
             .draw(|frame| {
-                render_form(
-                    frame,
-                    &ui,
-                    &Vec::<String>::new().into(),
-                    &TuiConfig::default(),
-                    &vm,
-                    &snapshot,
-                );
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
             })
             .expect("draw");
 
@@ -871,10 +1121,11 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
-            tree_items: Vec::new(),
+            tree_rows: Vec::new(),
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -895,6 +1146,66 @@ mod tests {
     }
 
     #[test]
+    fn form_renders_help_heading_and_combined_label() {
+        let mut include = option_arg("include", "--include");
+        include.metadata.identifiers.display_label = "-I, --include".to_string();
+        include.metadata.display.help_heading = Some("Inputs".to_string());
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![include],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            tree_rows: Vec::new(),
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("Inputs"));
+        assert!(rendered.contains("-I, --include"));
+    }
+
+    #[test]
+    fn selected_field_help_uses_long_help_and_value_names() {
+        let mut include = option_arg("include", "--include");
+        include.help = Some("Include path".to_string());
+        include.metadata.display.long_help = Some("Include one or more paths".to_string());
+        include.metadata.values.value_names = vec!["PATH".to_string()];
+
+        let help = field_help_text(&include, FieldWidget::SingleText, true, None, None)
+            .expect("selected help text");
+
+        assert!(help.contains("Include one or more paths"));
+        assert!(help.contains("Expects: PATH"));
+    }
+
+    #[test]
     fn layout_phase_clips_scrolled_fields_to_form_view() {
         let command = CommandSpec {
             name: "tool".to_string(),
@@ -912,10 +1223,11 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
-            tree_items: Vec::new(),
+            tree_rows: Vec::new(),
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -975,10 +1287,11 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
-            tree_items: Vec::new(),
+            tree_rows: Vec::new(),
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -994,17 +1307,201 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
         terminal
             .draw(|frame| {
-                render_form(
-                    frame,
-                    &ui,
-                    &Vec::<String>::new().into(),
-                    &TuiConfig::default(),
-                    &vm,
-                    &snapshot,
-                );
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
             })
             .expect("draw");
 
         assert!(buffer_text(terminal.backend()).contains("Select..."));
+    }
+
+    #[test]
+    fn descendant_form_shows_inherited_global_badge() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(ArgAction::SetTrue)
+                        .global(true),
+                )
+                .subcommand(
+                    Command::new("build")
+                        .arg(Arg::new("target").long("target"))
+                        .subcommand(Command::new("release")),
+                ),
+        );
+        state
+            .select_command_path(&["build".to_string(), "release".to_string()])
+            .expect("valid descendant path");
+
+        let current = state.domain.current_command().clone();
+        let root = state.domain.root.clone();
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &current,
+            root: &root,
+            tree_rows: Vec::new(),
+            active_args: visible_args(&current, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 60, 10),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 10)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("--verbose"));
+        assert!(rendered.contains("Inherited"));
+    }
+
+    #[test]
+    fn selected_optional_value_without_explicit_text_renders_editor_state() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(ArgAction::Set)
+                    .num_args(0..=1)
+                    .require_equals(true)
+                    .default_missing_value("always"),
+            ),
+        );
+        state.domain.toggle_optional_value_flag("color", true);
+        state.ui.focus = Focus::Form;
+
+        let current = state.domain.current_command().clone();
+        let root = state.domain.root.clone();
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &current,
+            root: &root,
+            tree_rows: Vec::new(),
+            active_args: visible_args(&current, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 60, 10),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 10)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("Present"));
+        assert!(rendered.contains("bare flag"));
+    }
+
+    #[test]
+    fn default_backed_optional_value_renders_as_off_state() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(ArgAction::Set)
+                    .num_args(0..=1)
+                    .require_equals(true)
+                    .default_value("auto")
+                    .default_missing_value("always"),
+            ),
+        );
+        state.ui.focus = Focus::Form;
+
+        let current = state.domain.current_command().clone();
+        let root = state.domain.root.clone();
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &current,
+            root: &root,
+            tree_rows: Vec::new(),
+            active_args: visible_args(&current, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 60, 10),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 10)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("Off"));
+        assert!(rendered.contains("default: auto"));
+    }
+
+    #[test]
+    fn commands_with_external_subcommands_render_external_flow_fields() {
+        let command =
+            CommandSpec::from_command(&Command::new("tool").allow_external_subcommands(true));
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            tree_rows: Vec::new(),
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 60, 12),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("External subcommand"));
+        assert!(rendered.contains("Trailing args"));
     }
 }

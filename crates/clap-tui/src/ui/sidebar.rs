@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use crate::config::TuiConfig;
 use crate::frame_snapshot::{FrameLayout, SidebarItemLayout};
 use crate::input::{Focus, UiState};
-use crate::query::tree::TreeItem;
+use crate::query::tree::{TreeItem, TreeRow};
 use crate::spec::CommandPath;
 
 use super::screen::ScreenView;
@@ -34,7 +34,10 @@ pub(crate) fn populate_layout(area: Rect, vm: &ScreenView<'_>, frame_layout: &mu
     let content_y = list_area.y;
     let content_x = list_area.x;
     let content_height = usize::from(list_area.height);
-    for (index, item) in vm.tree_items.iter().take(content_height).enumerate() {
+    for (index, row) in vm.tree_rows.iter().take(content_height).enumerate() {
+        let TreeRow::Item(item) = row else {
+            continue;
+        };
         let row_y = content_y.saturating_add(u16::try_from(index).unwrap_or(list_area.height));
         let row_rect = Rect::new(content_x, row_y, list_area.width, 1);
         let caret = if item.has_children {
@@ -61,7 +64,7 @@ pub(crate) fn render_sidebar(
     config: &TuiConfig,
     area: Rect,
     vm: &ScreenView<'_>,
-    frame_layout: &FrameLayout,
+    _frame_layout: &FrameLayout,
 ) {
     let search_focused = matches!(ui.focus, Focus::Search);
     let sidebar_focused = matches!(ui.focus, Focus::Sidebar);
@@ -114,30 +117,61 @@ pub(crate) fn render_sidebar(
         sidebar[1],
     );
 
-    for layout in &frame_layout.sidebar_items {
-        let Some(item) = vm.tree_items.iter().find(|item| item.path == layout.path) else {
-            continue;
-        };
-        let selected = item.path == *selected_path;
-        let row_style = if selected {
-            if sidebar_focused {
-                styles::list_highlight(config)
-            } else {
-                styles::list_highlight_unfocused(config)
+    let list_area = sidebar[2];
+    for (index, row) in vm
+        .tree_rows
+        .iter()
+        .take(usize::from(list_area.height))
+        .enumerate()
+    {
+        let row_y = list_area
+            .y
+            .saturating_add(u16::try_from(index).unwrap_or(list_area.height));
+        let row_rect = Rect::new(list_area.x, row_y, list_area.width, 1);
+        match row {
+            TreeRow::Item(item) => {
+                let selected = item.path == *selected_path;
+                let row_style = if selected {
+                    if sidebar_focused {
+                        styles::list_highlight(config)
+                    } else {
+                        styles::list_highlight_unfocused(config)
+                    }
+                } else if item.indent > 0 {
+                    Style::default()
+                        .fg(config.theme.dim)
+                        .bg(config.theme.panel_bg)
+                } else {
+                    Style::default()
+                        .fg(config.theme.text)
+                        .bg(config.theme.panel_bg)
+                };
+                let rail = if selected { "|" } else { " " };
+                let line = sidebar_line(config, item, rail, row_style, selected);
+                frame.render_widget(Paragraph::new(line).style(row_style), row_rect);
             }
-        } else if item.indent > 0 {
+            TreeRow::Heading { title, indent } => {
+                frame.render_widget(
+                    Paragraph::new(sidebar_heading_line(config, title, *indent))
+                        .style(Style::default().bg(config.theme.panel_bg)),
+                    row_rect,
+                );
+            }
+        }
+    }
+}
+
+fn sidebar_heading_line(config: &TuiConfig, title: &str, indent: usize) -> Line<'static> {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::raw(" ".repeat(indent)),
+        Span::styled(
+            title.to_string(),
             Style::default()
                 .fg(config.theme.dim)
-                .bg(config.theme.panel_bg)
-        } else {
-            Style::default()
-                .fg(config.theme.text)
-                .bg(config.theme.panel_bg)
-        };
-        let rail = if selected { "|" } else { " " };
-        let line = sidebar_line(config, item, rail, row_style, selected);
-        frame.render_widget(Paragraph::new(line).style(row_style), layout.row);
-    }
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
 }
 
 fn sidebar_title(
@@ -192,7 +226,7 @@ fn sidebar_line(
     ];
     if item.path.is_empty() {
         spans.push(Span::styled(
-            item.name.clone(),
+            item.display_label.clone(),
             Style::default()
                 .fg(config.theme.accent)
                 .add_modifier(Modifier::BOLD | Modifier::ITALIC),
@@ -209,7 +243,7 @@ fn sidebar_line(
             ));
         }
     } else {
-        spans.push(Span::styled(item.name.clone(), row_style));
+        spans.push(Span::styled(item.display_label.clone(), row_style));
     }
     Line::from(spans)
 }
@@ -218,7 +252,7 @@ fn sidebar_line(
 mod tests {
     use ratatui::style::Modifier;
 
-    use super::{sidebar_line, sidebar_title};
+    use super::{sidebar_heading_line, sidebar_line, sidebar_title};
     use crate::config::TuiConfig;
     use crate::query::tree::TreeItem;
     use crate::spec::{CommandPath, CommandSpec};
@@ -254,6 +288,7 @@ mod tests {
         let config = TuiConfig::default();
         let item = TreeItem {
             name: "serve".to_string(),
+            display_label: "serve (srv)".to_string(),
             version: None,
             path: CommandPath::from(vec!["serve".to_string()]),
             has_children: false,
@@ -263,7 +298,16 @@ mod tests {
 
         let line = sidebar_line(&config, &item, " ", ratatui::style::Style::default(), false);
 
-        assert_eq!(line.spans[3].content.as_ref(), "serve");
+        assert_eq!(line.spans[3].content.as_ref(), "serve (srv)");
         assert_ne!(line.spans[3].style.fg, Some(config.theme.accent));
+    }
+
+    #[test]
+    fn sidebar_heading_line_renders_heading_text() {
+        let config = TuiConfig::default();
+
+        let line = sidebar_heading_line(&config, "Applets", 2);
+
+        assert_eq!(line.spans[2].content.as_ref(), "Applets");
     }
 }

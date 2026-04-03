@@ -213,25 +213,27 @@ pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSn
     } else if matches!(item.widget, FieldWidget::Counter) {
         state.domain.increment_counter(&arg.id);
     } else if matches!(item.widget, FieldWidget::OptionalValue) {
-        let state_kind = state.domain.current_form().map(|form| {
-            if let Some(input) = form.input(&arg.id) {
-                match &input.value {
-                    crate::input::ArgInput::Flag { present: true, .. } => "flag",
-                    crate::input::ArgInput::Values { occurrences }
-                        if occurrences.iter().any(|occurrence| {
+        let owner_key = state.domain.command_path_key_for(arg.owner_path());
+        let state_kind = state
+            .domain
+            .forms
+            .get(&owner_key)
+            .and_then(|form| form.input(&arg.id))
+            .map(|input| match &input.value {
+                crate::input::ArgInput::Flag { present: true, .. } => "flag",
+                crate::input::ArgInput::Values { occurrences }
+                    if input.touched
+                        && occurrences.iter().any(|occurrence| {
                             occurrence.values.iter().any(|value| !value.is_empty())
                         }) =>
-                    {
-                        "value"
-                    }
-                    _ => "empty",
+                {
+                    "value"
                 }
-            } else {
-                "empty"
-            }
-        });
+                _ => "empty",
+            });
         match state_kind {
-            Some("flag" | "value") => state.ui.focus_form(),
+            Some("flag") => state.domain.clear_value_and_untouch(&arg.id),
+            Some("value") => state.ui.focus_form(),
             _ => state.domain.toggle_optional_value_flag(&arg.id, true),
         }
     } else {
@@ -300,9 +302,12 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     };
     let command = state.domain.current_command().clone();
     let args = form::visible_args(&command, state.ui.active_tab);
-    let Some((input_top, input_bottom)) =
-        form::field_content_bounds(&args, state.ui.selected_arg_index)
-    else {
+    let validation = crate::pipeline::derive(state).validation;
+    let Some((input_top, input_bottom)) = form::field_content_bounds_with_errors(
+        &args,
+        state.ui.selected_arg_index,
+        &validation.field_errors,
+    ) else {
         return;
     };
     let visible_top = state.ui.form_scroll(frame_snapshot);
@@ -413,6 +418,7 @@ fn toggle_expand(state: &mut AppState, path: &CommandPath, expanded: bool) {
 
 #[cfg(test)]
 mod tests {
+    use clap::{Arg, Command};
     use ratatui::layout::Rect;
 
     use crate::frame_snapshot::FrameSnapshot;
@@ -815,6 +821,52 @@ mod tests {
                 .current_form()
                 .and_then(|form| form.compatibility_value(arg)),
             Some(crate::input::ArgValue::Text("blue".to_string()))
+        );
+    }
+
+    #[test]
+    fn activating_optional_value_without_explicit_text_toggles_it_back_off() {
+        let mut color = arg("color", "--color", ArgKind::Flag);
+        color.metadata.action.value_arity = crate::spec::ArgValueArity::Optional;
+        let mut state = AppState::new(command("tool", vec![color], Vec::new()));
+        state.domain.toggle_optional_value_flag("color", true);
+        state.ui.focus_form();
+
+        activate_form_field(&mut state, &FrameSnapshot::default());
+
+        assert!(state.domain.current_form().is_none());
+    }
+
+    #[test]
+    fn activating_optional_value_with_default_value_enables_presence() {
+        let root = CommandSpec::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .num_args(0..=1)
+                    .require_equals(true)
+                    .default_value("auto")
+                    .default_missing_value("always"),
+            ),
+        );
+        let mut state = AppState::new(root);
+        state.ui.focus_form();
+
+        activate_form_field(&mut state, &FrameSnapshot::default());
+
+        let color = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "color")
+            .expect("color arg");
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .and_then(|form| form.compatibility_value(color)),
+            Some(crate::input::ArgValue::Bool(true))
         );
     }
 }

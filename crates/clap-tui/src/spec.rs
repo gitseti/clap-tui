@@ -1,5 +1,8 @@
 use clap::{Arg, ArgAction, Command};
 
+pub(crate) const EXTERNAL_SUBCOMMAND_NAME_ID: &str = "__external_subcommand_name";
+pub(crate) const EXTERNAL_SUBCOMMAND_ARGS_ID: &str = "__external_subcommand_args";
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub(crate) struct CommandPath(Vec<String>);
 
@@ -25,7 +28,9 @@ pub(crate) struct CommandModel {
     pub(crate) path: CommandPath,
     #[allow(dead_code)]
     pub(crate) parser_rules: CommandParserRules,
+    pub(crate) display: CommandDisplay,
     pub(crate) args: Vec<ArgModel>,
+    pub(crate) virtual_args: Vec<ArgModel>,
     pub(crate) subcommands: Vec<CommandModel>,
 }
 
@@ -52,7 +57,10 @@ pub(crate) struct CommandParserRules {
     pub(crate) arg_required_else_help: bool,
     pub(crate) args_conflicts_with_subcommands: bool,
     pub(crate) subcommand_negates_reqs: bool,
+    pub(crate) allow_missing_positional: bool,
+    pub(crate) subcommand_precedence_over_arg: bool,
     pub(crate) allow_external_subcommands: bool,
+    pub(crate) dont_delimit_trailing_values: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -145,15 +153,24 @@ pub(crate) struct ArgSyntax {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct ArgValueMetadata {
-    pub(crate) possible_values: Vec<String>,
+    pub(crate) possible_values: Vec<PossibleValueMetadata>,
     pub(crate) value_names: Vec<String>,
     pub(crate) value_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct PossibleValueMetadata {
+    pub(crate) name: String,
+    pub(crate) help: Option<String>,
+    pub(crate) hidden: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct ArgDefaults {
     pub(crate) default_values: Vec<String>,
     pub(crate) env: Option<String>,
+    pub(crate) has_conditional_defaults: bool,
     pub(crate) hide_default_values: bool,
     pub(crate) hide_env: bool,
     pub(crate) hide_env_values: bool,
@@ -165,6 +182,14 @@ pub(crate) struct ArgDisplay {
     pub(crate) long_help: Option<String>,
     pub(crate) help_heading: Option<String>,
     pub(crate) display_order: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct CommandDisplay {
+    pub(crate) display_order: usize,
+    pub(crate) visible_aliases: Vec<String>,
+    pub(crate) display_label: String,
+    pub(crate) subcommand_help_heading: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -258,7 +283,11 @@ impl ArgModel {
     }
 
     pub(crate) fn display_label(&self) -> &str {
-        &self.metadata.identifiers.display_label
+        if self.metadata.identifiers.display_label.is_empty() {
+            &self.display_name
+        } else {
+            &self.metadata.identifiers.display_label
+        }
     }
 
     pub(crate) fn owner_path(&self) -> &CommandPath {
@@ -312,6 +341,10 @@ impl ArgModel {
         self.default_values.first().map(String::as_str)
     }
 
+    pub(crate) fn has_conditional_defaults(&self) -> bool {
+        self.metadata.defaults.has_conditional_defaults
+    }
+
     pub(crate) fn accepts_multiple_values_per_occurrence(&self) -> bool {
         matches!(self.value_cardinality, ValueCardinality::Many)
     }
@@ -333,7 +366,10 @@ impl ArgModel {
     }
 
     pub(crate) fn uses_optional_value_semantics(&self) -> bool {
-        self.is_flag() && self.accepts_optional_values()
+        self.accepts_optional_values()
+            && !self.is_positional()
+            && !self.uses_count_semantics()
+            && !self.is_multi_value_input()
     }
 
     pub(crate) fn serializes_as_positional(&self) -> bool {
@@ -368,6 +404,34 @@ impl ArgModel {
     pub(crate) fn help_heading(&self) -> Option<&str> {
         self.metadata.display.help_heading.as_deref()
     }
+
+    pub(crate) fn long_help(&self) -> Option<&str> {
+        self.metadata.display.long_help.as_deref()
+    }
+
+    pub(crate) fn value_names(&self) -> &[String] {
+        &self.metadata.values.value_names
+    }
+
+    pub(crate) fn choice_metadata(&self, value: &str) -> Option<&PossibleValueMetadata> {
+        self.metadata
+            .values
+            .possible_values
+            .iter()
+            .find(|candidate| candidate.name == value)
+    }
+
+    pub(crate) fn is_external_subcommand_name(&self) -> bool {
+        self.id == EXTERNAL_SUBCOMMAND_NAME_ID
+    }
+
+    pub(crate) fn is_external_subcommand_args(&self) -> bool {
+        self.id == EXTERNAL_SUBCOMMAND_ARGS_ID
+    }
+
+    pub(crate) fn is_external_subcommand_field(&self) -> bool {
+        self.is_external_subcommand_name() || self.is_external_subcommand_args()
+    }
 }
 
 pub(crate) fn choice_value_matches_default(arg: &ArgModel, value: &str) -> bool {
@@ -395,7 +459,19 @@ impl CommandModel {
             arg_required_else_help: cmd.is_arg_required_else_help_set(),
             args_conflicts_with_subcommands: cmd.is_args_conflicts_with_subcommands_set(),
             subcommand_negates_reqs: cmd.is_subcommand_negates_reqs_set(),
+            allow_missing_positional: cmd.is_allow_missing_positional_set(),
+            subcommand_precedence_over_arg: cmd.is_subcommand_precedence_over_arg_set(),
             allow_external_subcommands: cmd.is_allow_external_subcommands_set(),
+            dont_delimit_trailing_values: cmd.is_dont_delimit_trailing_values_set(),
+        };
+        let display = CommandDisplay {
+            display_order: cmd.get_display_order(),
+            visible_aliases: cmd
+                .get_visible_aliases()
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+            display_label: command_display_label(&cmd),
+            subcommand_help_heading: cmd.get_subcommand_help_heading().map(str::to_string),
         };
         let args = cmd
             .get_arguments()
@@ -408,7 +484,7 @@ impl CommandModel {
                 child_inherited_globals.push((arg.id.clone(), path.clone()));
             }
         }
-        let subcommands = cmd
+        let mut subcommands = cmd
             .get_subcommands()
             .filter(|subcommand| !is_autogenerated_help_subcommand(&cmd, subcommand))
             .map(|subcommand| {
@@ -421,6 +497,16 @@ impl CommandModel {
                 )
             })
             .collect::<Vec<_>>();
+        subcommands.sort_by(|left, right| {
+            left.display_order()
+                .cmp(&right.display_order())
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        let virtual_args = if parser_rules.allow_external_subcommands {
+            external_subcommand_virtual_args(&path)
+        } else {
+            Vec::new()
+        };
         Self {
             name: cmd.get_name().to_string(),
             version: cmd.get_version().map(std::string::ToString::to_string),
@@ -428,7 +514,9 @@ impl CommandModel {
             help,
             path,
             parser_rules,
+            display,
             args,
+            virtual_args,
             subcommands,
         }
     }
@@ -472,8 +560,8 @@ impl CommandModel {
                 .into_iter()
                 .flat_map(|command| {
                     command
-                        .args
-                        .iter()
+                        .all_args()
+                        .into_iter()
                         .filter(|arg| is_invocation_arg(arg))
                         .map(move |arg| (&command.path, arg))
                 })
@@ -493,8 +581,8 @@ impl CommandModel {
                 .take(inherited_len)
                 .flat_map(|command| {
                     command
-                        .args
-                        .iter()
+                        .all_args()
+                        .into_iter()
                         .filter(|arg| is_invocation_arg(arg) && arg.is_global())
                         .map(move |arg| (&command.path, arg))
                 })
@@ -553,6 +641,30 @@ impl CommandModel {
             command,
         }
     }
+
+    pub(crate) fn display_order(&self) -> usize {
+        self.display.display_order
+    }
+
+    pub(crate) fn visible_aliases(&self) -> &[String] {
+        &self.display.visible_aliases
+    }
+
+    pub(crate) fn display_label(&self) -> &str {
+        if self.display.display_label.is_empty() {
+            &self.name
+        } else {
+            &self.display.display_label
+        }
+    }
+
+    pub(crate) fn subcommand_help_heading(&self) -> Option<&str> {
+        self.display.subcommand_help_heading.as_deref()
+    }
+
+    pub(crate) fn all_args(&self) -> Vec<&ArgModel> {
+        self.args.iter().chain(self.virtual_args.iter()).collect()
+    }
 }
 
 fn is_autogenerated_help_subcommand(command: &Command, subcommand: &Command) -> bool {
@@ -595,10 +707,19 @@ fn arg_to_model(
     let help = arg.get_help().map(std::string::ToString::to_string);
     let long_help = arg.get_long_help().map(std::string::ToString::to_string);
     let required = arg.is_required_set();
-    let choices = arg
-        .get_possible_values()
+    let possible_values = arg.get_possible_values();
+    let choices = possible_values
         .iter()
-        .map(|v| v.get_name().to_string())
+        .filter(|value| !value.is_hide_set())
+        .map(|value| value.get_name().to_string())
+        .collect::<Vec<_>>();
+    let possible_value_metadata = possible_values
+        .iter()
+        .map(|value| PossibleValueMetadata {
+            name: value.get_name().to_string(),
+            help: value.get_help().map(std::string::ToString::to_string),
+            hidden: value.is_hide_set(),
+        })
         .collect::<Vec<_>>();
     let value_names = arg
         .get_value_names()
@@ -678,13 +799,14 @@ fn arg_to_model(
             allow_negative_numbers: arg.is_allow_negative_numbers_set(),
         },
         values: ArgValueMetadata {
-            possible_values: choices.clone(),
+            possible_values: possible_value_metadata,
             value_names,
             value_hint: value_hint.clone(),
         },
         defaults: ArgDefaults {
             default_values: default_values.clone(),
             env: arg.get_env().map(|env| env.to_string_lossy().to_string()),
+            has_conditional_defaults: arg_debug_field_is_non_empty(arg, "default_vals_ifs"),
             hide_default_values: arg.is_hide_default_value_set(),
             hide_env: arg.is_hide_env_set(),
             hide_env_values: arg.is_hide_env_values_set(),
@@ -717,6 +839,120 @@ fn primary_display_name(arg: &Arg, id: &str) -> String {
         .map(|name| format!("--{name}"))
         .or_else(|| arg.get_short().map(|name| format!("-{name}")))
         .unwrap_or_else(|| id.to_string())
+}
+
+fn command_display_label(command: &Command) -> String {
+    let name = command.get_name();
+    let aliases = command.get_visible_aliases().collect::<Vec<_>>();
+    if aliases.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} ({})", aliases.join(", "))
+    }
+}
+
+fn external_subcommand_virtual_args(path: &CommandPath) -> Vec<ArgModel> {
+    vec![
+        ArgModel {
+            id: EXTERNAL_SUBCOMMAND_NAME_ID.to_string(),
+            display_name: "External subcommand".to_string(),
+            help: Some(
+                "Run an unknown subcommand without selecting a known tree node.".to_string(),
+            ),
+            required: false,
+            kind: ArgKind::ValueOption,
+            default_values: Vec::new(),
+            choices: Vec::new(),
+            position: None,
+            value_cardinality: ValueCardinality::One,
+            value_hint: None,
+            metadata: ArgMetadata {
+                identifiers: ArgIdentifiers {
+                    display_label: "External subcommand".to_string(),
+                    ..ArgIdentifiers::default()
+                },
+                ownership: ArgOwnership {
+                    owner_path: path.clone(),
+                    inherited_global: false,
+                },
+                action: ArgActionMetadata {
+                    kind: ArgActionKind::Set,
+                    value_arity: ArgValueArity::Required,
+                },
+                cardinality: ArgCardinality {
+                    min_values: 1,
+                    max_values: Some(1),
+                    unbounded: false,
+                },
+                values: ArgValueMetadata {
+                    value_names: vec!["COMMAND".to_string()],
+                    ..ArgValueMetadata::default()
+                },
+                display: ArgDisplay {
+                    help_heading: Some("External".to_string()),
+                    display_order: 9_998,
+                    ..ArgDisplay::default()
+                },
+                ..ArgMetadata::default()
+            },
+        },
+        ArgModel {
+            id: EXTERNAL_SUBCOMMAND_ARGS_ID.to_string(),
+            display_name: "Trailing args".to_string(),
+            help: Some(
+                "Add trailing tokens for the external subcommand, one token per row.".to_string(),
+            ),
+            required: false,
+            kind: ArgKind::ValueOption,
+            default_values: Vec::new(),
+            choices: Vec::new(),
+            position: None,
+            value_cardinality: ValueCardinality::One,
+            value_hint: None,
+            metadata: ArgMetadata {
+                identifiers: ArgIdentifiers {
+                    display_label: "Trailing args".to_string(),
+                    ..ArgIdentifiers::default()
+                },
+                ownership: ArgOwnership {
+                    owner_path: path.clone(),
+                    inherited_global: false,
+                },
+                action: ArgActionMetadata {
+                    kind: ArgActionKind::Append,
+                    value_arity: ArgValueArity::Required,
+                },
+                cardinality: ArgCardinality {
+                    min_values: 1,
+                    max_values: Some(1),
+                    unbounded: false,
+                },
+                values: ArgValueMetadata {
+                    value_names: vec!["ARG".to_string()],
+                    ..ArgValueMetadata::default()
+                },
+                display: ArgDisplay {
+                    help_heading: Some("External".to_string()),
+                    display_order: 9_999,
+                    ..ArgDisplay::default()
+                },
+                ..ArgMetadata::default()
+            },
+        },
+    ]
+}
+
+fn arg_debug_field_is_non_empty(arg: &Arg, field: &str) -> bool {
+    let debug = format!("{arg:?}");
+    let prefix = format!("{field}: [");
+    let Some(start) = debug.find(&prefix) else {
+        return false;
+    };
+    let rest = &debug[start + prefix.len()..];
+    let Some(end) = rest.find(']') else {
+        return false;
+    };
+    !rest[..end].trim().is_empty()
 }
 
 fn display_label(arg: &Arg, id: &str) -> String {
@@ -811,7 +1047,11 @@ pub(crate) type ArgSpec = ArgModel;
 
 #[cfg(test)]
 mod tests {
-    use clap::{Arg, ArgAction, Command, value_parser};
+    use clap::{
+        Arg, ArgAction, Command,
+        builder::{ArgPredicate, PossibleValue},
+        value_parser,
+    };
 
     use super::{ArgActionKind, ArgValueArity, CommandPath, CommandSpec};
 
@@ -878,7 +1118,10 @@ mod tests {
             .arg_required_else_help(true)
             .args_conflicts_with_subcommands(true)
             .subcommand_negates_reqs(true)
+            .allow_missing_positional(true)
+            .subcommand_precedence_over_arg(true)
             .allow_external_subcommands(true)
+            .dont_delimit_trailing_values(true)
             .arg(
                 Arg::new("color")
                     .long("color")
@@ -898,7 +1141,83 @@ mod tests {
         assert!(spec.parser_rules.arg_required_else_help);
         assert!(spec.parser_rules.args_conflicts_with_subcommands);
         assert!(spec.parser_rules.subcommand_negates_reqs);
+        assert!(spec.parser_rules.allow_missing_positional);
+        assert!(spec.parser_rules.subcommand_precedence_over_arg);
         assert!(spec.parser_rules.allow_external_subcommands);
+        assert!(spec.parser_rules.dont_delimit_trailing_values);
+    }
+
+    #[test]
+    fn extracts_subcommand_display_metadata_and_sorts_by_display_order() {
+        let spec = CommandSpec::from_command(
+            &Command::new("tool")
+                .subcommand_help_heading("Applets")
+                .subcommand(Command::new("beta").visible_alias("b").display_order(2))
+                .subcommand(Command::new("alpha").visible_alias("a").display_order(2)),
+        );
+
+        assert_eq!(spec.subcommand_help_heading(), Some("Applets"));
+        assert_eq!(
+            spec.subcommands
+                .iter()
+                .map(|command| command.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta"]
+        );
+        assert_eq!(spec.subcommands[0].visible_aliases(), &["a".to_string()]);
+        assert_eq!(spec.subcommands[0].display_label(), "alpha (a)");
+    }
+
+    #[test]
+    fn allow_external_subcommands_adds_virtual_form_fields() {
+        let spec =
+            CommandSpec::from_command(&Command::new("tool").allow_external_subcommands(true));
+
+        assert!(
+            spec.args
+                .iter()
+                .all(|arg| !arg.is_external_subcommand_field())
+        );
+        assert_eq!(spec.virtual_args.len(), 2);
+        assert!(spec.virtual_args[0].is_external_subcommand_name());
+        assert!(spec.virtual_args[1].is_external_subcommand_args());
+    }
+
+    #[test]
+    fn extracts_choice_help_and_hides_hidden_values_from_visible_choices() {
+        let spec = CommandSpec::from_command(&Command::new("tool").arg(
+            Arg::new("mode").long("mode").value_parser([
+                PossibleValue::new("fast").help("Fast path"),
+                PossibleValue::new("secret").hide(true),
+            ]),
+        ));
+        let arg = &spec.args[0];
+
+        assert_eq!(arg.choices, vec!["fast"]);
+        assert_eq!(
+            arg.choice_metadata("fast")
+                .and_then(|choice| choice.help.as_deref()),
+            Some("Fast path")
+        );
+        assert!(
+            arg.choice_metadata("secret")
+                .is_some_and(|choice| choice.hidden)
+        );
+    }
+
+    #[test]
+    fn extracts_conditional_default_metadata_presence() {
+        let spec = CommandSpec::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("flag").long("flag").action(ArgAction::SetTrue))
+                .arg(Arg::new("mode").long("mode").default_value_if(
+                    "flag",
+                    ArgPredicate::IsPresent,
+                    Some("auto"),
+                )),
+        );
+
+        assert!(spec.args[1].has_conditional_defaults());
     }
 
     #[test]

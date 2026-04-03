@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use ratatui::layout::Rect;
 
 use crate::input::{ActiveTab, HoverTarget, UiState};
+use crate::pipeline::ValidationState;
 use crate::query::form::{self, OrderedArg};
 use crate::spec::CommandPath;
 
@@ -225,10 +226,12 @@ pub(crate) fn populate_form_layout(
     area: Rect,
     active_args: &[OrderedArg<'_>],
     help: &str,
+    validation: &ValidationState,
     frame_snapshot: &mut FrameSnapshot,
 ) {
     let content_area = area;
-    let content_height = form::measure_fields_height(active_args);
+    let content_height =
+        form::measure_fields_height_with_errors(active_args, &validation.field_errors);
     let help_height = form::measure_help_height(help);
     let viewport_height = content_area.height;
     let help_viewport_height = viewport_height.saturating_sub(4);
@@ -244,22 +247,43 @@ pub(crate) fn populate_form_layout(
     frame_layout.form_view = Some(content_area);
 
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
+    let mut previous_heading = None;
     for item in active_args {
-        let metrics = form::field_metrics(item.arg);
-        let item_bottom = y + i32::from(metrics.total_height);
+        let heading = form::field_heading(previous_heading, item.arg);
+        let show_description = form::field_has_description(
+            item.arg,
+            validation
+                .field_errors
+                .get(&item.arg.id)
+                .map(String::as_str),
+        );
+        let metrics = form::field_metrics_with_description(item.arg, show_description);
+        let item_bottom =
+            y + i32::from(u16::from(heading.is_some())) + i32::from(metrics.total_height);
         if y >= i32::from(content_area.y) + i32::from(content_area.height) {
             break;
         }
         if item_bottom <= i32::from(content_area.y) {
-            y += i32::from(metrics.total_height);
+            y += i32::from(u16::from(heading.is_some())) + i32::from(metrics.total_height);
+            previous_heading = item.arg.help_heading();
             continue;
         }
+        let heading = if heading.is_some() {
+            let rect = clipped_rect(area.x, area.width, y, 1, content_area);
+            y += 1;
+            rect
+        } else {
+            None
+        };
         let label = if metrics.label_height > 0 {
             clipped_rect(area.x, area.width, y, metrics.label_height, content_area)
         } else {
             None
         };
-        let input_y = y + i32::from(form::field_input_offset(item.arg));
+        let input_y = y + i32::from(form::field_input_offset_with_description(
+            item.arg,
+            show_description,
+        ));
         let Some(input) = clipped_rect(
             area.x,
             area.width,
@@ -270,11 +294,12 @@ pub(crate) fn populate_form_layout(
             y += i32::from(metrics.total_height);
             continue;
         };
-        let description = form_description_rect(item.arg, y, area, content_area);
+        let description = form_description_rect(item.arg, y, area, content_area, show_description);
 
         frame_layout.form_inputs.insert(item.arg.id.clone(), input);
         frame_layout.form_fields.push(FormFieldLayout {
             arg_id: item.arg.id.clone(),
+            heading,
             label,
             input,
             description,
@@ -288,6 +313,7 @@ pub(crate) fn populate_form_layout(
         }
 
         y += i32::from(metrics.total_height);
+        previous_heading = item.arg.help_heading();
     }
 }
 
@@ -296,20 +322,22 @@ fn form_description_rect(
     y: i32,
     area: Rect,
     content_area: Rect,
+    show_description: bool,
 ) -> Option<Rect> {
-    form_field_has_description(arg)?;
-    let description_y = y + i32::from(form::field_description_offset(arg)?);
+    show_description.then_some(())?;
+    let description_y = y + i32::from(form::field_description_offset_with_description(
+        arg,
+        show_description,
+    )?);
     clipped_rect(
         area.x,
         area.width,
         description_y,
-        form::field_metrics(arg).description_height.max(1),
+        form::field_metrics_with_description(arg, show_description)
+            .description_height
+            .max(1),
         content_area,
     )
-}
-
-fn form_field_has_description(arg: &crate::spec::ArgSpec) -> Option<()> {
-    (arg.help.is_some() || arg.value_hint.is_some()).then_some(())
 }
 
 fn intersect_rects(rect: Rect, bounds: Rect) -> Option<Rect> {
@@ -447,6 +475,7 @@ pub struct TabButtonLayout {
 #[derive(Debug, Clone)]
 pub struct FormFieldLayout {
     pub arg_id: String,
+    pub heading: Option<Rect>,
     pub label: Option<Rect>,
     pub input: Rect,
     pub description: Option<Rect>,

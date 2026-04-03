@@ -178,7 +178,10 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
     };
     let command = state.domain.current_command().clone();
     let args = form::visible_args(&command, state.ui.active_tab);
-    if let Some(hit) = form::hit_test_form_content(&args, content_y) {
+    let validation = crate::pipeline::derive(state).validation;
+    if let Some(hit) =
+        form::hit_test_form_content_with_errors(&args, content_y, &validation.field_errors)
+    {
         state.ui.set_selected_arg_index(hit.order_index);
         state.ui.focus_form();
         if matches!(
@@ -330,6 +333,143 @@ mod tests {
         assert_eq!(effect, Effect::None);
         let argv = crate::pipeline::build_command_line(&state);
         assert_eq!(argv, vec!["tool".to_string()]);
+    }
+
+    #[test]
+    fn optional_value_text_input_keeps_appending_after_enable() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(ArgAction::Set)
+                    .num_args(0..=1)
+                    .require_equals(true)
+                    .default_missing_value("always"),
+            ),
+        );
+
+        let effect = apply_action(
+            &Action::FormWidgetInput(key(AppKeyCode::Right)),
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+        assert_eq!(effect, Effect::None);
+
+        let effect = apply_action(
+            &Action::FormTextInput(key(AppKeyCode::Char('n'))),
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+        assert_eq!(effect, Effect::None);
+
+        let effect = apply_action(
+            &Action::FormTextInput(key(AppKeyCode::Char('e'))),
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+        assert_eq!(effect, Effect::None);
+
+        let argv = crate::pipeline::build_command_line(&state);
+        assert_eq!(argv, vec!["tool".to_string(), "--color=ne".to_string()]);
+    }
+
+    #[test]
+    fn optional_value_with_choices_keeps_appending_partial_text() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .num_args(0..=1)
+                    .require_equals(true)
+                    .default_value("auto")
+                    .default_missing_value("always")
+                    .value_parser(["auto", "always", "never"]),
+            ),
+        );
+
+        let effect = apply_action(
+            &Action::FormWidgetInput(key(AppKeyCode::Right)),
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+        assert_eq!(effect, Effect::None);
+
+        let effect = apply_action(
+            &Action::FormTextInput(key(AppKeyCode::Char('n'))),
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+        assert_eq!(effect, Effect::None);
+
+        let effect = apply_action(
+            &Action::FormTextInput(key(AppKeyCode::Char('e'))),
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+        assert_eq!(effect, Effect::None);
+
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "color")
+            .expect("color arg");
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .and_then(|form| form.compatibility_value(arg)),
+            Some(crate::input::ArgValue::Text("ne".to_string()))
+        );
+        let argv = crate::pipeline::build_command_line(&state);
+        assert_eq!(argv, vec!["tool".to_string(), "--color=ne".to_string()]);
+    }
+
+    #[test]
+    fn trailing_argv_text_input_does_not_write_into_previous_positional() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("program").required(true).index(1))
+                .arg(
+                    Arg::new("argv")
+                        .index(2)
+                        .action(ArgAction::Append)
+                        .num_args(1..)
+                        .trailing_var_arg(true)
+                        .allow_hyphen_values(true),
+                ),
+        );
+        state.ui.selected_arg_index = 1;
+
+        let effect = apply_action(
+            &Action::FormTextInput(key(AppKeyCode::Char('a'))),
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+        assert_eq!(effect, Effect::None);
+
+        let program = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "program")
+            .expect("program arg");
+        let argv_arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "argv")
+            .expect("argv arg");
+
+        let form = state.domain.current_form().expect("form state");
+        assert_eq!(form.compatibility_value(program), None);
+        assert_eq!(
+            form.compatibility_value(argv_arg),
+            Some(crate::input::ArgValue::Text("a".to_string()))
+        );
     }
 
     #[test]

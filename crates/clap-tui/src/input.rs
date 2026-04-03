@@ -443,7 +443,11 @@ impl DomainState {
         let command = self.root.resolve_path(path.as_slice())?;
         let mut form = CommandFormState::default();
 
-        for arg in command.args.iter().filter(|arg| !arg.is_help_action()) {
+        for arg in command
+            .all_args()
+            .into_iter()
+            .filter(|arg| !arg.is_help_action())
+        {
             let key = self.command_path_key_for(arg.owner_path());
             let input = self
                 .forms
@@ -461,8 +465,8 @@ impl DomainState {
 
     fn arg_for_input(&self, arg_id: &str) -> Option<&ArgSpec> {
         self.current_command()
-            .args
-            .iter()
+            .all_args()
+            .into_iter()
             .find(|arg| arg.id == arg_id && !arg.is_help_action())
     }
 
@@ -639,6 +643,15 @@ impl ArgInputState {
                 if values.is_empty() {
                     return None;
                 }
+                if arg.uses_optional_value_semantics() {
+                    let rendered = occurrences
+                        .iter()
+                        .map(|occurrence| render_occurrence_text(arg, &occurrence.values))
+                        .filter(|value| !value.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    return Some(ArgValue::Text(rendered));
+                }
                 if arg.has_value_choices() && !arg.is_multi_value_input() {
                     values.first().cloned().map(ArgValue::Choice)
                 } else {
@@ -715,7 +728,7 @@ fn text_value_occurrences(arg: &ArgSpec, text: &str) -> Vec<InputValueOccurrence
     }]
 }
 
-fn split_occurrence_values(arg: &ArgSpec, text: &str) -> Vec<String> {
+pub(crate) fn split_occurrence_values(arg: &ArgSpec, text: &str) -> Vec<String> {
     if arg.accepts_multiple_values_per_occurrence() {
         if let Some(delimiter) = arg.metadata.syntax.value_delimiter {
             return text
@@ -737,7 +750,7 @@ fn split_occurrence_values(arg: &ArgSpec, text: &str) -> Vec<String> {
     vec![text.to_string()]
 }
 
-fn render_occurrence_text(arg: &ArgSpec, values: &[String]) -> String {
+pub(crate) fn render_occurrence_text(arg: &ArgSpec, values: &[String]) -> String {
     if let Some(delimiter) = arg.metadata.syntax.value_delimiter {
         values.join(&delimiter.to_string())
     } else if arg.accepts_multiple_values_per_occurrence() {
@@ -1134,6 +1147,38 @@ mod tests {
         assert_eq!(
             effective.compatibility_value(verbose_arg),
             Some(ArgValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn optional_value_with_choices_stays_text_compatible_for_editing() {
+        let mut color = arg("color", "--color", ArgKind::Flag);
+        color.metadata.action.value_arity = crate::spec::ArgValueArity::Optional;
+        color.choices = vec![
+            "auto".to_string(),
+            "always".to_string(),
+            "never".to_string(),
+        ];
+        let root = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![color.clone()],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let mut state = AppState::new(root);
+
+        state.domain.set_text_value("color", "n");
+        state.domain.mark_touched("color");
+
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .and_then(|form| form.compatibility_value(&color)),
+            Some(ArgValue::Text("n".to_string()))
         );
     }
 

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::input::ActiveTab;
 use crate::spec::{ArgSpec, CommandSpec};
 
@@ -73,20 +75,20 @@ pub(crate) fn widget_for(arg: &ArgSpec) -> FieldWidget {
 
 pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
     let mut positionals = command
-        .args
-        .iter()
+        .all_args()
+        .into_iter()
         .filter(|arg| arg.is_positional())
         .filter(|arg| !is_help_arg(arg))
         .collect::<Vec<_>>();
     positionals.sort_by_key(|arg| (arg.position.unwrap_or(usize::MAX), arg.display_order()));
 
     let mut others = command
-        .args
-        .iter()
+        .all_args()
+        .into_iter()
         .filter(|arg| !arg.is_positional())
         .filter(|arg| !is_help_arg(arg))
         .collect::<Vec<_>>();
-    others.sort_by_key(|arg| (arg.display_order(), arg.display_name.clone()));
+    others.sort_by_key(|arg| (arg.display_order(), arg.display_label().to_string()));
 
     positionals.extend(others);
     positionals
@@ -113,12 +115,19 @@ pub(crate) fn visible_arg_pairs<'a>(args: &[OrderedArg<'a>]) -> Vec<(usize, &'a 
 }
 
 pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
+    field_metrics_with_description(arg, field_has_description(arg, None))
+}
+
+pub(crate) fn field_metrics_with_description(
+    arg: &ArgSpec,
+    show_description: bool,
+) -> FieldMetrics {
     let widget = widget_for(arg);
     let label_height = u16::from(!matches!(
         widget,
         FieldWidget::Toggle | FieldWidget::Counter
     ));
-    let description_height = u16::from(arg.help.is_some() || arg.value_hint.is_some());
+    let description_height = u16::from(show_description);
     let input_height = match widget {
         FieldWidget::Toggle
         | FieldWidget::SingleChoice
@@ -137,8 +146,13 @@ pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn field_input_offset(arg: &ArgSpec) -> u16 {
-    let metrics = field_metrics(arg);
+    field_input_offset_with_description(arg, field_has_description(arg, None))
+}
+
+pub(crate) fn field_input_offset_with_description(arg: &ArgSpec, show_description: bool) -> u16 {
+    let metrics = field_metrics_with_description(arg, show_description);
     if metrics.label_height > 0 {
         metrics
             .label_height
@@ -148,8 +162,16 @@ pub(crate) fn field_input_offset(arg: &ArgSpec) -> u16 {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn field_description_offset(arg: &ArgSpec) -> Option<u16> {
-    let metrics = field_metrics(arg);
+    field_description_offset_with_description(arg, field_has_description(arg, None))
+}
+
+pub(crate) fn field_description_offset_with_description(
+    arg: &ArgSpec,
+    show_description: bool,
+) -> Option<u16> {
+    let metrics = field_metrics_with_description(arg, show_description);
     if metrics.description_height == 0 {
         None
     } else if metrics.label_height > 0 {
@@ -159,41 +181,97 @@ pub(crate) fn field_description_offset(arg: &ArgSpec) -> Option<u16> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn measure_fields_height(args: &[OrderedArg<'_>]) -> u16 {
-    args.iter()
-        .map(|item| field_metrics(item.arg).total_height)
-        .sum()
+    measure_fields_height_with_errors(args, &BTreeMap::new())
+}
+
+pub(crate) fn measure_fields_height_with_errors(
+    args: &[OrderedArg<'_>],
+    field_errors: &BTreeMap<String, String>,
+) -> u16 {
+    let mut total = 0;
+    let mut previous_heading = None;
+    for item in args {
+        if field_heading(previous_heading, item.arg).is_some() {
+            total += 1;
+        }
+        total += field_metrics_with_description(
+            item.arg,
+            field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str)),
+        )
+        .total_height;
+        previous_heading = item.arg.help_heading();
+    }
+    total
 }
 
 pub(crate) fn measure_help_height(help: &str) -> u16 {
     u16::try_from(help.lines().count()).unwrap_or(u16::MAX)
 }
 
+#[cfg(test)]
 pub(crate) fn field_content_bounds(
     args: &[OrderedArg<'_>],
     selected_index: usize,
 ) -> Option<(u16, u16)> {
+    field_content_bounds_with_errors(args, selected_index, &BTreeMap::new())
+}
+
+pub(crate) fn field_content_bounds_with_errors(
+    args: &[OrderedArg<'_>],
+    selected_index: usize,
+    field_errors: &BTreeMap<String, String>,
+) -> Option<(u16, u16)> {
     let mut y: u16 = 0;
+    let mut previous_heading = None;
     for item in args {
-        let metrics = field_metrics(item.arg);
-        let input_top = y.saturating_add(field_input_offset(item.arg));
+        if field_heading(previous_heading, item.arg).is_some() {
+            y = y.saturating_add(1);
+        }
+        let show_description =
+            field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str));
+        let metrics = field_metrics_with_description(item.arg, show_description);
+        let input_top = y.saturating_add(field_input_offset_with_description(
+            item.arg,
+            show_description,
+        ));
         let input_bottom = input_top.saturating_add(metrics.input_height);
         if item.order_index == selected_index {
             return Some((input_top, input_bottom));
         }
         y = y.saturating_add(metrics.total_height);
+        previous_heading = item.arg.help_heading();
     }
     None
 }
 
+#[cfg(test)]
 pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> Option<FormHit> {
+    hit_test_form_content_with_errors(args, content_y, &BTreeMap::new())
+}
+
+pub(crate) fn hit_test_form_content_with_errors(
+    args: &[OrderedArg<'_>],
+    content_y: u16,
+    field_errors: &BTreeMap<String, String>,
+) -> Option<FormHit> {
     let mut y: u16 = 0;
+    let mut previous_heading = None;
     for item in args {
-        let metrics = field_metrics(item.arg);
-        let input_top = y.saturating_add(field_input_offset(item.arg));
+        if field_heading(previous_heading, item.arg).is_some() {
+            y = y.saturating_add(1);
+        }
+        let show_description =
+            field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str));
+        let metrics = field_metrics_with_description(item.arg, show_description);
+        let input_top = y.saturating_add(field_input_offset_with_description(
+            item.arg,
+            show_description,
+        ));
         let input_bottom = input_top.saturating_add(metrics.input_height);
-        let description_top =
-            field_description_offset(item.arg).map(|offset| y.saturating_add(offset));
+        let description_top = field_description_offset_with_description(item.arg, show_description)
+            .map(|offset| y.saturating_add(offset));
         let label_bottom = y.saturating_add(metrics.label_height);
 
         let in_label = metrics.label_height > 0 && content_y >= y && content_y < label_bottom;
@@ -212,8 +290,25 @@ pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> 
             });
         }
         y = y.saturating_add(metrics.total_height);
+        previous_heading = item.arg.help_heading();
     }
     None
+}
+
+pub(crate) fn field_has_description(arg: &ArgSpec, field_error: Option<&str>) -> bool {
+    field_error.is_some() || arg.help.is_some() || arg.value_hint.is_some()
+}
+
+pub(crate) fn field_heading<'a>(
+    previous_heading: Option<&'a str>,
+    arg: &'a ArgSpec,
+) -> Option<&'a str> {
+    let heading = arg.help_heading().filter(|heading| !heading.is_empty());
+    if heading.is_some() && heading != previous_heading {
+        heading
+    } else {
+        None
+    }
 }
 
 fn is_help_arg(arg: &ArgSpec) -> bool {
@@ -223,8 +318,9 @@ fn is_help_arg(arg: &ArgSpec) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        FieldWidget, field_content_bounds, field_description_offset, field_input_offset,
-        field_metrics, hit_test_form_content, measure_fields_height, ordered_args, visible_args,
+        FieldWidget, field_content_bounds, field_description_offset, field_heading,
+        field_input_offset, field_metrics, hit_test_form_content, measure_fields_height,
+        ordered_args, visible_args,
     };
     use crate::input::ActiveTab;
     use crate::spec::{ArgKind, ArgSpec, CommandSpec};
@@ -391,5 +487,27 @@ mod tests {
         assert_eq!(second_input.arg_id, "verbose");
         assert!(second_input.in_input);
         assert!(matches!(second_input.widget, FieldWidget::Toggle));
+    }
+
+    #[test]
+    fn heading_rows_contribute_to_form_height_and_offsets() {
+        let mut first = arg("first", "--first", ArgKind::Option);
+        first.metadata.display.help_heading = Some("Inputs".to_string());
+        let mut second = arg("second", "--second", ArgKind::Option);
+        second.metadata.display.help_heading = Some("Inputs".to_string());
+        let mut third = arg("third", "--third", ArgKind::Option);
+        third.metadata.display.help_heading = Some("Outputs".to_string());
+        let command = command(vec![first, second, third]);
+        let visible = visible_args(&command, ActiveTab::Inputs);
+
+        assert_eq!(field_heading(None, visible[0].arg), Some("Inputs"));
+        assert_eq!(field_heading(Some("Inputs"), visible[1].arg), None);
+        assert_eq!(
+            field_heading(Some("Inputs"), visible[2].arg),
+            Some("Outputs")
+        );
+        assert_eq!(measure_fields_height(&visible), 17);
+        assert_eq!(field_content_bounds(&visible, 0), Some((2, 5)));
+        assert_eq!(field_content_bounds(&visible, 2), Some((13, 16)));
     }
 }

@@ -96,6 +96,7 @@ pub(crate) fn build_screen_layout(
         areas.form,
         &vm.active_args,
         &vm.command.help,
+        &vm.validation,
         &mut snapshot,
     );
     footer::populate_layout(ui, footer_area, &mut snapshot.layout);

@@ -20,13 +20,29 @@ pub(crate) fn validate_argv(state: &AppState, argv: &[String]) -> ValidationStat
 
 fn validate_with_clap(state: &AppState, command: Command, argv: &[String]) -> ValidationState {
     match command.try_get_matches_from(argv.iter().cloned()) {
-        Ok(_) => ValidationState {
+        Ok(_) => missing_required_validation_state(state).unwrap_or(ValidationState {
             is_valid: true,
             summary: None,
             field_errors: BTreeMap::new(),
-        },
+        }),
         Err(error) => adapt_clap_error(state, &error),
     }
+}
+
+fn missing_required_validation_state(state: &AppState) -> Option<ValidationState> {
+    let missing = missing_required_arg_models(state);
+    if missing.is_empty() {
+        return None;
+    }
+
+    Some(ValidationState {
+        is_valid: false,
+        summary: summary_for_missing_required(state),
+        field_errors: missing
+            .into_iter()
+            .map(|arg| (arg.id.clone(), "Required argument".to_string()))
+            .collect(),
+    })
 }
 
 fn adapt_clap_error(state: &AppState, error: &clap::Error) -> ValidationState {

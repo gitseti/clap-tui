@@ -84,9 +84,18 @@ impl TextEditor {
         self.cursor.row.min(self.lines.len().saturating_sub(1))
     }
 
-    #[cfg(test)]
     pub(crate) fn cursor(&self) -> TextPosition {
         self.cursor
+    }
+
+    pub(crate) fn current_line_len(&self) -> usize {
+        self.lines
+            .get(self.current_row())
+            .map_or(0, std::string::String::len)
+    }
+
+    pub(crate) fn lines(&self) -> &[String] {
+        &self.lines
     }
 
     pub(crate) fn selection_anchor(&self) -> Option<TextPosition> {

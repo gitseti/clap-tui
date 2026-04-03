@@ -1,15 +1,19 @@
 use crate::input::{ArgInput, CommandFormState, InputSource};
-use crate::spec::{ArgModel, CommandModel};
+use crate::spec::{
+    ArgModel, CommandModel, EXTERNAL_SUBCOMMAND_ARGS_ID, EXTERNAL_SUBCOMMAND_NAME_ID,
+};
 
 #[derive(Debug, Clone)]
 struct PositionalPlan {
     position: usize,
     sequence: usize,
-    values: Vec<String>,
+    occurrences: Vec<Vec<String>>,
+    value_delimiter: Option<char>,
     insert_boundary_before: bool,
     terminator: Option<String>,
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn build_argv(
     command: &CommandModel,
     state: &CommandFormState,
@@ -64,17 +68,11 @@ pub(crate) fn build_argv(
                 }
                 if arg.serializes_as_positional() {
                     if let Some(index) = arg.position {
-                        let mut flattened = Vec::new();
-                        for values in non_empty_occurrences {
-                            flattened.extend(values);
-                        }
-                        if flattened.is_empty() {
-                            continue;
-                        }
                         positionals.push(PositionalPlan {
                             position: index,
                             sequence: positional_sequence,
-                            values: flattened,
+                            occurrences: non_empty_occurrences,
+                            value_delimiter: arg.metadata.syntax.value_delimiter,
                             insert_boundary_before: arg.is_last_positional()
                                 || arg.is_trailing_var_arg(),
                             terminator: arg.value_terminator().map(str::to_string),
@@ -108,12 +106,23 @@ pub(crate) fn build_argv(
             argv.push("--".to_string());
             inserted_boundary = true;
         }
-        argv.extend(plan.values.iter().cloned());
+        let join_with_delimiter = plan.value_delimiter.is_some()
+            && !(inserted_boundary && command.parser_rules.dont_delimit_trailing_values);
+        for occurrence in &plan.occurrences {
+            if join_with_delimiter {
+                argv.push(join_positional_occurrence(plan.value_delimiter, occurrence));
+            } else {
+                argv.extend(occurrence.iter().cloned());
+            }
+        }
         if let Some(terminator) = plan.terminator.as_ref()
             && (index + 1 < positionals.len() || has_following_command)
         {
             argv.push(terminator.clone());
         }
+    }
+    if !has_following_command {
+        append_external_subcommand(command, state, &mut argv);
     }
     argv
 }
@@ -144,11 +153,22 @@ fn serialize_option_occurrence(
     }
 
     if arg.metadata.syntax.require_equals {
-        argv.push(format!(
-            "{}={}",
-            arg.display_name,
+        let Some(first) = values.first() else {
+            return;
+        };
+        let attached = if arg.accepts_multiple_values_per_occurrence()
+            && arg.metadata.syntax.value_delimiter.is_some()
+        {
             join_occurrence_values(arg, values)
-        ));
+        } else {
+            first.clone()
+        };
+        argv.push(format!("{}={attached}", arg.display_name));
+        if arg.accepts_multiple_values_per_occurrence()
+            && arg.metadata.syntax.value_delimiter.is_none()
+        {
+            argv.extend(values.iter().skip(1).cloned());
+        }
         return;
     }
 
@@ -172,4 +192,48 @@ fn join_occurrence_values(arg: &ArgModel, values: &[String]) -> String {
         || values.join(" "),
         |delimiter| values.join(&delimiter.to_string()),
     )
+}
+
+fn join_positional_occurrence(value_delimiter: Option<char>, values: &[String]) -> String {
+    value_delimiter.map_or_else(
+        || values.join(" "),
+        |delimiter| values.join(&delimiter.to_string()),
+    )
+}
+
+fn append_external_subcommand(
+    command: &CommandModel,
+    state: &CommandFormState,
+    argv: &mut Vec<String>,
+) {
+    if !command.parser_rules.allow_external_subcommands {
+        return;
+    }
+
+    let name = state
+        .input(EXTERNAL_SUBCOMMAND_NAME_ID)
+        .and_then(|input| match &input.value {
+            ArgInput::Values { occurrences } => occurrences
+                .iter()
+                .flat_map(|occurrence| occurrence.values.iter())
+                .find(|value| !value.trim().is_empty())
+                .cloned(),
+            _ => None,
+        });
+    let Some(name) = name else {
+        return;
+    };
+    argv.push(name);
+
+    if let Some(input) = state.input(EXTERNAL_SUBCOMMAND_ARGS_ID)
+        && let ArgInput::Values { occurrences } = &input.value
+    {
+        argv.extend(
+            occurrences
+                .iter()
+                .flat_map(|occurrence| occurrence.values.iter())
+                .filter(|value| !value.is_empty())
+                .cloned(),
+        );
+    }
 }
