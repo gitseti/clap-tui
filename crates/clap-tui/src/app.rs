@@ -270,12 +270,20 @@ fn handle_app_event<R: Runtime>(
             }
         }
         AppEvent::Resize { .. } => EventOutcome::Continue { needs_redraw: true },
-        AppEvent::FocusGained
-        | AppEvent::FocusLost
-        | AppEvent::Paste(_)
-        | AppEvent::Unsupported => EventOutcome::Continue {
-            needs_redraw: false,
-        },
+        AppEvent::Paste(text) => {
+            let effect =
+                update::apply_action(&update::Action::Paste(text.clone()), state, frame_snapshot);
+            match handle_effect(effect, state, session) {
+                ActionOutcome::Continue => EventOutcome::Continue { needs_redraw: true },
+                ActionOutcome::Exit => EventOutcome::Exit,
+                ActionOutcome::Run(argv) => EventOutcome::Run(argv),
+            }
+        }
+        AppEvent::FocusGained | AppEvent::FocusLost | AppEvent::Unsupported => {
+            EventOutcome::Continue {
+                needs_redraw: false,
+            }
+        }
     }
 }
 
@@ -587,6 +595,56 @@ mod tests {
             outcome,
             EventOutcome::Continue { needs_redraw: true }
         ));
+    }
+
+    #[test]
+    fn paste_event_updates_focused_form_field() {
+        let command = Command::new("tool").arg(Arg::new("path").long("path"));
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        let mut state = app_state_from_command(&command);
+        state.ui.focus_form();
+
+        let outcome = handle_app_event(
+            &AppEvent::Paste("/tmp/foo".to_string()),
+            &mut state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+            &mut session,
+        );
+
+        assert!(matches!(
+            outcome,
+            EventOutcome::Continue { needs_redraw: true }
+        ));
+        let form = state.domain.current_form().expect("form");
+        let arg = state.domain.arg_for_input("path").expect("path arg");
+        assert_eq!(
+            form.compatibility_value(arg),
+            Some(crate::input::ArgValue::Text("/tmp/foo".to_string()))
+        );
+    }
+
+    #[test]
+    fn paste_event_updates_search_query_when_search_is_focused() {
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        let mut state = app_state();
+        state.ui.focus_search();
+
+        let outcome = handle_app_event(
+            &AppEvent::Paste("build".to_string()),
+            &mut state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+            &mut session,
+        );
+
+        assert!(matches!(
+            outcome,
+            EventOutcome::Continue { needs_redraw: true }
+        ));
+        assert_eq!(state.ui.search_query, "build");
     }
 
     #[test]

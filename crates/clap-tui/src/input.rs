@@ -463,7 +463,7 @@ impl DomainState {
         (!form.is_empty()).then_some(form)
     }
 
-    fn arg_for_input(&self, arg_id: &str) -> Option<&ArgSpec> {
+    pub(crate) fn arg_for_input(&self, arg_id: &str) -> Option<&ArgSpec> {
         self.current_command()
             .all_args()
             .into_iter()
@@ -813,6 +813,7 @@ impl UiState {
     }
 
     pub fn toggle_focus(&mut self) {
+        self.dismiss_transient_interaction();
         self.focus = match self.focus {
             Focus::Sidebar => Focus::Form,
             _ => Focus::Sidebar,
@@ -820,6 +821,7 @@ impl UiState {
     }
 
     pub fn focus_sidebar(&mut self) {
+        self.dismiss_transient_interaction();
         self.focus = Focus::Sidebar;
     }
 
@@ -828,6 +830,7 @@ impl UiState {
     }
 
     pub fn focus_search(&mut self) {
+        self.dismiss_transient_interaction();
         self.focus = Focus::Search;
     }
 
@@ -918,10 +921,14 @@ impl UiState {
         self.mouse_select = None;
     }
 
-    pub fn reset_transient_form_ui(&mut self) {
-        self.form_scroll = 0;
+    pub fn dismiss_transient_interaction(&mut self) {
         self.close_dropdown();
         self.clear_mouse_selection();
+    }
+
+    pub fn reset_transient_form_ui(&mut self) {
+        self.form_scroll = 0;
+        self.dismiss_transient_interaction();
     }
 
     pub fn set_hover(&mut self, hover: Option<HoverTarget>) {

@@ -14,6 +14,10 @@ pub(crate) fn apply(action: &Action, state: &mut AppState) -> Effect {
             apply_search_input(*key, state);
             Effect::None
         }
+        Action::Paste(text) => {
+            apply_paste(text, state);
+            Effect::None
+        }
         Action::ToggleFocus => {
             state.ui.toggle_focus();
             Effect::None
@@ -54,6 +58,14 @@ fn apply_search_input(key: AppKeyEvent, state: &mut AppState) {
     }
 }
 
+fn apply_paste(text: &str, state: &mut AppState) {
+    match state.ui.focus {
+        Focus::Search => state.ui.search_query.push_str(text),
+        Focus::Form => super::form::apply_paste_text(state, text),
+        Focus::Sidebar => {}
+    }
+}
+
 fn apply_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
     match target {
         HoverTarget::Run => Effect::Run(crate::pipeline::build_command_line(state)),
@@ -63,10 +75,7 @@ fn apply_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
             Effect::None
         }
         HoverTarget::Focus => {
-            state.ui.focus = match state.ui.focus {
-                Focus::Sidebar => Focus::Form,
-                _ => Focus::Sidebar,
-            };
+            state.ui.toggle_focus();
             Effect::None
         }
         HoverTarget::Help => {
@@ -214,5 +223,33 @@ mod tests {
         assert_eq!(effect, Effect::None);
         assert!(state.domain.selected_path().is_empty());
         assert_eq!(state.domain.current_command().name, "tool");
+    }
+
+    #[test]
+    fn toggle_focus_closes_dropdown() {
+        let mut state = crate::input::AppState::new(command_with_build());
+        state.ui.focus = Focus::Form;
+        state.ui.dropdown_open = Some("color".to_string());
+        let snapshot = FrameSnapshot::default();
+
+        let effect = apply_action(&Action::ToggleFocus, &mut state, &snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.dropdown_open.is_none());
+        assert!(matches!(state.ui.focus, Focus::Sidebar));
+    }
+
+    #[test]
+    fn focus_search_closes_dropdown() {
+        let mut state = crate::input::AppState::new(command_with_build());
+        state.ui.focus = Focus::Form;
+        state.ui.dropdown_open = Some("color".to_string());
+        let snapshot = FrameSnapshot::default();
+
+        let effect = apply_action(&Action::FocusSearch, &mut state, &snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.dropdown_open.is_none());
+        assert!(matches!(state.ui.focus, Focus::Search));
     }
 }

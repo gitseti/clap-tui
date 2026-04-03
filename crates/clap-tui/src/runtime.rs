@@ -329,6 +329,19 @@ impl Runtime for CrosstermRuntime {
             let _ = disable_raw_mode();
             return Err(err.into());
         }
+        if let Err(err) = execute!(stdout, crossterm::event::EnableBracketedPaste) {
+            #[cfg(feature = "mouse")]
+            {
+                let _ = execute!(stdout, crossterm::event::DisableMouseCapture);
+            }
+            let _ = execute!(
+                stdout,
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
+            );
+            let _ = execute!(stdout, LeaveAlternateScreen);
+            let _ = disable_raw_mode();
+            return Err(err.into());
+        }
 
         Terminal::new(CrosstermBackend::new(stdout)).map_err(TuiError::from)
     }
@@ -342,6 +355,10 @@ impl Runtime for CrosstermRuntime {
                 crossterm::event::DisableMouseCapture
             );
         }
+        let _ = execute!(
+            terminal.backend_mut(),
+            crossterm::event::DisableBracketedPaste
+        );
         let _ = execute!(
             terminal.backend_mut(),
             crossterm::terminal::Clear(crossterm::terminal::ClearType::All)

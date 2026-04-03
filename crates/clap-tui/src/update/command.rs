@@ -8,6 +8,7 @@ pub(crate) fn apply(action: &Action, state: &mut AppState) -> Effect {
         Action::Exit => Effect::Exit,
         Action::Run => Effect::Run(pipeline::build_command_line(state)),
         Action::CopyPreview => {
+            state.ui.dismiss_transient_interaction();
             Effect::CopyToClipboard(pipeline::build_command_line(state).join(" "))
         }
         _ => Effect::None,

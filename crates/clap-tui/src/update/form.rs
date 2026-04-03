@@ -33,6 +33,28 @@ pub(crate) fn apply(
     Effect::None
 }
 
+pub(crate) fn apply_paste_text(state: &mut AppState, text: &str) {
+    if state.ui.help_open {
+        return;
+    }
+    let command = state.domain.current_command().clone();
+    let args = form::visible_args(&command, state.ui.active_tab);
+    let Some(item) = args
+        .iter()
+        .find(|item| item.order_index == state.ui.selected_arg_index)
+    else {
+        return;
+    };
+    if !item.widget.accepts_text_input() {
+        return;
+    }
+
+    let _ = matches!(
+        form_editor::apply_paste_to_text_field(state, item.arg, text),
+        EditResult::Handled
+    );
+}
+
 fn apply_form_text_input(key: AppKeyEvent, state: &mut AppState) {
     if state.ui.help_open {
         return;
@@ -106,13 +128,12 @@ fn apply_choice_input(
     frame_snapshot: &FrameSnapshot,
     arg_id: &str,
 ) {
-    let command = state.domain.current_command().clone();
-    let Some(arg) = command.args.iter().find(|arg| arg.id == arg_id) else {
+    let Some(arg) = state.domain.arg_for_input(arg_id).cloned() else {
         state.ui.close_dropdown();
         return;
     };
     let len = arg.choices.len();
-    let is_multi = matches!(form::widget_for(arg), FieldWidget::MultiChoice);
+    let is_multi = matches!(form::widget_for(&arg), FieldWidget::MultiChoice);
 
     match key.code {
         AppKeyCode::Up => {
@@ -171,6 +192,7 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
     if state.ui.help_open {
         return;
     }
+    state.ui.close_dropdown();
     let Some(content_y) =
         frame_snapshot.form_content_y(event.row, state.ui.form_scroll(frame_snapshot))
     else {
@@ -192,19 +214,14 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
             navigation::activate_form_field(state, frame_snapshot);
         }
         if hit.widget.uses_choice_popup() && hit.in_input {
-            let total = command
-                .args
-                .iter()
-                .find(|arg| arg.id == hit.arg_id)
+            let total = state
+                .domain
+                .arg_for_input(&hit.arg_id)
                 .map_or(0, |arg| arg.choices.len());
             navigation::open_enum_dropdown(state, frame_snapshot, &hit.arg_id, total);
         }
         if hit.widget.accepts_text_input()
-            && let Some(arg) = command
-                .args
-                .iter()
-                .find(|arg| arg.id == hit.arg_id)
-                .cloned()
+            && let Some(arg) = state.domain.arg_for_input(&hit.arg_id).cloned()
         {
             form_editor::clear_selection(state, &arg);
             state.ui.clear_mouse_selection();
@@ -235,8 +252,7 @@ fn apply_dropdown_click(
     frame_snapshot: &FrameSnapshot,
     arg_id: &str,
 ) {
-    let command = state.domain.current_command().clone();
-    let Some(arg) = command.args.iter().find(|arg| arg.id == arg_id) else {
+    let Some(arg) = state.domain.arg_for_input(arg_id).cloned() else {
         return;
     };
     let visible_rows = frame_snapshot.dropdown_visible_rows().unwrap_or(0);
@@ -245,7 +261,7 @@ fn apply_dropdown_click(
         && let Some(choice) = arg.choices.get(index)
     {
         state.ui.set_dropdown_cursor(index);
-        if matches!(form::widget_for(arg), FieldWidget::MultiChoice) {
+        if matches!(form::widget_for(&arg), FieldWidget::MultiChoice) {
             state.domain.toggle_choice_value_touched(&arg.id, choice);
         } else {
             state
@@ -301,6 +317,46 @@ mod tests {
             .iter()
             .find(|arg| arg.id == "color")
             .expect("color arg");
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .map(|form| form.selected_values(arg))
+                .unwrap_or_default(),
+            vec!["green".to_string()]
+        );
+    }
+
+    #[test]
+    fn inherited_choice_input_updates_global_value_from_descendant_form() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("color")
+                        .long("color")
+                        .global(true)
+                        .value_parser(["red", "green", "blue"]),
+                )
+                .subcommand(Command::new("admin")),
+        );
+        state
+            .select_command_path(&["admin".to_string()])
+            .expect("valid path");
+        state.ui.dropdown_open = Some("color".to_string());
+        state.ui.dropdown_cursor = 1;
+
+        let effect = apply_action(
+            &Action::ChoiceInput {
+                arg_id: "color".to_string(),
+                key: key(AppKeyCode::Enter),
+            },
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.dropdown_open.is_none());
+        let arg = state.domain.arg_for_input("color").expect("color arg");
         assert_eq!(
             state
                 .domain

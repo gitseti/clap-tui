@@ -256,10 +256,7 @@ pub(crate) fn open_enum_dropdown(
     state.ui.open_dropdown(arg_id.to_string(), 0, 0);
     let current = state
         .domain
-        .current_command()
-        .args
-        .iter()
-        .find(|arg| arg.id == arg_id)
+        .arg_for_input(arg_id)
         .and_then(|arg| {
             state
                 .domain
@@ -342,10 +339,7 @@ pub(crate) fn scroll_enum(state: &mut AppState, frame_snapshot: &FrameSnapshot, 
     };
     let total = state
         .domain
-        .current_command()
-        .args
-        .iter()
-        .find(|arg| arg.id == arg_id)
+        .arg_for_input(arg_id)
         .map_or(0, |arg| arg.choices.len());
     let Some(visible) = frame_snapshot.dropdown_visible_rows() else {
         return;

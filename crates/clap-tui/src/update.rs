@@ -15,6 +15,7 @@ pub(crate) enum Action {
     CopyPreview,
     Escape,
     SearchInput(AppKeyEvent),
+    Paste(String),
     ChoiceInput { arg_id: String, key: AppKeyEvent },
     FormTextInput(AppKeyEvent),
     FormWidgetInput(AppKeyEvent),
@@ -58,6 +59,7 @@ pub(crate) fn apply_action(
         Action::Exit | Action::Run | Action::CopyPreview => command::apply(action, state),
         Action::Escape
         | Action::SearchInput(_)
+        | Action::Paste(_)
         | Action::ToggleFocus
         | Action::ToggleHelp
         | Action::CycleTabs

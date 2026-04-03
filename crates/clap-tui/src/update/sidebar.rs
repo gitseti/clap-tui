@@ -1,6 +1,6 @@
 use crate::controller::navigation;
 use crate::frame_snapshot::FrameSnapshot;
-use crate::input::{AppState, Focus};
+use crate::input::AppState;
 use crate::query::{form, tree};
 
 use super::{Action, Effect};
@@ -59,7 +59,7 @@ fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &Fr
             }
         }
     }
-    state.ui.focus = Focus::Sidebar;
+    state.ui.focus_sidebar();
 }
 
 #[cfg(test)]

@@ -28,18 +28,17 @@ pub(crate) fn handle_mouse_event(
         return Some(Action::ClearMouseSelection);
     }
     if let AppMouseEventKind::Down(AppMouseButton::Left) = event.kind {
-        if state.ui.dropdown_open.is_some() && frame_snapshot.dropdown_visible_rows().is_some() {
-            if frame_snapshot.dropdown_contains(event.column, event.row) {
-                return state
-                    .ui
-                    .dropdown_open
-                    .clone()
-                    .map(|arg_id| Action::ClickDropdownChoice {
-                        arg_id,
-                        row: event.row,
-                    });
-            }
-            return Some(Action::CloseDropdown);
+        let dropdown_open =
+            state.ui.dropdown_open.is_some() && frame_snapshot.dropdown_visible_rows().is_some();
+        if dropdown_open && frame_snapshot.dropdown_contains(event.column, event.row) {
+            return state
+                .ui
+                .dropdown_open
+                .clone()
+                .map(|arg_id| Action::ClickDropdownChoice {
+                    arg_id,
+                    row: event.row,
+                });
         }
         if let Some(target) = frame_snapshot.footer_target_at(event.column, event.row) {
             return Some(Action::ClickFooter(target));
@@ -64,6 +63,9 @@ pub(crate) fn handle_mouse_event(
         }
         if frame_snapshot.form_contains(event.column, event.row) {
             return Some(Action::ClickForm(event));
+        }
+        if dropdown_open {
+            return Some(Action::CloseDropdown);
         }
     }
     if frame_snapshot.dropdown_contains(event.column, event.row) && state.ui.dropdown_open.is_some()
@@ -331,6 +333,52 @@ mod tests {
             }),
             Some(crate::input::ArgValue::Choice("choice-6".to_string()))
         );
+    }
+
+    #[test]
+    fn outside_click_retargets_sidebar_while_closing_dropdown() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.choices = vec!["red".to_string(), "green".to_string()];
+        let mut state = AppState::new(CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![color],
+            subcommands: vec![CommandSpec {
+                name: "build".to_string(),
+                version: None,
+                about: None,
+                help: String::new(),
+                args: Vec::new(),
+                subcommands: Vec::new(),
+                ..CommandSpec::default()
+            }],
+            ..CommandSpec::default()
+        });
+        let mut frame_snapshot = FrameSnapshot::default();
+        state.ui.dropdown_open = Some("color".to_string());
+        frame_snapshot.layout.dropdown = Some(Rect::new(20, 5, 20, 5));
+        frame_snapshot.layout.sidebar = Some(Rect::new(0, 0, 20, 10));
+        frame_snapshot.layout.sidebar_items = vec![SidebarItemLayout {
+            path: vec!["build".to_string()].into(),
+            row: Rect::new(0, 1, 20, 1),
+            caret: None,
+            has_children: false,
+        }];
+
+        let action =
+            handle_mouse_event(click(1, 1), &state, &frame_snapshot, &TuiConfig::default())
+                .expect("sidebar action");
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.dropdown_open.is_none());
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["build".to_string()]
+        );
+        assert!(matches!(state.ui.focus, Focus::Sidebar));
     }
 
     #[test]

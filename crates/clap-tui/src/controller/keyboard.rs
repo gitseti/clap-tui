@@ -49,7 +49,7 @@ pub(crate) fn handle_key_event(
     {
         return Some(action);
     }
-    if matches!(state.ui.focus, Focus::Form) && is_form_text_input(key, state, config) {
+    if matches!(state.ui.focus, Focus::Form) && is_form_text_input(key, state) {
         return Some(Action::FormTextInput(key));
     }
 
@@ -174,7 +174,7 @@ fn handle_focused_key_event(
     }
 }
 
-fn is_form_text_input(key: AppKeyEvent, state: &AppState, config: &TuiConfig) -> bool {
+fn is_form_text_input(key: AppKeyEvent, state: &AppState) -> bool {
     let command = state.domain.current_command().clone();
     let args = form::visible_args(&command, state.ui.active_tab);
     let Some(item) = args
@@ -200,11 +200,10 @@ fn is_form_text_input(key: AppKeyEvent, state: &AppState, config: &TuiConfig) ->
             .is_some_and(|value| matches!(value, ArgValue::Text(_)));
     }
 
-    match key.code {
-        AppKeyCode::Tab | AppKeyCode::Up | AppKeyCode::Down | AppKeyCode::Esc => false,
-        AppKeyCode::Char(c) if c == config.keymap.search => false,
-        _ => true,
-    }
+    !matches!(
+        key.code,
+        AppKeyCode::Tab | AppKeyCode::Up | AppKeyCode::Down | AppKeyCode::Esc
+    )
 }
 
 #[cfg(test)]
@@ -437,5 +436,38 @@ mod tests {
         );
 
         assert_eq!(action, Some(Action::ActivateFormField));
+    }
+
+    #[test]
+    fn search_key_is_treated_as_text_input_in_form_fields() {
+        let mut state =
+            AppState::from_command(&clap::Command::new("tool").arg(Arg::new("path").long("path")));
+        state.ui.focus = Focus::Form;
+
+        let action = handle_key_event(
+            key(AppKeyCode::Char('/')),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(
+            action,
+            Some(Action::FormTextInput(key(AppKeyCode::Char('/'))))
+        );
+    }
+
+    #[test]
+    fn search_key_still_focuses_search_outside_text_input() {
+        let state = AppState::new(command());
+
+        let action = handle_key_event(
+            key(AppKeyCode::Char('/')),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::FocusSearch));
     }
 }

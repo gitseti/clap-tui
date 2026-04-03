@@ -141,6 +141,24 @@ impl TextEditor {
         modified
     }
 
+    pub(crate) fn insert_str(&mut self, text: &str) -> bool {
+        let mut textarea = self.to_textarea(self.selection_anchor);
+        let modified = textarea.insert_str(text);
+        let cursor = textarea.cursor();
+        self.lines = textarea.lines().to_vec();
+        self.cursor = TextPosition {
+            row: cursor.0,
+            col: cursor.1,
+        };
+        self.selection_anchor = if textarea.is_selecting() {
+            self.selection_anchor
+                .filter(|anchor| *anchor != self.cursor)
+        } else {
+            None
+        };
+        modified
+    }
+
     pub(crate) fn insert_row_below(&mut self) {
         let insert_at = self.current_row().saturating_add(1).min(self.lines.len());
         self.lines.insert(insert_at, String::new());

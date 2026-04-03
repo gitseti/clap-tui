@@ -13,6 +13,13 @@ pub(crate) enum EditResult {
     Handled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowEditorMode {
+    Occurrence,
+    FixedArityOccurrence { values_per_occurrence: usize },
+    GroupedValues,
+}
+
 pub(crate) fn displayed_text(state: &AppState, arg: &ArgModel) -> String {
     if uses_row_editor(arg)
         && let Some(text) = row_editor_displayed_text(state, arg)
@@ -69,25 +76,35 @@ fn normalize_row_editor_text(arg: &ArgModel, text: &str) -> String {
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
 
-    if uses_occurrence_rows(arg) {
-        return rows
+    match row_editor_mode(arg) {
+        Some(RowEditorMode::Occurrence) => rows
             .into_iter()
-            .map(|row| render_occurrence_text(arg, &split_occurrence_values(arg, row)))
+            .map(|row| render_occurrence_row_text(arg, &split_row_occurrence_values(arg, row)))
             .filter(|value| !value.is_empty())
             .collect::<Vec<_>>()
-            .join("\n");
-    }
-
-    if uses_grouped_value_rows(arg) {
-        return rows
+            .join("\n"),
+        Some(RowEditorMode::FixedArityOccurrence {
+            values_per_occurrence,
+        }) => group_occurrence_values(
+            rows.into_iter()
+                .flat_map(|row| split_row_occurrence_values(arg, row))
+                .filter(|value| !value.is_empty())
+                .collect(),
+            values_per_occurrence,
+        )
+        .into_iter()
+        .map(|values| render_occurrence_row_text(arg, &values))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n"),
+        Some(RowEditorMode::GroupedValues) => rows
             .into_iter()
             .flat_map(|row| split_occurrence_values(arg, row))
             .filter(|value| !value.is_empty())
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\n"),
+        None => rows.join("\n"),
     }
-
-    rows.join("\n")
 }
 
 pub(crate) fn apply_key_to_text_field(
@@ -129,36 +146,82 @@ pub(crate) fn apply_key_to_text_field(
     EditResult::Handled
 }
 
+pub(crate) fn apply_paste_to_text_field(
+    state: &mut AppState,
+    arg: &ArgModel,
+    text: &str,
+) -> EditResult {
+    let displayed = displayed_text(state, arg);
+    let command_key = arg.owner_path().clone();
+    let is_touched = state.domain.is_touched(&arg.id);
+    let has_default = arg.default_value().is_some();
+    let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    if has_default && !is_touched {
+        *textarea = TextEditor::from_displayed("");
+    }
+    if !textarea.insert_str(text) {
+        return EditResult::Ignored;
+    }
+
+    let text = textarea.text();
+    if text.is_empty() && has_default {
+        state.domain.clear_value_and_untouch(&arg.id);
+    } else if text.is_empty() && arg.uses_optional_value_semantics() {
+        state.domain.toggle_optional_value_flag(&arg.id, true);
+    } else if uses_row_editor(arg) {
+        let rows = textarea.lines().to_vec();
+        sync_row_editor_values(state, arg, &rows);
+    } else {
+        state.domain.set_text_value(&arg.id, &text);
+        state.domain.mark_touched(&arg.id);
+    }
+    EditResult::Handled
+}
+
 fn sync_row_editor_values(state: &mut AppState, arg: &ArgModel, rows: &[String]) {
-    let values = rows
-        .iter()
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .collect::<Vec<_>>();
-    let occurrences = if uses_occurrence_rows(arg) {
-        values
-            .into_iter()
+    let occurrences = match row_editor_mode(arg) {
+        Some(RowEditorMode::Occurrence) => rows
+            .iter()
+            .filter(|value| !value.is_empty())
             .map(|value| InputValueOccurrence {
-                values: split_occurrence_values(arg, &value),
+                values: split_row_occurrence_values(arg, value),
                 source: InputSource::User,
             })
             .filter(|occurrence| !occurrence.values.is_empty())
-            .collect()
-    } else if uses_grouped_value_rows(arg) {
-        if values.is_empty() {
-            Vec::new()
-        } else {
-            vec![InputValueOccurrence {
-                values: values
-                    .into_iter()
-                    .flat_map(|value| split_occurrence_values(arg, &value))
-                    .filter(|value| !value.is_empty())
-                    .collect(),
-                source: InputSource::User,
-            }]
+            .collect(),
+        Some(RowEditorMode::FixedArityOccurrence {
+            values_per_occurrence,
+        }) => group_occurrence_values(
+            rows.iter()
+                .filter(|value| !value.is_empty())
+                .flat_map(|value| split_row_occurrence_values(arg, value))
+                .filter(|value| !value.is_empty())
+                .collect(),
+            values_per_occurrence,
+        )
+        .into_iter()
+        .map(|values| InputValueOccurrence {
+            values,
+            source: InputSource::User,
+        })
+        .collect(),
+        Some(RowEditorMode::GroupedValues) => {
+            let values = rows
+                .iter()
+                .filter(|value| !value.is_empty())
+                .flat_map(|value| split_occurrence_values(arg, value))
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>();
+            if values.is_empty() {
+                Vec::new()
+            } else {
+                vec![InputValueOccurrence {
+                    values,
+                    source: InputSource::User,
+                }]
+            }
         }
-    } else {
-        Vec::new()
+        None => Vec::new(),
     };
     state.domain.replace_occurrences(&arg.id, occurrences);
 }
@@ -236,15 +299,89 @@ pub(crate) fn move_repeated_row_down(state: &mut AppState, arg: &ArgModel) -> Ed
 }
 
 fn uses_row_editor(arg: &ArgModel) -> bool {
-    uses_occurrence_rows(arg) || uses_grouped_value_rows(arg)
+    row_editor_mode(arg).is_some()
 }
 
 fn uses_occurrence_rows(arg: &ArgModel) -> bool {
-    arg.allows_multiple_occurrences()
+    matches!(
+        row_editor_mode(arg),
+        Some(RowEditorMode::Occurrence | RowEditorMode::FixedArityOccurrence { .. })
+    )
 }
 
 fn uses_grouped_value_rows(arg: &ArgModel) -> bool {
-    !arg.allows_multiple_occurrences() && arg.accepts_multiple_values_per_occurrence()
+    matches!(row_editor_mode(arg), Some(RowEditorMode::GroupedValues))
+}
+
+fn row_editor_mode(arg: &ArgModel) -> Option<RowEditorMode> {
+    if arg.allows_multiple_occurrences() {
+        if arg.accepts_multiple_values_per_occurrence()
+            && arg.metadata.syntax.value_delimiter.is_none()
+            && let Some(values_per_occurrence) = fixed_occurrence_group_size(arg)
+        {
+            return Some(RowEditorMode::FixedArityOccurrence {
+                values_per_occurrence,
+            });
+        }
+        return Some(RowEditorMode::Occurrence);
+    }
+
+    if arg.accepts_multiple_values_per_occurrence() {
+        return Some(RowEditorMode::GroupedValues);
+    }
+
+    None
+}
+
+fn fixed_occurrence_group_size(arg: &ArgModel) -> Option<usize> {
+    let cardinality = arg.metadata.cardinality;
+    match cardinality.max_values {
+        Some(max_values) if cardinality.min_values == max_values && max_values > 1 => {
+            Some(max_values)
+        }
+        _ => None,
+    }
+}
+
+fn split_row_occurrence_values(arg: &ArgModel, text: &str) -> Vec<String> {
+    if arg.accepts_multiple_values_per_occurrence()
+        && arg.allows_multiple_occurrences()
+        && arg.metadata.syntax.value_delimiter.is_none()
+    {
+        return text.split_whitespace().map(str::to_string).collect();
+    }
+
+    split_occurrence_values(arg, text)
+}
+
+fn render_occurrence_row_text(arg: &ArgModel, values: &[String]) -> String {
+    if arg.accepts_multiple_values_per_occurrence()
+        && arg.allows_multiple_occurrences()
+        && arg.metadata.syntax.value_delimiter.is_none()
+    {
+        return values.join(" ");
+    }
+
+    render_occurrence_text(arg, values)
+}
+
+fn group_occurrence_values(values: Vec<String>, values_per_occurrence: usize) -> Vec<Vec<String>> {
+    if values_per_occurrence == 0 {
+        return Vec::new();
+    }
+
+    let mut grouped = Vec::new();
+    let mut current = Vec::new();
+    for value in values {
+        current.push(value);
+        if current.len() == values_per_occurrence {
+            grouped.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        grouped.push(current);
+    }
+    grouped
 }
 
 fn row_editor_displayed_text(state: &AppState, arg: &ArgModel) -> Option<String> {
@@ -261,7 +398,7 @@ fn row_editor_displayed_text(state: &AppState, arg: &ArgModel) -> Option<String>
         return Some(
             occurrences
                 .iter()
-                .map(|occurrence| render_occurrence_text(arg, &occurrence.values))
+                .map(|occurrence| render_occurrence_row_text(arg, &occurrence.values))
                 .filter(|value| !value.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n"),

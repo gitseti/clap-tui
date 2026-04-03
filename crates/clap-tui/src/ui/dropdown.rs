@@ -128,11 +128,7 @@ fn build_dropdown_view(
 ) -> Option<DropdownView> {
     let arg_id = ui.dropdown_open.as_ref()?;
     let rect = frame_snapshot.layout.dropdown?;
-    let arg = domain
-        .current_command()
-        .args
-        .iter()
-        .find(|arg| &arg.id == arg_id)?;
+    let arg = domain.arg_for_input(arg_id)?;
 
     let current_form = domain.current_form();
     let widget = form::widget_for(arg);
@@ -276,5 +272,32 @@ mod tests {
 
         assert_eq!(view.total_rows, 1);
         assert_eq!(view.items[0].label, "fast  Fast path");
+    }
+
+    #[test]
+    fn dropdown_builds_for_inherited_global_choice_fields() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("color")
+                        .long("color")
+                        .global(true)
+                        .value_parser(["red", "green"]),
+                )
+                .subcommand(Command::new("admin")),
+        );
+        state
+            .select_command_path(&["admin".to_string()])
+            .expect("valid path");
+        state.ui.dropdown_open = Some("color".to_string());
+        let mut snapshot = crate::frame_snapshot::FrameSnapshot::default();
+        snapshot.layout.dropdown = Some(Rect::new(0, 0, 30, 4));
+
+        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &TuiConfig::default())
+            .expect("dropdown view");
+
+        assert_eq!(view.total_rows, 2);
+        assert_eq!(view.items[0].label, "red");
+        assert_eq!(view.items[1].label, "green");
     }
 }
