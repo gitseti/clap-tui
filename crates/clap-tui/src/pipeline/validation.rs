@@ -25,6 +25,11 @@ fn validate_with_clap(state: &AppState, command: Command, argv: &[String]) -> Va
             summary: None,
             field_errors: BTreeMap::new(),
         }),
+        Err(error) if error.kind() == ErrorKind::DisplayVersion => ValidationState {
+            is_valid: true,
+            summary: None,
+            field_errors: BTreeMap::new(),
+        },
         Err(error) => adapt_clap_error(state, &error),
     }
 }

@@ -1,6 +1,7 @@
 use std::error::Error as StdError;
 use std::time::Duration;
 
+use clap::error::ErrorKind;
 use clap::{Command, CommandFactory, Parser};
 use ratatui::Frame;
 
@@ -92,8 +93,7 @@ impl<R: Runtime> TuiApp<R> {
         let Some(argv) = self.run()? else {
             return Ok(());
         };
-        let matches = command.try_get_matches_from(argv)?;
-        runner(matches).map_err(|err| TuiError::Runner(Box::new(err)))
+        run_matches_handler(command, argv, runner)
     }
 
     /// Run the TUI and parse into a `clap::Parser` struct.
@@ -111,8 +111,7 @@ impl<R: Runtime> TuiApp<R> {
         let Some(argv) = self.run()? else {
             return Ok(());
         };
-        let parsed = T::try_parse_from(argv)?;
-        runner(parsed).map_err(|err| TuiError::Runner(Box::new(err)))
+        run_parser_handler::<T, _, _>(argv, runner)
     }
 
     fn run_inner(self) -> Result<Vec<String>, TuiError> {
@@ -125,6 +124,40 @@ impl<R: Runtime> TuiApp<R> {
         let mut session = TerminalSession::new(&mut runtime, terminal);
         event_loop(&command, &config, &mut session)
     }
+}
+
+fn parse_or_display<T>(result: Result<T, clap::Error>) -> Result<Option<T>, TuiError> {
+    match result {
+        Ok(parsed) => Ok(Some(parsed)),
+        Err(error) if error.kind() == ErrorKind::DisplayVersion => {
+            error.print()?;
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn run_matches_handler<F, E>(command: Command, argv: Vec<String>, runner: F) -> Result<(), TuiError>
+where
+    F: FnOnce(clap::ArgMatches) -> Result<(), E>,
+    E: StdError + Send + Sync + 'static,
+{
+    let Some(matches) = parse_or_display(command.try_get_matches_from(argv))? else {
+        return Ok(());
+    };
+    runner(matches).map_err(|err| TuiError::Runner(Box::new(err)))
+}
+
+fn run_parser_handler<T, F, E>(argv: Vec<String>, runner: F) -> Result<(), TuiError>
+where
+    T: Parser,
+    F: FnOnce(T) -> Result<(), E>,
+    E: StdError + Send + Sync + 'static,
+{
+    let Some(parsed) = parse_or_display(T::try_parse_from(argv))? else {
+        return Ok(());
+    };
+    runner(parsed).map_err(|err| TuiError::Runner(Box::new(err)))
 }
 
 fn event_loop<R: Runtime>(
@@ -549,6 +582,43 @@ mod tests {
         let toast = state.notifications.toast.as_ref().expect("toast");
         assert!(toast.is_error);
         assert_eq!(toast.message, "Missing required argument: --name");
+    }
+
+    #[test]
+    fn run_matches_handler_treats_version_display_as_success_and_skips_runner() {
+        let mut called = false;
+
+        let result = super::run_matches_handler(
+            Command::new("tool").version("1.2.3"),
+            vec!["tool".to_string(), "--version".to_string()],
+            |_matches| {
+                called = true;
+                Ok::<_, std::io::Error>(())
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(!called);
+    }
+
+    #[test]
+    fn run_parser_handler_treats_version_display_as_success_and_skips_runner() {
+        #[derive(clap::Parser)]
+        #[command(name = "tool", version = "1.2.3")]
+        struct Cli;
+
+        let mut called = false;
+
+        let result = super::run_parser_handler::<Cli, _, _>(
+            vec!["tool".to_string(), "--version".to_string()],
+            |_cli| {
+                called = true;
+                Ok::<_, std::io::Error>(())
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(!called);
     }
 
     #[test]

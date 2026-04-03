@@ -541,6 +541,31 @@ mod tests {
     }
 
     #[test]
+    fn version_display_actions_validate_as_successful_terminal_actions() {
+        let mut state = AppState::from_command(&Command::new("tool").version("1.2.3"));
+        let version_id = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.action_kind() == crate::spec::ArgActionKind::Version)
+            .expect("version arg should be present")
+            .id
+            .clone();
+        state.domain.toggle_flag_touched(&version_id);
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.argv,
+            vec!["tool".to_string(), "--version".to_string()]
+        );
+        assert!(derived.validation.is_valid);
+        assert_eq!(derived.validation.summary, None);
+        assert!(derived.validation.field_errors.is_empty());
+    }
+
+    #[test]
     fn invalid_value_summary_uses_arg_and_value_context() {
         let state = AppState::from_command(
             &Command::new("tool").arg(
