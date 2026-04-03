@@ -249,6 +249,20 @@ fn event_loop<R: Runtime>(
     config: &TuiConfig,
     session: &mut TerminalSession<'_, R>,
 ) -> Result<Vec<String>, TuiError> {
+    let mut observer = NoopDrawObserver;
+    event_loop_with_observer(command, config, session, &mut observer)
+}
+
+fn event_loop_with_observer<R, O>(
+    command: &Command,
+    config: &TuiConfig,
+    session: &mut TerminalSession<'_, R>,
+    observer: &mut O,
+) -> Result<Vec<String>, TuiError>
+where
+    R: Runtime,
+    O: DrawObserver<R::Backend>,
+{
     let mut state = AppState::from_command(command);
     if let Some(start) = config.start_command.clone() {
         controller::navigation::apply_start_command(&mut state, &start);
@@ -261,6 +275,7 @@ fn event_loop<R: Runtime>(
             session.draw(|frame| {
                 frame_snapshot = render_frame(frame, &mut state, config);
             })?;
+            observer.observe(session.backend(), &frame_snapshot)?;
             needs_redraw = false;
         }
 
@@ -425,6 +440,16 @@ fn render_frame(frame: &mut Frame<'_>, state: &mut AppState, config: &TuiConfig)
     ui::render(frame, state, config)
 }
 
+trait DrawObserver<B: ratatui::backend::Backend> {
+    fn observe(&mut self, _backend: &B, _frame_snapshot: &FrameSnapshot) -> Result<(), TuiError> {
+        Ok(())
+    }
+}
+
+struct NoopDrawObserver;
+
+impl<B: ratatui::backend::Backend> DrawObserver<B> for NoopDrawObserver {}
+
 enum ActionOutcome {
     Continue,
     Exit,
@@ -462,6 +487,13 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
             .map_err(TuiError::from)
     }
 
+    fn backend(&self) -> &R::Backend {
+        self.terminal
+            .as_ref()
+            .expect("terminal session is active")
+            .backend()
+    }
+
     fn poll_event(&mut self, timeout: Duration) -> Result<bool, TuiError> {
         self.runtime.poll_event(timeout)
     }
@@ -482,6 +514,11 @@ impl<R: Runtime> Drop for TerminalSession<'_, R> {
         }
     }
 }
+
+#[cfg(test)]
+mod scripted;
+#[cfg(test)]
+mod scripted_tests;
 
 #[cfg(test)]
 mod tests {

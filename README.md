@@ -83,6 +83,26 @@ Available presets:
 - `ThemePreset::HighContrastDark`
 - `ThemePreset::Light`
 
+## Testing Strategy
+
+`clap-tui` uses a small testing pyramid so behavior changes can land at the
+lowest layer that still protects the regression:
+
+- reducer and controller tests for pure state transitions and command semantics
+- render tests for layout, styling, and visible validation feedback
+- scripted app-flow tests for real event-loop behavior, rendered frames, mouse hits,
+  and final run or cancel outcomes
+- optional PTY smoke coverage only for terminal integration concerns such as raw mode
+  or alternate-screen startup and teardown
+
+When interactive behavior depends on redraw timing, focus changes, mouse layout, or
+the integration between rendering and input dispatch, prefer adding a scripted
+scenario in `crates/clap-tui/src/app/scripted_tests.rs`. Those tests use the
+crate-internal scripted harness in `crates/clap-tui/src/app/scripted.rs` and
+should prefer semantic helpers such as footer clicks and dropdown targeting over
+hard-coded coordinates. Keep raw event injection for the rare edge case where a
+semantic helper would hide the intent of the test.
+
 ## Controls
 - `Tab` switch focus
 - `Shift+Tab` cycle tabs
