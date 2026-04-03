@@ -19,14 +19,14 @@ struct Cli {
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = TuiApp::from_factory::<Cli>();
-    app.run_with_parser::<Cli, _, std::io::Error>(|cli| {
+    app.run_with_parser(|cli| {
         if cli.verbose {
             println!("Verbose mode on");
         }
         for _ in 0..cli.count {
             println!("Hello, {}!", cli.name);
         }
-        Ok(())
+        Ok::<_, std::io::Error>(())
     })?;
     Ok(())
 }

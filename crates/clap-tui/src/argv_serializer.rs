@@ -18,6 +18,7 @@ pub(crate) fn build_argv(
     command: &CommandModel,
     state: &CommandFormState,
     has_following_command: bool,
+    include_materialized_non_user: bool,
 ) -> Vec<String> {
     let mut argv = Vec::new();
     let mut positionals = Vec::new();
@@ -28,7 +29,7 @@ pub(crate) fn build_argv(
         let Some(input) = state.input(&arg.id) else {
             continue;
         };
-        if should_omit_input(input) {
+        if should_omit_input(input, include_materialized_non_user) {
             continue;
         }
         if matches!(&input.value, ArgInput::Values { .. }) && arg.serializes_as_positional() {
@@ -40,7 +41,7 @@ pub(crate) fn build_argv(
         let Some(input) = state.input(&arg.id) else {
             continue;
         };
-        if should_omit_input(input) {
+        if should_omit_input(input, include_materialized_non_user) {
             continue;
         }
 
@@ -127,18 +128,31 @@ pub(crate) fn build_argv(
     argv
 }
 
-fn should_omit_input(input: &crate::input::ArgInputState) -> bool {
+fn should_omit_input(
+    input: &crate::input::ArgInputState,
+    include_materialized_non_user: bool,
+) -> bool {
     if input.touched {
         return false;
     }
 
+    if !include_materialized_non_user {
+        return match &input.value {
+            ArgInput::Flag { source, .. } | ArgInput::Count { source, .. } => {
+                *source != InputSource::User
+            }
+            ArgInput::Values { occurrences } => occurrences
+                .iter()
+                .all(|occurrence| occurrence.source != InputSource::User),
+        };
+    }
+
     match &input.value {
-        ArgInput::Flag { source, .. } | ArgInput::Count { source, .. } => {
-            *source != InputSource::User
-        }
+        ArgInput::Flag { present, .. } => !present,
+        ArgInput::Count { occurrences, .. } => *occurrences == 0,
         ArgInput::Values { occurrences } => occurrences
             .iter()
-            .all(|occurrence| occurrence.source != InputSource::User),
+            .all(|occurrence| occurrence.values.iter().all(String::is_empty)),
     }
 }
 

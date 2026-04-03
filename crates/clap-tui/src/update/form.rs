@@ -200,7 +200,7 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
     };
     let command = state.domain.current_command().clone();
     let args = form::visible_args(&command, state.ui.active_tab);
-    let validation = crate::pipeline::derive(state).validation;
+    let validation = state.derived_validation();
     if let Some(hit) =
         form::hit_test_form_content_with_errors(&args, content_y, &validation.field_errors)
     {

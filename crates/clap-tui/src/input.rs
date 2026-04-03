@@ -98,6 +98,7 @@ pub struct DomainState {
     pub selected_path: CommandPath,
     pub expanded: HashSet<String>,
     pub forms: HashMap<String, CommandFormState>,
+    derived_revision: u64,
 }
 
 #[derive(Debug)]
@@ -129,6 +130,13 @@ pub struct AppState {
     pub domain: DomainState,
     pub ui: UiState,
     pub notifications: NotificationState,
+    derived_cache: Option<DerivedCache>,
+}
+
+#[derive(Debug, Clone)]
+struct DerivedCache {
+    revision: u64,
+    derived: crate::pipeline::DerivedState,
 }
 
 impl DomainState {
@@ -146,6 +154,7 @@ impl DomainState {
             selected_path: CommandPath::default(),
             expanded,
             forms: HashMap::new(),
+            derived_revision: 0,
         }
     }
 
@@ -175,6 +184,7 @@ impl DomainState {
     }
 
     pub fn initialize_current_form_defaults(&mut self) {
+        let mut changed = false;
         let args = self
             .root
             .args_defined_on_path(&self.selected_path)
@@ -189,13 +199,19 @@ impl DomainState {
             let should_remove = {
                 let form = self.forms.entry(key.clone()).or_default();
                 if let Some(input) = default_input {
-                    form.inputs.entry(arg.id.clone()).or_insert(input);
+                    if !form.inputs.contains_key(&arg.id) {
+                        form.inputs.insert(arg.id.clone(), input);
+                        changed = true;
+                    }
                 }
                 form.is_empty()
             };
-            if should_remove {
-                self.forms.remove(&key);
+            if should_remove && self.forms.remove(&key).is_some() {
+                changed = true;
             }
+        }
+        if changed {
+            self.bump_derived_revision();
         }
     }
 
@@ -278,20 +294,29 @@ impl DomainState {
             return;
         };
         let default_input = Self::initial_input_state(&arg);
+        let mut changed = false;
         let should_remove = {
             let form = self.forms.entry(owner_key.clone()).or_default();
             match default_input {
                 Some(input) => {
-                    form.inputs.insert(arg_id.to_string(), input);
+                    if form.inputs.get(arg_id) != Some(&input) {
+                        form.inputs.insert(arg_id.to_string(), input);
+                        changed = true;
+                    }
                 }
                 None => {
-                    form.inputs.remove(arg_id);
+                    if form.inputs.remove(arg_id).is_some() {
+                        changed = true;
+                    }
                 }
             }
             form.is_empty()
         };
-        if should_remove {
-            self.forms.remove(&owner_key);
+        if should_remove && self.forms.remove(&owner_key).is_some() {
+            changed = true;
+        }
+        if changed {
+            self.bump_derived_revision();
         }
     }
 
@@ -311,6 +336,7 @@ impl DomainState {
         for key in self.root.expand_prefix_keys(&prefix_path) {
             self.expanded.insert(key);
         }
+        self.bump_derived_revision();
         Ok(())
     }
 
@@ -448,13 +474,7 @@ impl DomainState {
             .into_iter()
             .filter(|arg| !arg.is_help_action())
         {
-            let key = self.command_path_key_for(arg.owner_path());
-            let input = self
-                .forms
-                .get(&key)
-                .and_then(|owner_form| owner_form.inputs.get(&arg.id))
-                .cloned()
-                .or_else(|| Self::initial_input_state(arg));
+            let input = self.stored_arg_input(arg);
             if let Some(input) = input {
                 form.inputs.insert(arg.id.clone(), input);
             }
@@ -479,12 +499,15 @@ impl DomainState {
 
     fn effective_arg_input(&self, arg_id: &str) -> Option<ArgInputState> {
         let arg = self.arg_for_input(arg_id)?;
+        self.stored_arg_input(arg)
+    }
+
+    fn stored_arg_input(&self, arg: &ArgSpec) -> Option<ArgInputState> {
         let key = self.command_path_key_for(arg.owner_path());
         self.forms
             .get(&key)
-            .and_then(|form| form.inputs.get(arg_id))
+            .and_then(|form| form.inputs.get(&arg.id))
             .cloned()
-            .or_else(|| Self::initial_input_state(arg))
     }
 
     fn with_arg_input_state_mut<F>(&mut self, arg_id: &str, mutate: F)
@@ -496,6 +519,7 @@ impl DomainState {
         };
         let key = self.command_path_key_for(arg.owner_path());
         let default_input = Self::initial_input_state(&arg);
+        let mut changed = false;
         let should_remove = {
             let form = self.forms.entry(key.clone()).or_default();
             let mut input = form
@@ -506,15 +530,29 @@ impl DomainState {
                 .unwrap_or_else(|| ArgInputState::empty_for(&arg));
             mutate(&arg, &mut input);
             if input.is_effectively_empty() {
-                form.inputs.remove(arg_id);
-            } else {
+                if form.inputs.remove(arg_id).is_some() {
+                    changed = true;
+                }
+            } else if form.inputs.get(arg_id) != Some(&input) {
                 form.inputs.insert(arg_id.to_string(), input);
+                changed = true;
             }
             form.is_empty()
         };
-        if should_remove {
-            self.forms.remove(&key);
+        if should_remove && self.forms.remove(&key).is_some() {
+            changed = true;
         }
+        if changed {
+            self.bump_derived_revision();
+        }
+    }
+
+    pub(crate) fn derived_revision(&self) -> u64 {
+        self.derived_revision
+    }
+
+    fn bump_derived_revision(&mut self) {
+        self.derived_revision = self.derived_revision.saturating_add(1);
     }
 
     fn initial_input_state(arg: &ArgSpec) -> Option<ArgInputState> {
@@ -991,6 +1029,7 @@ impl AppState {
                 mouse_select: None,
             },
             notifications: NotificationState::default(),
+            derived_cache: None,
         };
         state.initialize_current_command();
         state
@@ -1019,6 +1058,31 @@ impl AppState {
         self.domain.select_command_by_search_path(start)?;
         self.initialize_current_command();
         Ok(())
+    }
+
+    pub(crate) fn derived(&mut self) -> &crate::pipeline::DerivedState {
+        let revision = self.domain.derived_revision();
+        let needs_refresh = self
+            .derived_cache
+            .as_ref()
+            .is_none_or(|cache| cache.revision != revision);
+        if needs_refresh {
+            let derived = crate::pipeline::derive(self);
+            self.derived_cache = Some(DerivedCache { revision, derived });
+        }
+        &self
+            .derived_cache
+            .as_ref()
+            .expect("derived cache should exist after refresh")
+            .derived
+    }
+
+    pub(crate) fn preview_argv(&mut self) -> Vec<String> {
+        self.derived().argv.clone()
+    }
+
+    pub(crate) fn derived_validation(&mut self) -> crate::pipeline::ValidationState {
+        self.derived().validation.clone()
     }
 }
 
@@ -1078,6 +1142,48 @@ mod tests {
             }),
             Some(ArgValue::Bool(false))
         );
+    }
+
+    #[test]
+    fn env_backed_defaults_remain_stable_after_env_source_changes() {
+        let path = std::env::var("PATH").expect("PATH should exist for env-backed default tests");
+        let root = CommandSpec::from_command(
+            &Command::new("tool").arg(Arg::new("config").long("config").env("PATH")),
+        );
+        let mut state = AppState::new(root);
+        let initial_form = state.domain.current_form().expect("materialized form");
+        let config = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "config")
+            .expect("config arg");
+        assert_eq!(
+            initial_form.compatibility_value(config),
+            Some(ArgValue::Text(path.clone()))
+        );
+        assert_eq!(initial_form.input_source("config"), Some(InputSource::Env));
+
+        state.domain.root.args[0].metadata.defaults.env =
+            Some("CLAP_TUI_TEST_ENV_STABILITY_UNUSED".to_string());
+
+        let current_form = state
+            .domain
+            .current_form()
+            .expect("effective form remains available");
+        let config = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "config")
+            .expect("config arg");
+        assert_eq!(
+            current_form.compatibility_value(config),
+            Some(ArgValue::Text(path))
+        );
+        assert_eq!(current_form.input_source("config"), Some(InputSource::Env));
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use clap::ArgMatches;
 use clap::parser::ValueSource;
 
-use crate::input::{AppState, ArgInput, CommandFormState};
+use crate::input::{AppState, ArgInput, CommandFormState, InputSource};
 use crate::spec::ArgSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +116,10 @@ fn effective_source(
     source: ValueSource,
     values: &[String],
 ) -> EffectiveValueSource {
+    if let Some(source) = materialized_input_source(current_form, arg) {
+        return source;
+    }
+
     match source {
         ValueSource::CommandLine => {
             if arg.uses_optional_value_semantics()
@@ -139,5 +143,21 @@ fn effective_source(
         }
         ValueSource::EnvVariable => EffectiveValueSource::Env,
         _ => EffectiveValueSource::User,
+    }
+}
+
+fn materialized_input_source(
+    current_form: &CommandFormState,
+    arg: &ArgSpec,
+) -> Option<EffectiveValueSource> {
+    let input = current_form.input(&arg.id)?;
+    if input.touched {
+        return None;
+    }
+
+    match input.input_source()? {
+        InputSource::User => None,
+        InputSource::Default => Some(EffectiveValueSource::Default),
+        InputSource::Env => Some(EffectiveValueSource::Env),
     }
 }

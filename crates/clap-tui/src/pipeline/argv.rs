@@ -2,6 +2,17 @@ use crate::argv_serializer;
 use crate::input::AppState;
 
 pub(crate) fn build_command_line(state: &AppState) -> Vec<String> {
+    build_command_line_with_mode(state, false)
+}
+
+pub(crate) fn build_parse_command_line(state: &AppState) -> Vec<String> {
+    build_command_line_with_mode(state, true)
+}
+
+fn build_command_line_with_mode(
+    state: &AppState,
+    include_materialized_non_user: bool,
+) -> Vec<String> {
     let mut command_line = vec![state.domain.root.name.clone()];
     let lineage = state
         .domain
@@ -16,6 +27,7 @@ pub(crate) fn build_command_line(state: &AppState) -> Vec<String> {
             command,
             &form,
             lineage.get(index + 1).is_some(),
+            include_materialized_non_user,
         ));
         if let Some(next) = lineage.get(index + 1) {
             command_line.push(next.name.clone());

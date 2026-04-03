@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use clap::Command;
@@ -7,7 +9,15 @@ use crate::input::{AppState, ArgInput, ArgInputState, ArgValue, CommandFormState
 use crate::pipeline::ValidationState;
 use crate::spec::{ArgModel, CommandModel};
 
+#[cfg(test)]
+thread_local! {
+    static VALIDATION_CALL_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
 pub(crate) fn validate_argv(state: &AppState, argv: &[String]) -> ValidationState {
+    #[cfg(test)]
+    VALIDATION_CALL_COUNT.with(|count| count.set(count.get() + 1));
+
     if let Some(command) = state.domain.validation_command.as_ref() {
         return validate_with_clap(state, command.clone(), argv);
     }
@@ -16,6 +26,16 @@ pub(crate) fn validate_argv(state: &AppState, argv: &[String]) -> ValidationStat
         state.domain.current_command(),
         &state.domain.current_form().unwrap_or_default(),
     )
+}
+
+#[cfg(test)]
+pub(crate) fn validation_call_count() -> usize {
+    VALIDATION_CALL_COUNT.with(Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_validation_call_count() {
+    VALIDATION_CALL_COUNT.with(|count| count.set(0));
 }
 
 fn validate_with_clap(state: &AppState, command: Command, argv: &[String]) -> ValidationState {

@@ -65,7 +65,7 @@ pub(crate) fn render(
         .border_style(styles::panel_border(config, false))
         .style(styles::panel(config));
     frame.render_widget(background, size);
-    let derived = pipeline::derive(state);
+    let derived = state.derived().clone();
     let selected_path = state.domain.selected_path().clone();
     let vm = ScreenView::build(
         state.domain.current_command(),
@@ -163,6 +163,7 @@ mod tests {
     use crate::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::AppState;
+    use crate::pipeline;
     use crate::runtime::{AppKeyCode, AppKeyEvent, AppKeyModifiers};
 
     fn render_app(state: &mut AppState) -> (TestBackend, FrameSnapshot) {
@@ -408,6 +409,26 @@ mod tests {
             .input;
 
         backend.assert_cursor_position(Position::new(input.x + 3, input.y + 1));
+    }
+
+    #[test]
+    fn redraw_only_changes_reuse_cached_derived_state() {
+        pipeline::reset_validation_call_count();
+
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("name").long("name").required(true)),
+        );
+
+        let _ = render_app(&mut state);
+        assert_eq!(pipeline::validation_call_count(), 1);
+
+        state.ui.focus_search();
+        let _ = render_app(&mut state);
+        assert_eq!(pipeline::validation_call_count(), 1);
+
+        state.domain.set_text_value("name", "codex");
+        let _ = render_app(&mut state);
+        assert_eq!(pipeline::validation_call_count(), 2);
     }
 
     #[test]

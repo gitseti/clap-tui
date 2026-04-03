@@ -68,7 +68,7 @@ fn apply_paste(text: &str, state: &mut AppState) {
 
 fn apply_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
     match target {
-        HoverTarget::Run => Effect::Run(crate::pipeline::build_command_line(state)),
+        HoverTarget::Run => Effect::Run(state.preview_argv()),
         HoverTarget::Exit => Effect::Exit,
         HoverTarget::Search => {
             state.ui.focus_search();

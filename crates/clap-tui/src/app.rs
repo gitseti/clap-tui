@@ -1,4 +1,5 @@
 use std::error::Error as StdError;
+use std::marker::PhantomData;
 use std::time::Duration;
 
 use clap::error::ErrorKind;
@@ -29,6 +30,15 @@ pub struct TuiApp<R: Runtime = CrosstermRuntime> {
     runtime: R,
 }
 
+/// Schema-bound TUI application for derive-based `clap` parsers.
+///
+/// This wrapper ties parser execution to the same `Parser + CommandFactory` type that produced
+/// the rendered clap schema, avoiding post-hoc parser selection against an unrelated command.
+pub struct ParserTuiApp<T, R: Runtime = CrosstermRuntime> {
+    inner: TuiApp<R>,
+    _parser: PhantomData<fn() -> T>,
+}
+
 impl TuiApp<CrosstermRuntime> {
     /// Create from a `clap::Command`.
     #[must_use]
@@ -40,10 +50,10 @@ impl TuiApp<CrosstermRuntime> {
         }
     }
 
-    /// Create from a `clap::CommandFactory` (derive-based CLI).
+    /// Create a schema-bound app from a derive-based CLI.
     #[must_use]
-    pub fn from_factory<T: CommandFactory>() -> Self {
-        Self::from_command(T::command())
+    pub fn from_factory<T: Parser + CommandFactory>() -> ParserTuiApp<T, CrosstermRuntime> {
+        ParserTuiApp::new()
     }
 }
 
@@ -96,24 +106,6 @@ impl<R: Runtime> TuiApp<R> {
         run_matches_handler(command, argv, runner)
     }
 
-    /// Run the TUI and parse into a `clap::Parser` struct.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when terminal setup, event handling, clap validation, or the runner
-    /// callback fails.
-    pub fn run_with_parser<T, F, E>(self, runner: F) -> Result<(), TuiError>
-    where
-        T: Parser,
-        F: FnOnce(T) -> Result<(), E>,
-        E: StdError + Send + Sync + 'static,
-    {
-        let Some(argv) = self.run()? else {
-            return Ok(());
-        };
-        run_parser_handler::<T, _, _>(argv, runner)
-    }
-
     fn run_inner(self) -> Result<Vec<String>, TuiError> {
         let Self {
             command,
@@ -123,6 +115,98 @@ impl<R: Runtime> TuiApp<R> {
         let terminal = runtime.init_terminal()?;
         let mut session = TerminalSession::new(&mut runtime, terminal);
         event_loop(&command, &config, &mut session)
+    }
+}
+
+impl<T> ParserTuiApp<T, CrosstermRuntime>
+where
+    T: Parser + CommandFactory,
+{
+    /// Create a schema-bound app from a derive-based CLI.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: TuiApp::from_command(T::command()),
+            _parser: PhantomData,
+        }
+    }
+}
+
+impl<T> Default for ParserTuiApp<T, CrosstermRuntime>
+where
+    T: Parser + CommandFactory,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T, R: Runtime> ParserTuiApp<T, R>
+where
+    T: Parser + CommandFactory,
+{
+    /// Apply configuration.
+    #[must_use]
+    pub fn with_config(self, config: TuiConfig) -> Self {
+        Self {
+            inner: self.inner.with_config(config),
+            _parser: PhantomData,
+        }
+    }
+
+    /// Replace the default runtime.
+    #[must_use]
+    pub fn with_runtime<NR: Runtime>(self, runtime: NR) -> ParserTuiApp<T, NR> {
+        ParserTuiApp {
+            inner: self.inner.with_runtime(runtime),
+            _parser: PhantomData,
+        }
+    }
+
+    /// Run the TUI and return the selected argv.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when terminal setup, event handling, or clap validation fails.
+    pub fn run(self) -> Result<Option<Vec<String>>, TuiError> {
+        self.inner.run()
+    }
+
+    /// Run the TUI and execute a custom handler with `ArgMatches`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when terminal setup, event handling, clap validation, or the runner
+    /// callback fails.
+    pub fn run_with_matches<F, E>(self, runner: F) -> Result<(), TuiError>
+    where
+        F: FnOnce(clap::ArgMatches) -> Result<(), E>,
+        E: StdError + Send + Sync + 'static,
+    {
+        self.inner.run_with_matches(runner)
+    }
+
+    /// Run the TUI and parse into the bound `clap::Parser` type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when terminal setup, event handling, clap validation, or the runner
+    /// callback fails.
+    pub fn run_with_parser<F, E>(self, runner: F) -> Result<(), TuiError>
+    where
+        F: FnOnce(T) -> Result<(), E>,
+        E: StdError + Send + Sync + 'static,
+    {
+        let Some(argv) = self.run()? else {
+            return Ok(());
+        };
+        run_parser_handler::<T, _, _>(argv, runner)
+    }
+
+    /// Drop down to the untyped app surface when only argv or `ArgMatches` execution is needed.
+    #[must_use]
+    pub fn into_untyped(self) -> TuiApp<R> {
+        self.inner
     }
 }
 
@@ -181,11 +265,7 @@ fn event_loop<R: Runtime>(
         }
 
         if !session.poll_event(redraw_timeout(&state))? {
-            let had_toast = state.notifications.toast.is_some();
-            state.notifications.clear_expired_toast();
-            if had_toast && state.notifications.toast.is_none() {
-                needs_redraw = true;
-            }
+            needs_redraw |= clear_expired_toast_and_request_redraw(&mut state);
             continue;
         }
 
@@ -219,6 +299,12 @@ fn redraw_timeout(state: &AppState) -> Duration {
         })
 }
 
+fn clear_expired_toast_and_request_redraw(state: &mut AppState) -> bool {
+    let had_toast = state.notifications.toast.is_some();
+    state.notifications.clear_expired_toast();
+    had_toast && state.notifications.toast.is_none()
+}
+
 fn handle_effect<R: Runtime>(
     effect: Effect,
     state: &mut AppState,
@@ -227,7 +313,7 @@ fn handle_effect<R: Runtime>(
     match effect {
         Effect::None => ActionOutcome::Continue,
         Effect::Run(argv) => {
-            let validation = crate::pipeline::validate_argv(state, &argv);
+            let validation = state.derived_validation();
             if validation.is_valid {
                 ActionOutcome::Run(argv)
             } else {
@@ -270,20 +356,25 @@ fn handle_app_event<R: Runtime>(
     config: &TuiConfig,
     session: &mut TerminalSession<'_, R>,
 ) -> EventOutcome {
+    let mut needs_redraw = clear_expired_toast_and_request_redraw(state);
+
     match event {
         AppEvent::Key(key) => {
             if let Some(action) = controller::handle_key_event(*key, state, frame_snapshot, config)
             {
                 let effect = update::apply_action(&action, state, frame_snapshot);
                 match handle_effect(effect, state, session) {
-                    ActionOutcome::Continue => EventOutcome::Continue { needs_redraw: true },
+                    ActionOutcome::Continue => {
+                        needs_redraw |= true;
+                        needs_redraw |= clear_expired_toast_and_request_redraw(state);
+                        EventOutcome::Continue { needs_redraw }
+                    }
                     ActionOutcome::Exit => EventOutcome::Exit,
                     ActionOutcome::Run(argv) => EventOutcome::Run(argv),
                 }
             } else {
-                EventOutcome::Continue {
-                    needs_redraw: false,
-                }
+                needs_redraw |= clear_expired_toast_and_request_redraw(state);
+                EventOutcome::Continue { needs_redraw }
             }
         }
         AppEvent::Mouse(mouse) => {
@@ -292,30 +383,40 @@ fn handle_app_event<R: Runtime>(
             {
                 let effect = update::apply_action(&action, state, frame_snapshot);
                 match handle_effect(effect, state, session) {
-                    ActionOutcome::Continue => EventOutcome::Continue { needs_redraw: true },
+                    ActionOutcome::Continue => {
+                        needs_redraw |= true;
+                        needs_redraw |= clear_expired_toast_and_request_redraw(state);
+                        EventOutcome::Continue { needs_redraw }
+                    }
                     ActionOutcome::Exit => EventOutcome::Exit,
                     ActionOutcome::Run(argv) => EventOutcome::Run(argv),
                 }
             } else {
-                EventOutcome::Continue {
-                    needs_redraw: false,
-                }
+                needs_redraw |= clear_expired_toast_and_request_redraw(state);
+                EventOutcome::Continue { needs_redraw }
             }
         }
-        AppEvent::Resize { .. } => EventOutcome::Continue { needs_redraw: true },
+        AppEvent::Resize { .. } => {
+            needs_redraw = true;
+            needs_redraw |= clear_expired_toast_and_request_redraw(state);
+            EventOutcome::Continue { needs_redraw }
+        }
         AppEvent::Paste(text) => {
             let effect =
                 update::apply_action(&update::Action::Paste(text.clone()), state, frame_snapshot);
             match handle_effect(effect, state, session) {
-                ActionOutcome::Continue => EventOutcome::Continue { needs_redraw: true },
+                ActionOutcome::Continue => {
+                    needs_redraw |= true;
+                    needs_redraw |= clear_expired_toast_and_request_redraw(state);
+                    EventOutcome::Continue { needs_redraw }
+                }
                 ActionOutcome::Exit => EventOutcome::Exit,
                 ActionOutcome::Run(argv) => EventOutcome::Run(argv),
             }
         }
         AppEvent::FocusGained | AppEvent::FocusLost | AppEvent::Unsupported => {
-            EventOutcome::Continue {
-                needs_redraw: false,
-            }
+            needs_redraw |= clear_expired_toast_and_request_redraw(state);
+            EventOutcome::Continue { needs_redraw }
         }
     }
 }
@@ -385,7 +486,7 @@ impl<R: Runtime> Drop for TerminalSession<'_, R> {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use clap::{Arg, ArgAction, Command};
     use ratatui::Terminal;
@@ -396,7 +497,8 @@ mod tests {
         redraw_timeout,
     };
     use crate::frame_snapshot::FrameSnapshot;
-    use crate::input::AppState;
+    use crate::input::{AppState, Toast};
+    use crate::pipeline;
     use crate::runtime::{AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, Runtime};
     use crate::spec::CommandSpec;
     use crate::update::Effect;
@@ -585,6 +687,32 @@ mod tests {
     }
 
     #[test]
+    fn run_uses_cached_validation_state_without_revalidating() {
+        pipeline::reset_validation_call_count();
+
+        let command = Command::new("tool").arg(
+            Arg::new("name")
+                .long("name")
+                .required(true)
+                .action(ArgAction::Set),
+        );
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        let mut state = app_state_from_command(&command);
+        let argv = state.preview_argv();
+
+        assert_eq!(pipeline::validation_call_count(), 1);
+
+        let outcome = handle_effect(Effect::Run(argv), &mut state, &mut session);
+
+        assert!(matches!(outcome, ActionOutcome::Continue));
+        assert_eq!(pipeline::validation_call_count(), 1);
+        let toast = state.notifications.toast.as_ref().expect("toast");
+        assert!(toast.is_error);
+        assert_eq!(toast.message, "Missing required argument: --name");
+    }
+
+    #[test]
     fn run_matches_handler_treats_version_display_as_success_and_skips_runner() {
         let mut called = false;
 
@@ -619,6 +747,40 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(!called);
+    }
+
+    #[test]
+    fn parser_bound_app_runs_with_its_bound_parser_type() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        struct Cli {
+            #[arg(long, default_value = "world")]
+            name: String,
+        }
+
+        let runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('r'),
+            AppKeyModifiers {
+                control: true,
+                ..AppKeyModifiers::default()
+            },
+        ))]);
+
+        let mut parsed = None;
+        let result = super::TuiApp::from_factory::<Cli>()
+            .with_runtime(runtime)
+            .run_with_parser(|cli| {
+                parsed = Some(cli);
+                Ok::<_, std::io::Error>(())
+            });
+
+        assert!(result.is_ok());
+        assert_eq!(
+            parsed,
+            Some(Cli {
+                name: "world".to_string()
+            })
+        );
     }
 
     #[test]
@@ -693,6 +855,16 @@ mod tests {
             form.compatibility_value(arg),
             Some(crate::input::ArgValue::Text("/tmp/foo".to_string()))
         );
+        let derived = crate::pipeline::derive(&state);
+        assert_eq!(
+            derived.argv,
+            vec![
+                "tool".to_string(),
+                "--path".to_string(),
+                "/tmp/foo".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
     }
 
     #[test]
@@ -730,5 +902,36 @@ mod tests {
 
         assert!(timeout > Duration::ZERO);
         assert!(timeout <= Duration::from_millis(250));
+    }
+
+    #[test]
+    fn expired_toast_clears_during_continuous_key_input() {
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        let mut state = app_state();
+        state.notifications.toast = Some(Toast {
+            message: "Copied command to clipboard".to_string(),
+            expires_at: Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("duration should be representable"),
+            is_error: false,
+        });
+
+        let outcome = handle_app_event(
+            &AppEvent::Key(AppKeyEvent::new(
+                AppKeyCode::Char('x'),
+                AppKeyModifiers::default(),
+            )),
+            &mut state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+            &mut session,
+        );
+
+        assert!(matches!(
+            outcome,
+            EventOutcome::Continue { needs_redraw: true }
+        ));
+        assert!(state.notifications.toast.is_none());
     }
 }

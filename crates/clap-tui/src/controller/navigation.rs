@@ -299,7 +299,7 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     };
     let command = state.domain.current_command().clone();
     let args = form::visible_args(&command, state.ui.active_tab);
-    let validation = crate::pipeline::derive(state).validation;
+    let validation = state.derived_validation();
     let Some((input_top, input_bottom)) = form::field_content_bounds_with_errors(
         &args,
         state.ui.selected_arg_index,

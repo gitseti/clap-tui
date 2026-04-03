@@ -8,7 +8,8 @@
 //! # Intended Public Surface
 //!
 //! The crate intentionally keeps its stable public surface small:
-//! - [`TuiApp`] is the primary entry point.
+//! - [`TuiApp`] is the primary untyped entry point.
+//! - [`ParserTuiApp`] is the schema-bound typed wrapper for derive-based CLIs.
 //! - [`TuiConfig`] and theme types customize look and layout.
 //! - [`Runtime`] plus the crate-local event types support advanced runtime integration.
 //!
@@ -32,7 +33,7 @@ mod ui;
 mod update;
 
 /// Primary TUI application entry point.
-pub use app::TuiApp;
+pub use app::{ParserTuiApp, TuiApp};
 /// Public configuration and theming types.
 pub use config::{Keymap, LayoutConfig, Theme, ThemePreset, TuiConfig};
 /// Error type returned by public `clap-tui` operations.

@@ -28,9 +28,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = TuiApp::from_factory::<Cli>();
     let mut config = TuiConfig::default();
     config.theme = Theme::from_preset(ThemePreset::HighContrastDark);
-    app.with_config(config).run_with_parser::<Cli, _, std::io::Error>(|cli| {
+    app.with_config(config).run_with_parser(|cli| {
         println!("Hello {}", cli.name);
-        Ok(())
+        Ok::<_, std::io::Error>(())
     })?;
     Ok(())
 }
@@ -41,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 The crate intentionally supports three public customization seams during the
 ongoing internal refactor:
 - custom runtimes with `TuiApp::with_runtime(...)`
+- derive-based typed execution with `TuiApp::from_factory::<Cli>().run_with_parser(...)`
 - theming and layout through `TuiConfig`
 - initial command selection through `TuiConfig.start_command`
 

@@ -24,19 +24,32 @@ pub(crate) struct DerivedState {
 
 pub(crate) fn derive(state: &AppState) -> DerivedState {
     let argv = argv::build_command_line(state);
+    let parse_argv = argv::build_parse_command_line(state);
     DerivedState {
-        effective_values: effective::derive_effective_values(state, &argv),
-        validation: validation::validate_argv(state, &argv),
+        effective_values: effective::derive_effective_values(state, &parse_argv),
+        validation: validation::validate_argv(state, &parse_argv),
         argv,
     }
 }
 
+#[cfg(test)]
 pub(crate) fn build_command_line(state: &AppState) -> Vec<String> {
     argv::build_command_line(state)
 }
 
+#[cfg(test)]
 pub(crate) fn validate_argv(state: &AppState, argv: &[String]) -> ValidationState {
     validation::validate_argv(state, argv)
+}
+
+#[cfg(test)]
+pub(crate) fn validation_call_count() -> usize {
+    validation::validation_call_count()
+}
+
+#[cfg(test)]
+pub(crate) fn reset_validation_call_count() {
+    validation::reset_validation_call_count();
 }
 
 #[cfg(test)]
@@ -213,6 +226,50 @@ mod tests {
         );
         assert!(derived.validation.field_errors.contains_key("debug"));
         assert!(derived.validation.field_errors.contains_key("quiet"));
+    }
+
+    #[test]
+    fn derived_state_remains_stable_after_env_source_changes() {
+        let path = std::env::var("PATH").expect("PATH should exist for env-backed default tests");
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("config").long("config").env("PATH").required(true)),
+        );
+
+        let initial = derive(&state);
+        assert_eq!(initial.argv, vec!["tool".to_string()]);
+        assert!(initial.validation.is_valid);
+        assert_eq!(
+            initial
+                .effective_values
+                .get("config")
+                .expect("effective value for env-backed config")
+                .source,
+            EffectiveValueSource::Env
+        );
+        assert_eq!(
+            initial
+                .effective_values
+                .get("config")
+                .expect("effective value for env-backed config")
+                .values,
+            vec![path]
+        );
+
+        state.domain.root.args[0].metadata.defaults.env =
+            Some("CLAP_TUI_TEST_ENV_DERIVED_UNUSED".to_string());
+        state.domain.validation_command = Some(
+            Command::new("tool").arg(
+                Arg::new("config")
+                    .long("config")
+                    .env("CLAP_TUI_TEST_ENV_DERIVED_UNUSED")
+                    .required(true),
+            ),
+        );
+
+        let after_mutation = derive(&state);
+        assert_eq!(after_mutation.argv, initial.argv);
+        assert_eq!(after_mutation.validation, initial.validation);
+        assert_eq!(after_mutation.effective_values, initial.effective_values);
     }
 
     #[test]
