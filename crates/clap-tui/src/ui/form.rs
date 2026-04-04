@@ -106,8 +106,12 @@ fn render_fields(
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
         let input_is_truncated = text_input_is_truncated(item.arg, field.input);
         let field_error = vm.validation.field_errors.get(&item.arg.id);
+        let input_state = vm
+            .inputs
+            .as_ref()
+            .and_then(|inputs| inputs.input(&item.arg.id));
         let source_badge = effective_source_badge(vm, item.arg);
-        let badges = field_badges(config, item.arg, source_badge);
+        let badges = field_badges(config, item.arg, source_badge, input_state);
 
         if let Some(heading_rect) = field.heading {
             if let Some(heading) = item.arg.help_heading() {
@@ -768,6 +772,7 @@ fn field_badges(
     config: &TuiConfig,
     arg: &ArgSpec,
     source: Option<EffectiveValueSource>,
+    input_state: Option<&ArgInputState>,
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
@@ -790,7 +795,13 @@ fn field_badges(
     if let Some(source) = source {
         let label = match source {
             EffectiveValueSource::User => None,
-            EffectiveValueSource::Default => Some("Default"),
+            EffectiveValueSource::Default => {
+                if suppress_default_badge(arg, input_state) {
+                    None
+                } else {
+                    Some("Default")
+                }
+            }
             EffectiveValueSource::Env => Some("Env"),
             EffectiveValueSource::DefaultMissing => Some("Default-missing"),
             EffectiveValueSource::ConditionalDefault => Some("Conditional"),
@@ -806,6 +817,26 @@ fn field_badges(
     }
 
     spans
+}
+
+fn suppress_default_badge(arg: &ArgSpec, input_state: Option<&ArgInputState>) -> bool {
+    let Some(input_state) = input_state else {
+        return false;
+    };
+    if input_state.touched {
+        return false;
+    }
+
+    match &input_state.value {
+        ArgInput::Flag { present, source } => {
+            arg.uses_toggle_semantics() && !present && *source == InputSource::Default
+        }
+        ArgInput::Count {
+            occurrences,
+            source,
+        } => arg.uses_count_semantics() && *occurrences == 0 && *source == InputSource::Default,
+        ArgInput::Values { .. } => false,
+    }
 }
 
 fn effective_source_badge(vm: &ScreenView<'_>, arg: &ArgSpec) -> Option<EffectiveValueSource> {

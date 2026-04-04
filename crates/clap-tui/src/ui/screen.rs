@@ -321,6 +321,58 @@ mod tests {
     }
 
     #[test]
+    fn untouched_set_true_flag_does_not_render_default_badge() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("upload").long("upload").action(ArgAction::SetTrue)),
+        );
+
+        let (backend, _) = render_app(&mut state);
+        let rendered = buffer_text(&backend);
+
+        assert!(rendered.contains("--upload"));
+        assert!(!rendered.contains("Default"));
+    }
+
+    #[test]
+    fn untouched_grouped_flag_does_not_render_default_badge_after_sibling_is_selected() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("fast")
+                        .long("fast")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                )
+                .arg(
+                    Arg::new("safe")
+                        .long("safe")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                ),
+        );
+        state.domain.toggle_flag_touched("safe");
+
+        let (backend, _) = render_app(&mut state);
+        let rendered = buffer_text(&backend);
+
+        assert!(rendered.contains("--fast"));
+        assert!(rendered.contains("--safe"));
+        assert!(!rendered.contains("Default"));
+    }
+
+    #[test]
+    fn untouched_count_flag_does_not_render_default_badge() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("verbose").short('v').action(ArgAction::Count)),
+        );
+
+        let (backend, _) = render_app(&mut state);
+        let rendered = buffer_text(&backend);
+
+        assert!(!rendered.contains("Default"));
+    }
+
+    #[test]
     fn conditional_default_source_renders_without_inventing_preview_tokens() {
         let mut state = AppState::from_command(
             &Command::new("tool")
