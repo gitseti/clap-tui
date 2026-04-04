@@ -1,25 +1,27 @@
 use std::ffi::OsString;
 use std::marker::PhantomData;
 
-use clap::{ArgMatches, Command, CommandFactory, Parser};
+use clap::{ArgMatches, Command, CommandFactory, Id, Parser};
 
 use crate::app::TuiApp;
 use crate::config::TuiConfig;
 use crate::error::TuiError;
 use crate::runtime::{CrosstermRuntime, Runtime};
 
-const SYNTHETIC_LAUNCHER_NAME: &str = "tui";
+const DEFAULT_SYNTHETIC_LAUNCHER_NAME: &str = "tui";
 const SYNTHETIC_LAUNCHER_ABOUT: &str = "Launch the interactive terminal UI";
 
 /// Canonical typed launcher for derive-based root `clap` parsers.
 ///
-/// `ParserLauncher` owns the synthetic root `tui` entrypoint flow:
+/// `ParserLauncher` owns the synthetic root launcher entrypoint flow:
 /// - ordinary CLI help, version output, and diagnostics come from the augmented command surface
-/// - `tool tui` launches the TUI and parses successful output back into the same root parser type
+/// - `tool tui` launches the TUI by default and parses successful output back into the same
+///   root parser type
 /// - non-TUI invocations fall through to the bound typed parser
 pub struct ParserLauncher<T, R: Runtime = CrosstermRuntime> {
     config: TuiConfig,
     runtime: R,
+    launcher_name: String,
     _parser: PhantomData<fn() -> T>,
 }
 
@@ -33,6 +35,7 @@ where
         Self {
             config: TuiConfig::default(),
             runtime: CrosstermRuntime,
+            launcher_name: DEFAULT_SYNTHETIC_LAUNCHER_NAME.to_string(),
             _parser: PhantomData,
         }
     }
@@ -51,21 +54,32 @@ impl<T, R: Runtime> ParserLauncher<T, R>
 where
     T: Parser + CommandFactory,
 {
-    /// Apply configuration used when the synthetic `tui` launcher starts the TUI.
+    /// Apply configuration used when the synthetic launcher starts the TUI.
     #[must_use]
     pub fn with_config(mut self, config: TuiConfig) -> Self {
         self.config = config;
         self
     }
 
-    /// Replace the default runtime used by the synthetic `tui` launcher.
+    /// Replace the default runtime used by the synthetic launcher.
     #[must_use]
     pub fn with_runtime<NR: Runtime>(self, runtime: NR) -> ParserLauncher<T, NR> {
         ParserLauncher {
             config: self.config,
             runtime,
+            launcher_name: self.launcher_name,
             _parser: PhantomData,
         }
+    }
+
+    /// Override the synthetic root launcher subcommand name.
+    ///
+    /// The default launcher name is `tui`. Custom names must be non-empty and contain no
+    /// whitespace.
+    #[must_use]
+    pub fn with_launcher_name(mut self, launcher_name: impl Into<String>) -> Self {
+        self.launcher_name = launcher_name.into();
+        self
     }
 
     /// Run the typed launcher against `std::env::args_os()`.
@@ -114,15 +128,17 @@ where
         I: IntoIterator<Item = A>,
         A: Into<OsString>,
     {
+        let launcher_name = self.launcher_name;
         let os_args = args.into_iter().map(Into::into).collect::<Vec<_>>();
-        let prepared = PreparedRootCommand::new(T::command()).map_err(DispatchError::Tui)?;
+        let prepared =
+            PreparedRootCommand::new(T::command(), &launcher_name).map_err(DispatchError::Tui)?;
         let matches = prepared
             .parse_command
             .clone()
             .try_get_matches_from(os_args.clone())
             .map_err(DispatchError::Clap)?;
 
-        if matches_select_synthetic_launcher(&matches) {
+        if matches_select_synthetic_launcher(&matches, &launcher_name) {
             let run_result = TuiApp::from_command(prepared.render_command)
                 .with_config(self.config)
                 .with_runtime(self.runtime)
@@ -157,12 +173,13 @@ struct PreparedRootCommand {
 }
 
 impl PreparedRootCommand {
-    fn new(command: Command) -> Result<Self, TuiError> {
-        validate_root_launcher_attachment(&command)?;
+    fn new(command: Command, launcher_name: &str) -> Result<Self, TuiError> {
+        validate_launcher_name(launcher_name)?;
+        validate_root_launcher_attachment(&command, launcher_name)?;
 
-        let parse_command = add_synthetic_launcher(command.clone());
-        let mut render_command = add_synthetic_launcher(command);
-        hide_synthetic_launcher(&mut render_command);
+        let parse_command = add_synthetic_launcher(command.clone(), launcher_name);
+        let mut render_command = add_synthetic_launcher(command, launcher_name);
+        hide_synthetic_launcher(&mut render_command, launcher_name);
 
         Ok(Self {
             parse_command,
@@ -171,8 +188,29 @@ impl PreparedRootCommand {
     }
 }
 
-fn validate_root_launcher_attachment(command: &Command) -> Result<(), TuiError> {
-    if let Some(conflict_path) = existing_tui_conflict(command) {
+fn validate_launcher_name(launcher_name: &str) -> Result<(), TuiError> {
+    if launcher_name.is_empty() {
+        return Err(TuiError::InvalidLauncherName {
+            name: launcher_name.to_string(),
+            reason: "name must not be empty".to_string(),
+        });
+    }
+
+    if launcher_name.chars().any(char::is_whitespace) {
+        return Err(TuiError::InvalidLauncherName {
+            name: launcher_name.to_string(),
+            reason: "name must not contain whitespace".to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_root_launcher_attachment(
+    command: &Command,
+    launcher_name: &str,
+) -> Result<(), TuiError> {
+    if let Some(conflict_path) = existing_launcher_conflict(command, launcher_name) {
         return Err(TuiError::LauncherConflict {
             path: conflict_path,
         });
@@ -180,44 +218,53 @@ fn validate_root_launcher_attachment(command: &Command) -> Result<(), TuiError> 
 
     if command.is_allow_external_subcommands_set() {
         return Err(TuiError::AmbiguousLauncherAttachment {
-            reason: "root command allows external subcommands that can already consume `tool tui`"
-                .to_string(),
+            reason: format!(
+                "root command allows external subcommands that can already consume `{}`",
+                launcher_path(command, launcher_name)
+            ),
         });
     }
 
     if command.is_trailing_var_arg_set() || has_ambiguous_root_positional(command) {
         return Err(TuiError::AmbiguousLauncherAttachment {
-            reason:
-                "root command captures trailing positional input that makes `tool tui` ambiguous"
-                    .to_string(),
+            reason: format!(
+                "root command captures trailing positional input that makes `{}` ambiguous",
+                launcher_path(command, launcher_name)
+            ),
         });
     }
 
     let ordinary_probe = vec![
         OsString::from(command.get_name()),
-        OsString::from(SYNTHETIC_LAUNCHER_NAME),
+        OsString::from(launcher_name),
     ];
     if command.clone().try_get_matches_from(ordinary_probe).is_ok() {
         return Err(TuiError::AmbiguousLauncherAttachment {
-            reason: "the unmodified clap grammar already accepts `tool tui` as ordinary input"
-                .to_string(),
+            reason: format!(
+                "the unmodified clap grammar already accepts `{}` as ordinary input",
+                launcher_path(command, launcher_name)
+            ),
         });
     }
 
     Ok(())
 }
 
-fn existing_tui_conflict(command: &Command) -> Option<String> {
+fn launcher_path(command: &Command, launcher_name: &str) -> String {
+    format!("{} {}", command.get_name(), launcher_name)
+}
+
+fn existing_launcher_conflict(command: &Command, launcher_name: &str) -> Option<String> {
     command.get_subcommands().find_map(|subcommand| {
         let name = subcommand.get_name();
-        if name == SYNTHETIC_LAUNCHER_NAME {
+        if name == launcher_name {
             return Some(format!("{} {}", command.get_name(), name));
         }
 
         subcommand
             .get_visible_aliases()
-            .find(|alias| *alias == SYNTHETIC_LAUNCHER_NAME)
-            .map(|_| format!("{} {}", command.get_name(), SYNTHETIC_LAUNCHER_NAME))
+            .find(|alias| *alias == launcher_name)
+            .map(|_| launcher_path(command, launcher_name))
     })
 }
 
@@ -227,27 +274,27 @@ fn has_ambiguous_root_positional(command: &Command) -> bool {
         .any(|arg| arg.is_positional() && (arg.is_last_set() || arg.is_trailing_var_arg_set()))
 }
 
-fn add_synthetic_launcher(command: Command) -> Command {
-    command.subcommand(synthetic_launcher_subcommand())
+fn add_synthetic_launcher(command: Command, launcher_name: &str) -> Command {
+    command.subcommand(synthetic_launcher_subcommand(launcher_name))
 }
 
-fn hide_synthetic_launcher(command: &mut Command) {
+fn hide_synthetic_launcher(command: &mut Command, launcher_name: &str) {
     for subcommand in command.get_subcommands_mut() {
-        if subcommand.get_name() == SYNTHETIC_LAUNCHER_NAME {
+        if subcommand.get_name() == launcher_name {
             *subcommand = subcommand.clone().hide(true);
             break;
         }
     }
 }
 
-fn synthetic_launcher_subcommand() -> Command {
-    Command::new(SYNTHETIC_LAUNCHER_NAME).about(SYNTHETIC_LAUNCHER_ABOUT)
+fn synthetic_launcher_subcommand(launcher_name: &str) -> Command {
+    Command::new(Id::from(launcher_name.to_string())).about(SYNTHETIC_LAUNCHER_ABOUT)
 }
 
-fn matches_select_synthetic_launcher(matches: &ArgMatches) -> bool {
+fn matches_select_synthetic_launcher(matches: &ArgMatches, launcher_name: &str) -> bool {
     matches
         .subcommand()
-        .is_some_and(|(name, _)| name == SYNTHETIC_LAUNCHER_NAME)
+        .is_some_and(|(name, _)| name == launcher_name)
 }
 
 #[cfg(test)]
@@ -336,8 +383,9 @@ mod tests {
 
     #[test]
     fn launcher_rejects_existing_tui_subcommand() {
-        let error = PreparedRootCommand::new(Command::new("tool").subcommand(Command::new("tui")))
-            .expect_err("launcher should reject conflicting subcommand");
+        let error =
+            PreparedRootCommand::new(Command::new("tool").subcommand(Command::new("tui")), "tui")
+                .expect_err("launcher should reject conflicting subcommand");
 
         assert!(
             error
@@ -350,6 +398,7 @@ mod tests {
     fn launcher_rejects_existing_tui_alias() {
         let error = PreparedRootCommand::new(
             Command::new("tool").subcommand(Command::new("shell").visible_alias("tui")),
+            "tui",
         )
         .expect_err("launcher should reject conflicting alias");
 
@@ -358,8 +407,9 @@ mod tests {
 
     #[test]
     fn launcher_rejects_external_subcommand_hosts() {
-        let error = PreparedRootCommand::new(Command::new("tool").allow_external_subcommands(true))
-            .expect_err("launcher should reject external subcommands");
+        let error =
+            PreparedRootCommand::new(Command::new("tool").allow_external_subcommands(true), "tui")
+                .expect_err("launcher should reject external subcommands");
 
         assert!(error.to_string().contains("external subcommands"));
     }
@@ -370,6 +420,7 @@ mod tests {
             Command::new("tool")
                 .trailing_var_arg(true)
                 .arg(Arg::new("raw").raw(true).required(true)),
+            "tui",
         )
         .expect_err("launcher should reject trailing capture");
 
@@ -453,7 +504,7 @@ mod tests {
     #[test]
     fn hidden_synthetic_launcher_is_omitted_from_tui_command_tree() {
         let prepared =
-            PreparedRootCommand::new(SimpleCli::command()).expect("launcher should prepare");
+            PreparedRootCommand::new(SimpleCli::command(), "tui").expect("launcher should prepare");
         let spec = CommandSpec::from_command(&prepared.render_command);
 
         assert!(
@@ -477,5 +528,59 @@ mod tests {
             .expect_err("user error should pass through");
 
         assert_eq!(error.to_string(), "boom");
+    }
+
+    #[test]
+    fn custom_launcher_name_updates_help_and_dispatch_path() {
+        let runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('r'),
+            AppKeyModifiers {
+                control: true,
+                ..AppKeyModifiers::default()
+            },
+        ))]);
+        let launcher = ParserLauncher::<SimpleCli, _>::new()
+            .with_launcher_name("form")
+            .with_runtime(runtime);
+
+        let parsed =
+            dispatch(launcher, ["tool", "form"]).expect("custom launcher path should work");
+
+        assert_eq!(
+            parsed,
+            Some(SimpleCli {
+                name: "world".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn custom_launcher_name_appears_in_augmented_help() {
+        let launcher = ParserLauncher::<CommandCli, _>::new()
+            .with_launcher_name("form")
+            .with_runtime(TestRuntime::with_events([]));
+        let error = dispatch(launcher, ["tool", "--help"]).expect_err("help should short-circuit");
+
+        assert!(error.contains("form"));
+        assert!(!error.contains("Usage: tool tui"));
+    }
+
+    #[test]
+    fn launcher_rejects_conflicts_for_custom_name() {
+        let error = PreparedRootCommand::new(
+            Command::new("tool").subcommand(Command::new("shell").visible_alias("form")),
+            "form",
+        )
+        .expect_err("launcher should reject conflicting alias");
+
+        assert!(error.to_string().contains("tool form"));
+    }
+
+    #[test]
+    fn launcher_rejects_invalid_custom_name() {
+        let error =
+            PreparedRootCommand::new(SimpleCli::command(), "bad name").expect_err("invalid name");
+
+        assert!(matches!(error, TuiError::InvalidLauncherName { .. }));
     }
 }

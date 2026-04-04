@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Error, ExprPath, FnArg, GenericArgument, ItemFn, PatType, PathArguments, ReturnType, Token,
-    Type, parse_macro_input,
+    Error, ExprPath, FnArg, GenericArgument, ItemFn, LitStr, PatType, PathArguments, ReturnType,
+    Token, Type, parse_macro_input,
 };
 
 /// Expand a `main` wrapper that delegates to `clap_tui::ParserLauncher`.
@@ -21,6 +21,7 @@ pub fn main(args: TokenStream, input: TokenStream) -> TokenStream {
 #[derive(Default)]
 struct MainArgs {
     config: Option<ExprPath>,
+    launcher: Option<LitStr>,
 }
 
 impl Parse for MainArgs {
@@ -29,24 +30,41 @@ impl Parse for MainArgs {
             return Ok(Self::default());
         }
 
-        let ident = input.parse::<syn::Ident>()?;
-        if ident != "config" {
-            return Err(Error::new_spanned(
-                ident,
-                "unsupported argument; expected `config = path::to::fn`",
-            ));
+        let mut args = Self::default();
+        while !input.is_empty() {
+            let ident = input.parse::<syn::Ident>()?;
+            input.parse::<Token![=]>()?;
+
+            match ident.to_string().as_str() {
+                "config" => {
+                    if args.config.is_some() {
+                        return Err(Error::new_spanned(ident, "duplicate `config` argument"));
+                    }
+                    args.config = Some(input.parse::<ExprPath>()?);
+                }
+                "launcher" => {
+                    if args.launcher.is_some() {
+                        return Err(Error::new_spanned(ident, "duplicate `launcher` argument"));
+                    }
+                    let launcher = input.parse::<LitStr>()?;
+                    validate_launcher_literal(&launcher)?;
+                    args.launcher = Some(launcher);
+                }
+                _ => {
+                    return Err(Error::new_spanned(
+                        ident,
+                        "unsupported argument; expected `config = path::to::fn` or `launcher = \"name\"`",
+                    ));
+                }
+            }
+
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<Token![,]>()?;
         }
 
-        input.parse::<Token![=]>()?;
-        let config = input.parse::<ExprPath>()?;
-
-        if !input.is_empty() {
-            return Err(input.error("unexpected extra tokens in `#[clap_tui::main(...)]`"));
-        }
-
-        Ok(Self {
-            config: Some(config),
-        })
+        Ok(args)
     }
 }
 
@@ -66,6 +84,10 @@ fn expand_main(args: MainArgs, function: ItemFn) -> syn::Result<proc_macro2::Tok
         .config
         .map(|path| quote!(#path()))
         .unwrap_or_else(|| quote!(::clap_tui::TuiConfig::default()));
+    let launcher_expr = args
+        .launcher
+        .map(|launcher| quote!(#launcher))
+        .unwrap_or_else(|| quote!("tui"));
 
     Ok(quote! {
         #(#attrs)*
@@ -74,9 +96,26 @@ fn expand_main(args: MainArgs, function: ItemFn) -> syn::Result<proc_macro2::Tok
         #vis fn #function_name() #output {
             ::clap_tui::ParserLauncher::<#parser_ty>::new()
                 .with_config(#config_expr)
+                .with_launcher_name(#launcher_expr)
                 .run(#runner_name)
         }
     })
+}
+
+fn validate_launcher_literal(literal: &LitStr) -> syn::Result<()> {
+    let value = literal.value();
+    if value.is_empty() {
+        return Err(Error::new_spanned(literal, "`launcher` must not be empty"));
+    }
+
+    if value.chars().any(char::is_whitespace) {
+        return Err(Error::new_spanned(
+            literal,
+            "`launcher` must not contain whitespace",
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_signature(function: &ItemFn) -> syn::Result<()> {

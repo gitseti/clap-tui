@@ -42,10 +42,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 `ParserLauncher` is the canonical typed entrypoint for derive-based CLIs. It augments the root command with a synthetic `tui` subcommand, so users can launch the form with `tool tui` while ordinary invocations still parse through `Cli`.
 
+If you want a different launch path, call `.with_launcher_name("form")` or use
+`#[clap_tui::main(launcher = "form")]`.
+
 ## Choose an entrypoint
 
 - `ParserLauncher::<Cli>::run(...)` is the canonical typed launcher for derive-based CLIs.
 - `#[clap_tui::main]` is convenience syntax over `ParserLauncher` with the same runtime behavior.
+- `ParserLauncher::<Cli>::with_launcher_name(...)` overrides the default synthetic subcommand name.
 - `TuiApp::from_command(...)` is the untyped entrypoint for hand-built `clap::Command` values.
 - `TuiApp::from_factory::<Cli>().run_with_parser(...)` runs the TUI directly and reparses the selected argv into the bound parser type.
 
@@ -85,7 +89,7 @@ cargo run -p clap-tui --example kitchen_sink
 
 The v1 synthetic launcher is intentionally narrow:
 
-- it attaches only at the CLI root, producing paths such as `tool tui`
+- it attaches only at the CLI root, producing paths such as `tool tui` by default
 - it appears in ordinary clap help and parse diagnostics
 - it is hidden from the rendered TUI command tree itself
 - it is rejected when the root command already defines a conflicting `tui` path or uses ambiguous host grammar such as external subcommands or trailing raw capture

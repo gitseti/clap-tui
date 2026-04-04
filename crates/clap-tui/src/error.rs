@@ -19,14 +19,22 @@ pub enum TuiError {
     /// `run_with_matches`, and `run_with_parser` normalize this into `Ok(None)` or `Ok(())`.
     #[error("cancelled")]
     Cancelled,
+    /// Synthetic launcher name is invalid.
+    #[error("invalid synthetic launcher name `{name}`: {reason}")]
+    InvalidLauncherName {
+        /// The configured synthetic launcher name.
+        name: String,
+        /// Why the launcher name cannot be used.
+        reason: String,
+    },
     /// Synthetic launcher conflicts with an existing root command path.
-    #[error("synthetic `tui` launcher conflicts with existing root command path `{path}`")]
+    #[error("synthetic launcher conflicts with existing root command path `{path}`")]
     LauncherConflict {
         /// The conflicting root command path, such as `tool tui`.
         path: String,
     },
     /// Synthetic launcher cannot attach safely to the root command grammar.
-    #[error("synthetic `tui` launcher is ambiguous for this root command: {reason}")]
+    #[error("synthetic launcher is ambiguous for this root command: {reason}")]
     AmbiguousLauncherAttachment {
         /// Why the root clap grammar makes synthetic launcher attachment ambiguous.
         reason: String,

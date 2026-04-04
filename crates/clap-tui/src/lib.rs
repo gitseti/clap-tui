@@ -35,6 +35,7 @@
 //!
 //! That typed launcher adds a synthetic root `tui` subcommand, so users can launch the form
 //! with `tool tui` while ordinary invocations still parse through `Cli`.
+//! Call [`ParserLauncher::with_launcher_name`] to override that default subcommand name.
 //!
 //! # Supported Public Surface
 //!
@@ -44,6 +45,7 @@
 //! - [`ParserTuiApp`] is the schema-bound typed wrapper for direct TUI execution.
 //! - [`TuiConfig`], [`Theme`], and related config types customize theme, layout, and startup.
 //! - [`Runtime`] plus the exported runtime event types support advanced integration.
+//! - [`ParserLauncher::with_launcher_name`] customizes the synthetic root subcommand name.
 //!
 //! Internal reducers, query helpers, frame snapshots, and clap-projection models are
 //! implementation details and are not stable extension points.

@@ -1,4 +1,4 @@
-error: unsupported argument; expected `config = path::to::fn`
+error: unsupported argument; expected `config = path::to::fn` or `launcher = "name"`
  --> tests/trybuild/main_macro/fail/unsupported_args.rs:7:18
   |
 7 | #[clap_tui::main(theme = theme_config)]
