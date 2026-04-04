@@ -1,5 +1,4 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use clap_tui::TuiApp;
 
 #[derive(Debug, Parser)]
 #[command(name = "tool", about = "Subcommand example", version = "0.1.0")]
@@ -33,11 +32,8 @@ enum Color {
     Blue,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let app = TuiApp::from_factory::<Cli>();
-    app.run_with_parser(|cli| {
-        println!("Selected: {:?}", cli.command);
-        Ok::<_, std::io::Error>(())
-    })?;
+#[clap_tui::main]
+fn main(cli: Cli) -> Result<(), clap_tui::TuiError> {
+    println!("Selected: {:?}", cli.command);
     Ok(())
 }

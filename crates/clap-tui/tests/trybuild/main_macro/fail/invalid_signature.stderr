@@ -1,0 +1,13 @@
+error: `#[clap_tui::main]` requires exactly one typed parser parameter
+ --> tests/trybuild/main_macro/fail/invalid_signature.rs:7:1
+  |
+7 | #[clap_tui::main]
+  | ^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `clap_tui::main` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/trybuild/main_macro/fail/invalid_signature.rs:11:2
+   |
+11 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/trybuild/main_macro/fail/invalid_signature.rs`

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/clap-tui"]
+members = ["crates/clap-tui", "crates/clap-tui-macros"]
 resolver = "2"
 
 [workspace.package]
@@ -12,3 +12,6 @@ clap = { version = "4.5", features = ["derive", "env"] }
 ratatui = "0.28"
 crossterm = "0.27"
 thiserror = "1"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

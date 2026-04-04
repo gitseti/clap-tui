@@ -16,19 +16,20 @@ cargo run -p clap-tui --example subcommands
 
 ```rust
 use clap::Parser;
-use clap_tui::{Theme, ThemePreset, TuiApp, TuiConfig};
+use clap_tui::{ParserLauncher, Theme, ThemePreset, TuiConfig};
 
 #[derive(Parser)]
+#[command(name = "tool")]
 struct Cli {
     #[arg(long)]
     name: String,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let app = TuiApp::from_factory::<Cli>();
     let mut config = TuiConfig::default();
     config.theme = Theme::from_preset(ThemePreset::HighContrastDark);
-    app.with_config(config).run_with_parser(|cli| {
+
+    ParserLauncher::<Cli>::new().with_config(config).run(|cli| {
         println!("Hello {}", cli.name);
         Ok::<_, std::io::Error>(())
     })?;
@@ -36,16 +37,53 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 ```
 
+This is the canonical derive-based entrypoint. It augments the root clap surface with a
+synthetic `tui` subcommand, so users can launch the TUI with `tool tui` while ordinary
+invocations still parse through `Cli`.
+
+### Macro convenience
+
+```rust
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "tool")]
+struct Cli {
+    #[arg(long)]
+    name: String,
+}
+
+#[clap_tui::main]
+fn main(cli: Cli) -> Result<(), clap_tui::TuiError> {
+    println!("Hello {}", cli.name);
+    Ok(())
+}
+```
+
+`#[clap_tui::main]` is convenience syntax over `ParserLauncher`; it does not define
+different runtime behavior. You can also provide `#[clap_tui::main(config = path::to::fn)]`
+to compute a `TuiConfig` before the synthetic `tool tui` launch path starts the TUI.
+
 ### Supported extension points
 
 The crate intentionally supports three public customization seams during the
 ongoing internal refactor:
 - custom runtimes with `TuiApp::with_runtime(...)`
-- derive-based typed execution with `TuiApp::from_factory::<Cli>().run_with_parser(...)`
+- derive-based main entrypoints with `ParserLauncher::<Cli>::run(...)`
+- direct derive-based TUI execution with `TuiApp::from_factory::<Cli>().run_with_parser(...)`
 - theming and layout through `TuiConfig`
 - initial command selection through `TuiConfig.start_command`
 
 Internal modules and crate-private helper types are not stable extension points.
+
+### Synthetic `tui` scope
+
+The v1 synthetic launcher is intentionally narrow:
+- it attaches only at the CLI root, producing `tool tui`
+- it appears in ordinary clap help and parse diagnostics
+- it is hidden from the rendered TUI command tree itself
+- it is rejected when the root command already defines a conflicting `tui` path or uses
+  ambiguous host grammar such as external subcommands or trailing raw capture
 
 ### Public API review outcome
 

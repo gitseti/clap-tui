@@ -16,6 +16,10 @@ clap.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 thiserror.workspace = true
+clap-tui-macros = { path = "../clap-tui-macros" }
 tracing = { version = "0.1", optional = true }
 tui-textarea = "0.4"
 arboard = "3.6.1"
+
+[dev-dependencies]
+trybuild = "1"

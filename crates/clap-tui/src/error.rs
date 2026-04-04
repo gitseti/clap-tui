@@ -16,4 +16,16 @@ pub enum TuiError {
     /// User exited without running.
     #[error("cancelled")]
     Cancelled,
+    /// Synthetic launcher conflicts with an existing root command path.
+    #[error("synthetic `tui` launcher conflicts with existing root command path `{path}`")]
+    LauncherConflict {
+        /// The conflicting root command path, such as `tool tui`.
+        path: String,
+    },
+    /// Synthetic launcher cannot attach safely to the root command grammar.
+    #[error("synthetic `tui` launcher is ambiguous for this root command: {reason}")]
+    AmbiguousLauncherAttachment {
+        /// Why the root clap grammar makes synthetic launcher attachment ambiguous.
+        reason: String,
+    },
 }
