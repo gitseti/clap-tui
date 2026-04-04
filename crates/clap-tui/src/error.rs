@@ -13,7 +13,10 @@ pub enum TuiError {
     /// Application callback error.
     #[error("runner error: {0}")]
     Runner(Box<dyn std::error::Error + Send + Sync>),
-    /// User exited without running.
+    /// Lower-level TUI flow exited without running.
+    ///
+    /// Higher-level entry points such as `TuiApp::run`, `ParserTuiApp::run`,
+    /// `run_with_matches`, and `run_with_parser` normalize this into `Ok(None)` or `Ok(())`.
     #[error("cancelled")]
     Cancelled,
     /// Synthetic launcher conflicts with an existing root command path.

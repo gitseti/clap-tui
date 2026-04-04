@@ -5,6 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Auto-generate a TUI from clap commands"
+readme = "../../README.md"
+repository = "https://github.com/gitseti/clap-tui"
+homepage = "https://github.com/gitseti/clap-tui"
+documentation = "https://docs.rs/clap-tui"
+keywords = ["clap", "tui", "terminal", "cli", "ratatui"]
+categories = ["command-line-interface", "development-tools"]
 
 [features]
 default = ["mouse"]

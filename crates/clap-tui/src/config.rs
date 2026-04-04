@@ -192,7 +192,10 @@ impl Default for Keymap {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LayoutConfig {
-    /// Sidebar width ratio (percent of total width).
+    /// Preferred sidebar width as a percentage of the terminal width.
+    ///
+    /// The rendered sidebar is clamped to fit the active layout so the main pane keeps a
+    /// usable width. Compact layouts clamp more aggressively than roomy layouts.
     pub sidebar_ratio: u16,
 }
 
@@ -210,7 +213,10 @@ pub struct TuiConfig {
     pub theme: Theme,
     /// Key bindings.
     pub keymap: Keymap,
-    /// Initial command path to select.
+    /// Initial command path to select, using `::`-separated command names such as
+    /// `build::release`.
+    ///
+    /// Unknown paths leave the root command selected and show a non-error toast at startup.
     pub start_command: Option<String>,
     /// Layout configuration.
     pub layout: LayoutConfig,

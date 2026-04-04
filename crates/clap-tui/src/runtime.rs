@@ -15,9 +15,10 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::error::TuiError;
 
-/// Crate-local input event emitted by the runtime.
+/// Public input event emitted by a [`Runtime`] implementation.
 ///
-/// This type is primarily part of the public [`Runtime`] customization surface.
+/// Applications that provide a custom runtime use this type to forward keyboard, mouse, and
+/// terminal events into [`crate::TuiApp`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppEvent {
     /// Keyboard input.
@@ -41,9 +42,9 @@ pub enum AppEvent {
     Unsupported,
 }
 
-/// Crate-local keyboard event.
+/// Public keyboard event used by the [`Runtime`] integration surface.
 ///
-/// This type is primarily part of the public [`Runtime`] customization surface.
+/// Custom runtimes can construct this type directly when translating backend-specific input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AppKeyEvent {
     /// Pressed key.
@@ -52,7 +53,7 @@ pub struct AppKeyEvent {
     pub modifiers: AppKeyModifiers,
 }
 
-/// Crate-local key code used by [`AppKeyEvent`].
+/// Public key code used by [`AppKeyEvent`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppKeyCode {
     /// Character input.
@@ -91,7 +92,7 @@ pub enum AppKeyCode {
     Null,
 }
 
-/// Crate-local key modifiers used by keyboard and mouse events.
+/// Public key modifiers used by keyboard and mouse events.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AppKeyModifiers {
     /// Ctrl was pressed.
@@ -102,9 +103,9 @@ pub struct AppKeyModifiers {
     pub shift: bool,
 }
 
-/// Crate-local mouse event.
+/// Public mouse event used by the [`Runtime`] integration surface.
 ///
-/// This type is primarily part of the public [`Runtime`] customization surface.
+/// Custom runtimes can construct this type directly when translating backend-specific input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AppMouseEvent {
     /// Mouse action.
@@ -117,7 +118,7 @@ pub struct AppMouseEvent {
     pub modifiers: AppKeyModifiers,
 }
 
-/// Crate-local mouse event kind used by [`AppMouseEvent`].
+/// Public mouse event kind used by [`AppMouseEvent`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppMouseEventKind {
     /// Button press.
@@ -138,7 +139,7 @@ pub enum AppMouseEventKind {
     ScrollRight,
 }
 
-/// Crate-local mouse button used by [`AppMouseEventKind`].
+/// Public mouse button used by [`AppMouseEventKind`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppMouseButton {
     /// Left mouse button.

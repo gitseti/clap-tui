@@ -1,24 +1,24 @@
 # clap-tui
 
-Auto-generate a terminal UI from a `clap` command definition.
+`clap-tui` turns a `clap` command definition into an interactive terminal UI without replacing your existing CLI flow. You can keep `clap` as the source of truth, collect input in a terminal form, and still hand the final argv back to `clap` for typed parsing.
 
-## Quick Start
+## Add `clap-tui` to your project
 
-```bash
-cargo run -p clap-tui --example simple
+```toml
+[dependencies]
+clap = { version = "4.5", features = ["derive", "env"] }
+clap-tui = "0.1.0"
 ```
 
-```bash
-cargo run -p clap-tui --example subcommands
-```
+Minimum supported Rust version: `1.85`.
 
-## Library Usage
+## Quick start
 
 ```rust
 use clap::Parser;
 use clap_tui::{ParserLauncher, Theme, ThemePreset, TuiConfig};
 
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(name = "tool")]
 struct Cli {
     #[arg(long)]
@@ -29,85 +29,68 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut config = TuiConfig::default();
     config.theme = Theme::from_preset(ThemePreset::HighContrastDark);
 
-    ParserLauncher::<Cli>::new().with_config(config).run(|cli| {
-        println!("Hello {}", cli.name);
-        Ok::<_, std::io::Error>(())
-    })?;
+    ParserLauncher::<Cli>::new()
+        .with_config(config)
+        .run(|cli| {
+            println!("Hello, {}!", cli.name);
+            Ok::<_, clap_tui::TuiError>(())
+        })?;
+
     Ok(())
 }
 ```
 
-This is the canonical derive-based entrypoint. It augments the root clap surface with a
-synthetic `tui` subcommand, so users can launch the TUI with `tool tui` while ordinary
-invocations still parse through `Cli`.
+`ParserLauncher` is the canonical typed entrypoint for derive-based CLIs. It augments the root command with a synthetic `tui` subcommand, so users can launch the form with `tool tui` while ordinary invocations still parse through `Cli`.
 
-### Macro convenience
+## Choose an entrypoint
 
-```rust
-use clap::Parser;
+- `ParserLauncher::<Cli>::run(...)` is the canonical typed launcher for derive-based CLIs.
+- `#[clap_tui::main]` is convenience syntax over `ParserLauncher` with the same runtime behavior.
+- `TuiApp::from_command(...)` is the untyped entrypoint for hand-built `clap::Command` values.
+- `TuiApp::from_factory::<Cli>().run_with_parser(...)` runs the TUI directly and reparses the selected argv into the bound parser type.
 
-#[derive(Parser)]
-#[command(name = "tool")]
-struct Cli {
-    #[arg(long)]
-    name: String,
-}
+## Supported customization seams
 
-#[clap_tui::main]
-fn main(cli: Cli) -> Result<(), clap_tui::TuiError> {
-    println!("Hello {}", cli.name);
-    Ok(())
-}
+- `TuiConfig` controls theme, layout, key bindings, and initial command selection.
+- `TuiApp::with_runtime(...)` and the exported `Runtime` event types support advanced runtime integration.
+- `TuiConfig.start_command` lets you preselect a command path such as `build::release`.
+
+Internal reducers, projections, render helpers, and other support modules are not stable extension points.
+
+## Feature flags
+
+- `mouse` is enabled by default and turns on mouse capture plus mouse-driven controls.
+- `tracing` enables internal tracing instrumentation for applications that want to hook the crate into an existing tracing setup.
+
+## Terminal expectations
+
+- `clap-tui` is designed for interactive terminals that support raw mode and an alternate screen.
+- The default `CrosstermRuntime` restores the terminal before returning, including when the user cancels.
+- Mouse interactions require the default `mouse` feature.
+- Validation stays inside the TUI flow: invalid forms show inline feedback instead of returning partially parsed values.
+
+## Example guide
+
+- `simple` shows the smallest derive-based setup with `#[clap_tui::main]`.
+- `subcommands` shows the typed launcher flow for a CLI with nested subcommands.
+- `kitchen_sink` demonstrates the untyped `TuiApp::from_command(...)` path and a wider range of `clap` surface area.
+
+```bash
+cargo run -p clap-tui --example simple -- tui
+cargo run -p clap-tui --example subcommands -- tui
+cargo run -p clap-tui --example kitchen_sink
 ```
 
-`#[clap_tui::main]` is convenience syntax over `ParserLauncher`; it does not define
-different runtime behavior. You can also provide `#[clap_tui::main(config = path::to::fn)]`
-to compute a `TuiConfig` before the synthetic `tool tui` launch path starts the TUI.
-
-### Supported extension points
-
-The crate intentionally supports three public customization seams during the
-ongoing internal refactor:
-- custom runtimes with `TuiApp::with_runtime(...)`
-- derive-based main entrypoints with `ParserLauncher::<Cli>::run(...)`
-- direct derive-based TUI execution with `TuiApp::from_factory::<Cli>().run_with_parser(...)`
-- theming and layout through `TuiConfig`
-- initial command selection through `TuiConfig.start_command`
-
-Internal modules and crate-private helper types are not stable extension points.
-
-### Synthetic `tui` scope
+## Synthetic `tui` scope
 
 The v1 synthetic launcher is intentionally narrow:
-- it attaches only at the CLI root, producing `tool tui`
+
+- it attaches only at the CLI root, producing paths such as `tool tui`
 - it appears in ordinary clap help and parse diagnostics
 - it is hidden from the rendered TUI command tree itself
-- it is rejected when the root command already defines a conflicting `tui` path or uses
-  ambiguous host grammar such as external subcommands or trailing raw capture
+- it is rejected when the root command already defines a conflicting `tui` path or uses ambiguous host grammar such as external subcommands or trailing raw capture
 
-### Public API review outcome
-
-The final refactor review kept the public API intentionally narrow and unchanged:
-- `TuiApp` remains the main entry point
-- `TuiConfig` and theme types remain the supported configuration surface
-- `Runtime` plus the exported `AppEvent` / key / mouse types remain the advanced integration seam
-
-No additional internal modules were promoted to public API, and no existing public seam
-was narrowed because the internal cleanup did not reveal a concrete simplification worth a
-breaking change.
-
-### Current form capabilities
-
-The current TUI supports:
-- repeated options and repeated values
-- count-style flags
-- optional-value flags
-- inherited global args across subcommands
-- clap-backed validation summaries and field-level form feedback
-
-### Theme presets
-
-You can select a built-in theme preset via `TuiConfig`:
+## Theme presets
 
 ```rust
 use clap_tui::{Theme, ThemePreset, TuiConfig};
@@ -117,36 +100,18 @@ config.theme = Theme::from_preset(ThemePreset::Light);
 ```
 
 Available presets:
+
 - `ThemePreset::CalmDark` (default)
 - `ThemePreset::HighContrastDark`
 - `ThemePreset::Light`
 
-## Testing Strategy
-
-`clap-tui` uses a small testing pyramid so behavior changes can land at the
-lowest layer that still protects the regression:
-
-- reducer and controller tests for pure state transitions and command semantics
-- render tests for layout, styling, and visible validation feedback
-- scripted app-flow tests for real event-loop behavior, rendered frames, mouse hits,
-  and final run or cancel outcomes
-- optional PTY smoke coverage only for terminal integration concerns such as raw mode
-  or alternate-screen startup and teardown
-
-When interactive behavior depends on redraw timing, focus changes, mouse layout, or
-the integration between rendering and input dispatch, prefer adding a scripted
-scenario in `crates/clap-tui/src/app/scripted_tests.rs`. Those tests use the
-crate-internal scripted harness in `crates/clap-tui/src/app/scripted.rs` and
-should prefer semantic helpers such as footer clicks and dropdown targeting over
-hard-coded coordinates. Keep raw event injection for the rare edge case where a
-semantic helper would hide the intent of the test.
-
 ## Controls
-- `Tab` switch focus
-- `Shift+Tab` cycle tabs
-- `?` toggle Help tab
-- `/` search in command tree
-- `Ctrl+R` run
-- `Ctrl+Enter` run when supported by the terminal
-- `Ctrl+C` exit
-- Type to edit the focused field
+
+- `Tab` switches focus
+- `Shift+Tab` cycles tabs
+- `?` toggles the Help tab
+- `/` opens command search
+- `Ctrl+R` runs the current selection
+- `Ctrl+Enter` runs when supported by the terminal
+- `Ctrl+C` exits without running
+- typing edits the focused field

@@ -77,9 +77,13 @@ impl<R: Runtime> TuiApp<R> {
 
     /// Run the TUI and return the selected argv.
     ///
+    /// Returns `Ok(Some(argv))` when the user runs a valid command and `Ok(None)` when the
+    /// user exits without running. Validation stays inside the TUI flow, so invalid form
+    /// state is surfaced in-app rather than returned as a clap error from this method.
+    ///
     /// # Errors
     ///
-    /// Returns an error when terminal setup, event handling, or clap validation fails.
+    /// Returns an error when terminal setup or event handling fails.
     pub fn run(self) -> Result<Option<Vec<String>>, TuiError> {
         match self.run_inner() {
             Ok(argv) => Ok(Some(argv)),
@@ -90,10 +94,14 @@ impl<R: Runtime> TuiApp<R> {
 
     /// Run the TUI and execute a custom handler with `ArgMatches`.
     ///
+    /// Returns `Ok(())` when the user exits without running. When the user does run, this
+    /// method reparses the selected argv with the original [`clap::Command`] before calling
+    /// the handler.
+    ///
     /// # Errors
     ///
-    /// Returns an error when terminal setup, event handling, clap validation, or the runner
-    /// callback fails.
+    /// Returns an error when terminal setup or event handling fails, when reparsing the
+    /// selected argv with clap fails, or when the runner callback fails.
     pub fn run_with_matches<F, E>(self, runner: F) -> Result<(), TuiError>
     where
         F: FnOnce(clap::ArgMatches) -> Result<(), E>,
@@ -165,19 +173,27 @@ where
 
     /// Run the TUI and return the selected argv.
     ///
+    /// Returns `Ok(Some(argv))` when the user runs a valid command and `Ok(None)` when the
+    /// user exits without running. Validation stays inside the TUI flow, so invalid form
+    /// state is surfaced in-app rather than returned as a clap error from this method.
+    ///
     /// # Errors
     ///
-    /// Returns an error when terminal setup, event handling, or clap validation fails.
+    /// Returns an error when terminal setup or event handling fails.
     pub fn run(self) -> Result<Option<Vec<String>>, TuiError> {
         self.inner.run()
     }
 
     /// Run the TUI and execute a custom handler with `ArgMatches`.
     ///
+    /// Returns `Ok(())` when the user exits without running. When the user does run, this
+    /// method reparses the selected argv with the bound command schema before calling the
+    /// handler.
+    ///
     /// # Errors
     ///
-    /// Returns an error when terminal setup, event handling, clap validation, or the runner
-    /// callback fails.
+    /// Returns an error when terminal setup or event handling fails, when reparsing the
+    /// selected argv with clap fails, or when the runner callback fails.
     pub fn run_with_matches<F, E>(self, runner: F) -> Result<(), TuiError>
     where
         F: FnOnce(clap::ArgMatches) -> Result<(), E>,
@@ -188,10 +204,14 @@ where
 
     /// Run the TUI and parse into the bound `clap::Parser` type.
     ///
+    /// Returns `Ok(())` when the user exits without running. When the user does run, this
+    /// method reparses the selected argv with the bound parser type before calling the
+    /// handler.
+    ///
     /// # Errors
     ///
-    /// Returns an error when terminal setup, event handling, clap validation, or the runner
-    /// callback fails.
+    /// Returns an error when terminal setup or event handling fails, when reparsing the
+    /// selected argv with the bound parser fails, or when the runner callback fails.
     pub fn run_with_parser<F, E>(self, runner: F) -> Result<(), TuiError>
     where
         F: FnOnce(T) -> Result<(), E>,
