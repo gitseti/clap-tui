@@ -22,14 +22,12 @@ pub(crate) enum TreeRow {
 impl TreeItem {
     pub(crate) fn prefix(&self) -> String {
         let indent = "| ".repeat(self.indent / 2);
-        let caret = if !self.has_children {
-            " "
-        } else if self.expanded {
-            "-"
+        if self.has_children {
+            let caret = if self.expanded { "-" } else { "+" };
+            format!("{indent}{caret} ")
         } else {
-            "+"
-        };
-        format!("{indent}{caret} ")
+            indent
+        }
     }
 
     #[cfg(test)]
@@ -217,7 +215,7 @@ mod tests {
             .into_iter()
             .map(|item| item.label())
             .collect::<Vec<_>>();
-        assert_eq!(labels, vec!["- api", "|   serve"]);
+        assert_eq!(labels, vec!["- api", "| serve"]);
     }
 
     #[test]

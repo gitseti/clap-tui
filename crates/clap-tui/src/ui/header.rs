@@ -39,7 +39,7 @@ fn header_lines(config: &TuiConfig, command: &CommandSpec) -> Vec<Line<'static>>
         .map(|about| {
             vec![Line::from(Span::styled(
                 about.clone(),
-                Style::default().fg(config.theme.dim),
+                Style::default().fg(config.theme.metadata),
             ))]
         })
         .unwrap_or_default()

@@ -323,6 +323,20 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     state.ui.clamp_form_scroll(frame_snapshot);
 }
 
+pub(crate) fn focus_first_invalid_field(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
+    let Some(arg_id) = frame_snapshot.first_invalid_field_id() else {
+        return;
+    };
+    let command = state.domain.current_command().clone();
+    let args = form::visible_args(&command, state.ui.active_tab);
+    let Some(item) = args.iter().find(|item| item.arg.id == arg_id) else {
+        return;
+    };
+    state.ui.set_selected_arg_index(item.order_index);
+    state.ui.focus_form();
+    ensure_form_visible(state, frame_snapshot);
+}
+
 pub(crate) fn scroll_form(state: &mut AppState, frame_snapshot: &FrameSnapshot, delta: i16) {
     if state.ui.help_open {
         state.ui.adjust_help_scroll(delta);

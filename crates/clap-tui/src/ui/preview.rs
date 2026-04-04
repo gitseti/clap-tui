@@ -20,40 +20,29 @@ struct PreviewWidget<'a> {
 
 impl Widget for PreviewWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let surface = if self.hovered {
+            styles::surface(self.config, styles::Surface::Raised)
+        } else {
+            styles::surface(self.config, styles::Surface::Result)
+        };
         if area.height <= 1 || self.mode.is_compact() {
-            let preview_bg = if self.hovered {
-                self.config.theme.surface_raised
-            } else {
-                self.config.theme.preview_bg
-            };
             let compact =
                 Paragraph::new(compact_preview_line(self.config, self.argv, self.hovered))
-                    .style(Style::default().fg(self.config.theme.text).bg(preview_bg));
+                    .style(surface.fg(self.config.theme.text));
             Widget::render(compact, area, buf);
             return;
         }
 
-        let border_style = if self.hovered {
-            Style::default()
-                .fg(self.config.theme.accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(self.config.theme.divider)
-        };
-        let preview_bg = if self.hovered {
-            self.config.theme.surface_raised
-        } else {
-            self.config.theme.preview_bg
-        };
+        let border_style = styles::preview_border(self.config, self.hovered);
         let bar = Paragraph::new(command_preview_line(self.config, self.argv, self.hovered))
-            .style(Style::default().bg(preview_bg))
+            .style(surface.fg(self.config.theme.text))
             .block(
                 Block::default()
-                    .title(preview_title(self.hovered))
+                    .title(preview_title_line(self.config, self.hovered))
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(border_style)
-                    .style(Style::default().bg(preview_bg)),
+                    .style(surface),
             );
         Widget::render(bar, area, buf);
     }
@@ -79,13 +68,17 @@ pub(crate) fn render_preview(
     );
 }
 
-fn preview_title(hovered: bool) -> Line<'static> {
+fn preview_title_line(config: &TuiConfig, hovered: bool) -> Line<'static> {
     let hint = if hovered {
-        " Preview - Click or Ctrl+Y copies "
+        "Click or Ctrl+Y copies"
     } else {
-        " Preview - Click/Ctrl+Y copy "
+        "Click/Ctrl+Y copy"
     };
-    Line::from(hint.to_string())
+    Line::from(vec![
+        Span::styled(" Preview ", styles::preview_title(config)),
+        Span::raw(" "),
+        Span::styled(hint.to_string(), styles::help(config)),
+    ])
 }
 
 fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: bool) -> Line<'a> {
@@ -125,7 +118,7 @@ fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: boo
 fn compact_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: bool) -> Line<'a> {
     let mut spans = vec![
         Span::styled(
-            "[Preview]",
+            "Preview",
             Style::default()
                 .fg(if hovered {
                     config.theme.text
@@ -149,7 +142,7 @@ fn compact_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: boo
 mod tests {
     use ratatui::style::{Color, Modifier};
 
-    use super::{command_preview_line, compact_preview_line};
+    use super::{command_preview_line, compact_preview_line, preview_title_line};
     use crate::config::TuiConfig;
 
     #[test]
@@ -204,5 +197,17 @@ mod tests {
         assert!(rendered.contains("Preview"));
         assert!(rendered.contains("Ctrl+Y copy"));
         assert!(rendered.contains("$ "));
+    }
+
+    #[test]
+    fn preview_title_highlights_result_surface_and_copy_hint() {
+        let config = TuiConfig::default();
+
+        let line = preview_title_line(&config, false);
+
+        assert!(line.spans[0].content.as_ref().contains("Preview"));
+        assert_eq!(line.spans[0].style.fg, Some(config.theme.text));
+        assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert!(line.spans[2].content.as_ref().contains("copy"));
     }
 }

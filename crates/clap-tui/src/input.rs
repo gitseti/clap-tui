@@ -8,7 +8,7 @@ use crate::frame_snapshot::FrameSnapshot;
 use crate::query::form as form_query;
 use crate::spec::{ArgSpec, CommandPath, CommandSpec, SelectionError};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
     Sidebar,
     Form,

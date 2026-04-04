@@ -138,11 +138,14 @@ fn workspace_title(config: &TuiConfig, vm: &ScreenView<'_>) -> Line<'static> {
         Style::default().fg(if vm.selected_path.is_empty() {
             config.theme.text
         } else {
-            config.theme.dim
+            config.theme.metadata
         }),
     ));
     for (index, segment) in vm.selected_path.as_slice().iter().enumerate() {
-        spans.push(Span::styled(" > ", Style::default().fg(config.theme.dim)));
+        spans.push(Span::styled(
+            " > ",
+            Style::default().fg(config.theme.metadata),
+        ));
         let selected = index + 1 == vm.selected_path.as_slice().len();
         spans.push(Span::styled(
             segment.clone(),
@@ -151,7 +154,7 @@ fn workspace_title(config: &TuiConfig, vm: &ScreenView<'_>) -> Line<'static> {
                     .fg(config.theme.text)
                     .add_modifier(ratatui::style::Modifier::BOLD)
             } else {
-                Style::default().fg(config.theme.dim)
+                Style::default().fg(config.theme.metadata)
             },
         ));
     }
@@ -313,7 +316,7 @@ mod tests {
             .expect("color field layout");
         let summary = "Invalid value for --color: orange";
 
-        assert_eq!(count_occurrences(&rendered, summary), 2);
+        assert_eq!(count_occurrences(&rendered, summary), 3);
         assert!(field.description.is_some());
     }
 

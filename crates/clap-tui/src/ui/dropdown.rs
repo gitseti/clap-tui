@@ -15,16 +15,17 @@ use crate::query::form::{self, FieldWidget};
 use crate::spec::choice_value_matches_default;
 
 use super::screen::ScreenView;
+use super::styles;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DropdownItem {
-    label: String,
-    text_style: Style,
+    line: Line<'static>,
 }
 
 #[derive(Debug, Clone)]
 struct DropdownView {
     rect: Rect,
+    title: Line<'static>,
     items: Vec<DropdownItem>,
     selected_index: Option<usize>,
     scroll_position: usize,
@@ -42,6 +43,7 @@ struct DropdownWidgetState {
 
 struct DropdownWidget<'a> {
     config: &'a TuiConfig,
+    title: Line<'a>,
     items: &'a [DropdownItem],
 }
 
@@ -55,23 +57,22 @@ impl StatefulWidget for DropdownWidget<'_> {
         let list_items = self
             .items
             .iter()
-            .map(|item| {
-                let line = Line::from(Span::styled(item.label.clone(), item.text_style));
-                ListItem::new(line)
-            })
+            .map(|item| ListItem::new(item.line.clone()))
             .collect::<Vec<_>>();
+        let overlay = styles::overlay_panel(self.config, true);
 
         let list = List::new(list_items)
             .block(
                 Block::default()
+                    .title(self.title.clone())
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(super::styles::panel_border(self.config, false))
-                    .style(Style::default().bg(self.config.theme.surface_raised)),
+                    .border_style(styles::panel_border(self.config, true))
+                    .style(overlay),
             )
-            .highlight_style(super::styles::selection(self.config))
+            .highlight_style(styles::selection(self.config))
             .highlight_symbol("› ")
-            .style(Style::default().bg(self.config.theme.surface_raised));
+            .style(overlay);
 
         StatefulWidget::render(list, area, buf, &mut list_state);
 
@@ -115,6 +116,7 @@ pub(crate) fn render_dropdown(
     };
     let widget = DropdownWidget {
         config,
+        title: view.title.clone(),
         items: &view.items,
     };
 
@@ -147,6 +149,7 @@ fn build_dropdown_view(
     let selected_index = (selected_row >= scroll_position
         && selected_row < scroll_position.saturating_add(visible_rows))
     .then_some(selected_row - scroll_position);
+    let title = dropdown_title(config, arg.display_label(), widget);
 
     let items = arg
         .choices
@@ -170,31 +173,52 @@ fn build_dropdown_view(
                 .and_then(|choice| choice.help.as_deref())
                 .map(|help| format!("  {help}"))
                 .unwrap_or_default();
+            let mut spans = Vec::new();
+            if matches!(widget, FieldWidget::MultiChoice) {
+                spans.push(Span::styled(
+                    if is_checked { " [x] " } else { " [ ] " },
+                    styles::checkbox_chip(config, is_selected, is_checked),
+                ));
+                spans.push(Span::raw(" "));
+            }
+            spans.push(Span::styled(value.clone(), text_style));
+            if !description.is_empty() {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(description, styles::help(config)));
+            }
             DropdownItem {
-                label: match widget {
-                    FieldWidget::MultiChoice => {
-                        format!(
-                            "{} {}{}",
-                            if is_checked { "[x]" } else { "[ ]" },
-                            value,
-                            description
-                        )
-                    }
-                    _ => format!("{value}{description}"),
-                },
-                text_style,
+                line: Line::from(spans),
             }
         })
         .collect();
 
     Some(DropdownView {
         rect,
+        title,
         items,
         selected_index,
         scroll_position,
         visible_rows,
         total_rows,
     })
+}
+
+fn dropdown_title(config: &TuiConfig, label: &str, widget: FieldWidget) -> Line<'static> {
+    let hint = match widget {
+        FieldWidget::MultiChoice => "Space toggles, Enter closes",
+        FieldWidget::SingleChoice => "Enter selects",
+        FieldWidget::Counter => "Right/+ increments, Left/- decrements",
+        FieldWidget::Toggle => "Space toggles",
+        FieldWidget::RepeatedText => "Enter adds rows",
+        FieldWidget::OptionalValue => "Right enables, Left clears",
+        FieldWidget::SingleText => "Type to filter",
+    };
+
+    Line::from(vec![
+        Span::styled(format!(" {label} "), styles::preview_title(config)),
+        Span::raw(" "),
+        Span::styled(hint.to_string(), styles::help(config)),
+    ])
 }
 
 #[cfg(test)]
@@ -287,7 +311,14 @@ mod tests {
             .expect("dropdown view");
 
         assert_eq!(view.total_rows, 1);
-        assert_eq!(view.items[0].label, "fast  Fast path");
+        let rendered = view.items[0]
+            .line
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+        assert!(rendered.contains("fast"));
+        assert!(rendered.contains("Fast path"));
     }
 
     #[test]
@@ -313,8 +344,20 @@ mod tests {
             .expect("dropdown view");
 
         assert_eq!(view.total_rows, 2);
-        assert_eq!(view.items[0].label, "red");
-        assert_eq!(view.items[1].label, "green");
+        let first = view.items[0]
+            .line
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+        let second = view.items[1]
+            .line
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+        assert_eq!(first, "red");
+        assert_eq!(second, "green");
     }
 
     #[test]
@@ -336,6 +379,44 @@ mod tests {
         let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &config)
             .expect("dropdown view");
 
-        assert_eq!(view.items[0].text_style.fg, Some(config.theme.selection_fg));
+        assert_eq!(
+            view.items[0].line.spans[0].style.fg,
+            Some(config.theme.selection_fg)
+        );
+    }
+
+    #[test]
+    fn multi_choice_dropdown_items_use_checkbox_chips_and_titles_explain_controls() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(clap::ArgAction::Append)
+                    .value_parser(["red", "blue"]),
+            ),
+        );
+        state.ui.dropdown_open = Some("color".to_string());
+        state.ui.dropdown_cursor = 1;
+        let mut snapshot = crate::frame_snapshot::FrameSnapshot::default();
+        snapshot.layout.dropdown = Some(Rect::new(0, 0, 40, 5));
+
+        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &TuiConfig::default())
+            .expect("dropdown view");
+
+        let rendered = view.items[0]
+            .line
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+        let title = view
+            .title
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+
+        assert!(rendered.contains("[ ]") || rendered.contains("[x]"));
+        assert!(title.contains("Space toggles"));
     }
 }

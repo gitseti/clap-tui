@@ -14,7 +14,7 @@ use crate::query::tree::{TreeItem, TreeRow};
 use crate::spec::CommandPath;
 
 use super::screen::ScreenView;
-use super::styles;
+use super::styles::{self, SidebarRowState};
 
 pub(crate) fn populate_layout(area: Rect, vm: &ScreenView<'_>, frame_layout: &mut FrameLayout) {
     frame_layout.sidebar = Some(area);
@@ -56,7 +56,7 @@ pub(crate) fn populate_layout(area: Rect, vm: &ScreenView<'_>, frame_layout: &mu
         let caret = if item.has_children {
             let caret_x = content_x
                 .saturating_add(u16::try_from(item.indent).unwrap_or(0))
-                .saturating_add(2);
+                .saturating_add(0);
             Some(Rect::new(caret_x, row_y, 1, 1))
         } else {
             None
@@ -212,23 +212,8 @@ fn render_row(
     match row {
         TreeRow::Item(item) => {
             let selected = item.path == *selected_path;
-            let row_style = if selected {
-                if sidebar_focused {
-                    styles::list_highlight(config)
-                } else {
-                    styles::list_highlight_unfocused(config)
-                }
-            } else if item.indent > 0 {
-                Style::default()
-                    .fg(config.theme.dim)
-                    .bg(config.theme.panel_bg)
-            } else {
-                Style::default()
-                    .fg(config.theme.text)
-                    .bg(config.theme.panel_bg)
-            };
-            let rail = if selected { "|" } else { " " };
-            let line = sidebar_line(config, item, rail, row_style, selected);
+            let row_style = sidebar_row_style(config, item, selected, sidebar_focused);
+            let line = sidebar_line(config, item, row_style, selected);
             frame.render_widget(Paragraph::new(line).style(row_style), row_rect);
         }
         TreeRow::Heading { title, indent } => {
@@ -239,6 +224,35 @@ fn render_row(
             );
         }
     }
+}
+
+fn sidebar_row_style(
+    config: &TuiConfig,
+    item: &TreeItem,
+    selected: bool,
+    sidebar_focused: bool,
+) -> Style {
+    if selected {
+        return if sidebar_focused {
+            styles::list_highlight(config)
+        } else {
+            styles::list_highlight_unfocused(config)
+        };
+    }
+
+    let mut style = styles::sidebar_row(
+        config,
+        if item.indent > 0 {
+            SidebarRowState::IdleChild
+        } else {
+            SidebarRowState::IdleRoot
+        },
+    );
+    if item.has_children || item.indent == 0 {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+
+    style
 }
 
 fn render_scrollbar(
@@ -275,8 +289,8 @@ fn render_scrollbar(
 
 fn sidebar_heading_line(config: &TuiConfig, title: &str, indent: usize) -> Line<'static> {
     Line::from(vec![
-        Span::raw("  "),
         Span::raw(" ".repeat(indent)),
+        Span::styled("· ", Style::default().fg(config.theme.divider)),
         Span::styled(
             title.to_string(),
             Style::default()
@@ -295,11 +309,13 @@ fn sidebar_title(
         Span::raw(" "),
         Span::styled(
             root.name.clone(),
-            Style::default().fg(if root_selected {
-                config.theme.text
-            } else {
-                config.theme.dim
-            }),
+            Style::default()
+                .fg(if root_selected {
+                    config.theme.text
+                } else {
+                    config.theme.dim
+                })
+                .add_modifier(Modifier::BOLD),
         ),
     ];
     if let Some(version) = root.version.as_ref() {
@@ -320,29 +336,23 @@ fn sidebar_title(
 fn sidebar_line(
     config: &TuiConfig,
     item: &TreeItem,
-    rail: &'static str,
     row_style: Style,
     selected: bool,
 ) -> Line<'static> {
     let prefix_style = if selected {
         row_style
+    } else if item.has_children {
+        Style::default()
+            .fg(config.theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else if item.indent > 0 {
         Style::default().fg(config.theme.dim)
     } else {
-        Style::default().fg(config.theme.text)
+        Style::default()
+            .fg(config.theme.text)
+            .add_modifier(Modifier::BOLD)
     };
-    let mut spans = vec![
-        Span::styled(
-            rail,
-            Style::default().fg(if selected {
-                config.theme.accent
-            } else {
-                config.theme.panel_bg
-            }),
-        ),
-        Span::raw(" "),
-        Span::styled(item.prefix(), prefix_style),
-    ];
+    let mut spans = vec![Span::styled(item.prefix(), prefix_style)];
     if item.path.is_empty() {
         spans.push(Span::styled(
             item.display_label.clone(),
@@ -375,7 +385,8 @@ mod tests {
     use ratatui::style::Modifier;
 
     use super::{
-        populate_layout, render_sidebar, sidebar_heading_line, sidebar_line, sidebar_title,
+        populate_layout, render_sidebar, sidebar_heading_line, sidebar_line, sidebar_row_style,
+        sidebar_title,
     };
     use crate::config::TuiConfig;
     use crate::frame_snapshot::FrameLayout;
@@ -432,8 +443,7 @@ mod tests {
         assert_eq!(line.spans[0].content.as_ref(), " ");
         assert_eq!(line.spans[1].content.as_ref(), "ls");
         assert_eq!(line.spans[1].style.fg, Some(config.theme.dim));
-        assert!(!line.spans[1].style.add_modifier.contains(Modifier::BOLD));
-        assert!(!line.spans[1].style.add_modifier.contains(Modifier::ITALIC));
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
         assert_eq!(line.spans[2].content.as_ref(), " · ");
         assert_eq!(line.spans[3].content.as_ref(), "1.2.3");
         assert_eq!(line.spans[3].style.fg, Some(config.theme.dim));
@@ -441,7 +451,18 @@ mod tests {
     }
 
     #[test]
-    fn non_root_rows_keep_standard_row_styling() {
+    fn sidebar_heading_line_marks_sections_with_a_subtle_marker() {
+        let config = TuiConfig::default();
+
+        let line = sidebar_heading_line(&config, "Applets", 2);
+
+        assert_eq!(line.spans[1].content.as_ref(), "· ");
+        assert_eq!(line.spans[1].style.fg, Some(config.theme.divider));
+        assert_eq!(line.spans[2].content.as_ref(), "Applets");
+    }
+
+    #[test]
+    fn root_leaf_rows_use_stronger_hierarchy_typography() {
         let config = TuiConfig::default();
         let item = TreeItem {
             name: "serve".to_string(),
@@ -453,10 +474,32 @@ mod tests {
             expanded: false,
         };
 
-        let line = sidebar_line(&config, &item, " ", ratatui::style::Style::default(), false);
+        let row_style = sidebar_row_style(&config, &item, false, true);
+        let line = sidebar_line(&config, &item, row_style, false);
 
-        assert_eq!(line.spans[3].content.as_ref(), "serve (srv)");
-        assert_ne!(line.spans[3].style.fg, Some(config.theme.accent));
+        assert_eq!(line.spans[1].content.as_ref(), "serve (srv)");
+        assert_eq!(line.spans[1].style.fg, Some(config.theme.text));
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn branch_rows_use_prominent_prefixes_for_tree_hierarchy() {
+        let config = TuiConfig::default();
+        let item = TreeItem {
+            name: "workflow".to_string(),
+            display_label: "workflow".to_string(),
+            version: None,
+            path: CommandPath::from(vec!["workflow".to_string()]),
+            has_children: true,
+            indent: 0,
+            expanded: false,
+        };
+
+        let row_style = sidebar_row_style(&config, &item, false, true);
+        let line = sidebar_line(&config, &item, row_style, false);
+
+        assert_eq!(line.spans[0].style.fg, Some(config.theme.accent));
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -465,6 +508,7 @@ mod tests {
 
         let line = sidebar_heading_line(&config, "Applets", 2);
 
+        assert_eq!(line.spans[1].content.as_ref(), "· ");
         assert_eq!(line.spans[2].content.as_ref(), "Applets");
     }
 
@@ -481,10 +525,10 @@ mod tests {
             expanded: false,
         };
 
-        let line = sidebar_line(&config, &item, " ", ratatui::style::Style::default(), false);
+        let line = sidebar_line(&config, &item, ratatui::style::Style::default(), false);
 
-        assert_eq!(line.spans[2].content.as_ref(), "|   ");
-        assert_eq!(line.spans[2].style.fg, Some(config.theme.dim));
+        assert_eq!(line.spans[0].content.as_ref(), "| ");
+        assert_eq!(line.spans[0].style.fg, Some(config.theme.dim));
     }
 
     #[test]

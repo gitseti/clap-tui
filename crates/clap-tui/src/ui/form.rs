@@ -113,6 +113,9 @@ fn render_fields(
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
         let input_is_truncated = text_input_is_truncated(item.arg, field.input);
         let field_error = vm.validation.field_errors.get(&item.arg.id);
+        let validation_summary = vm.validation.summary.as_deref();
+        let is_primary_invalid =
+            frame_snapshot.first_invalid_field_id() == Some(item.arg.id.as_str());
         let input_state = vm
             .inputs
             .as_ref()
@@ -138,14 +141,20 @@ fn render_fields(
             let mut spans = vec![Span::styled(
                 item.arg.display_label().to_string(),
                 if field_error.is_some() {
-                    styles::label(config, selected).fg(config.theme.error)
+                    if is_primary_invalid {
+                        styles::label(config, selected)
+                            .fg(config.theme.error)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        styles::label(config, selected).fg(config.theme.error)
+                    }
                 } else {
                     styles::label(config, selected)
                 },
             )];
             if item.arg.required {
                 spans.push(Span::raw(" "));
-                spans.push(Span::styled("*", Style::default().fg(config.theme.accent)));
+                spans.push(Span::styled("*", styles::required_prompt(config)));
             }
             spans.extend(badges.clone());
             frame.render_widget(Paragraph::new(Line::from(spans)), label_rect);
@@ -169,12 +178,15 @@ fn render_fields(
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(field_border_style(config, selected, field_error.is_some()));
+            .border_style(field_border_style(
+                config,
+                selected,
+                field_error.is_some(),
+                is_primary_invalid,
+            ));
         let fill_style = styles::input(config, selected);
         let text_style = if shows_choice_placeholder && item.arg.required {
-            Style::default()
-                .fg(config.theme.error)
-                .add_modifier(Modifier::BOLD)
+            styles::required_prompt(config)
         } else if is_default || shows_choice_placeholder {
             styles::placeholder(config)
         } else {
@@ -265,11 +277,7 @@ fn render_fields(
                 && let Some(placeholder) = required_empty_prompt(item.arg, item.widget)
             {
                 textarea.set_placeholder_text(placeholder);
-                textarea.set_placeholder_style(
-                    Style::default()
-                        .fg(config.theme.error)
-                        .add_modifier(Modifier::BOLD),
-                );
+                textarea.set_placeholder_style(styles::required_prompt(config));
             }
             frame.render_widget(textarea.widget(), field.input);
             place_textarea_cursor(frame, &textarea, field.input);
@@ -287,9 +295,13 @@ fn render_fields(
                 item.arg,
                 item.widget,
                 &vm.selected_path,
-                selected,
-                field_error.map(String::as_str),
-                vm.effective_values.get(&item.arg.id),
+                FieldHelpContext {
+                    selected,
+                    validation_summary,
+                    field_error: field_error.map(String::as_str),
+                    is_primary_invalid,
+                    effective_value: vm.effective_values.get(&item.arg.id),
+                },
             ),
             field.description,
         ) {
@@ -374,13 +386,20 @@ fn repeated_display_lines(arg: &ArgSpec, widget: FieldWidget, value: &str) -> Ve
         .collect()
 }
 
-fn field_border_style(config: &TuiConfig, selected: bool, has_error: bool) -> Style {
-    if has_error {
+fn field_border_style(
+    config: &TuiConfig,
+    selected: bool,
+    has_error: bool,
+    is_primary_invalid: bool,
+) -> Style {
+    if has_error && (selected || is_primary_invalid) {
         Style::default().fg(config.theme.error)
+    } else if has_error {
+        styles::field_border(config, false, true)
     } else if selected {
-        Style::default().fg(config.theme.panel_focus_border)
+        styles::field_border(config, true, false)
     } else {
-        Style::default().fg(config.theme.border)
+        styles::field_border(config, false, false)
     }
 }
 
@@ -660,6 +679,7 @@ fn compact_control_line(
     );
     let affordance = match widget {
         FieldWidget::Counter => " +/- ",
+        _ if open => " ^ ",
         _ => " v ",
     };
     let affordance_width = u16::try_from(affordance.chars().count()).unwrap_or(3);
@@ -711,8 +731,8 @@ fn render_help_overlay(
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(config.theme.panel_focus_border))
-        .style(styles::panel(config));
+        .border_style(styles::panel_border(config, true))
+        .style(styles::overlay_panel(config, true));
     let inner = crate::frame_snapshot::help_overlay_content_rect(area);
     frame.render_widget(block, popup);
     frame.render_widget(
@@ -744,20 +764,32 @@ fn render_help_overlay(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FieldHelpContext<'a> {
+    selected: bool,
+    validation_summary: Option<&'a str>,
+    field_error: Option<&'a str>,
+    is_primary_invalid: bool,
+    effective_value: Option<&'a EffectiveArgValue>,
+}
+
 fn field_help_text(
     arg: &ArgSpec,
     widget: FieldWidget,
     selected_path: &crate::spec::CommandPath,
-    selected: bool,
-    field_error: Option<&str>,
-    effective_value: Option<&EffectiveArgValue>,
+    help: FieldHelpContext<'_>,
 ) -> Option<String> {
-    if let Some(field_error) = field_error {
+    if let Some(field_error) = help.field_error {
+        if help.is_primary_invalid
+            && let Some(summary) = help.validation_summary
+        {
+            return Some(format!("{summary}  {field_error}"));
+        }
         return Some(field_error.to_string());
     }
 
     let mut parts = Vec::new();
-    let primary_help = if selected {
+    let primary_help = if help.selected {
         arg.long_help()
             .filter(|long_help| Some(*long_help) != arg.help.as_deref())
             .map(str::to_string)
@@ -772,7 +804,7 @@ fn field_help_text(
     if !arg.value_names().is_empty() {
         parts.push(format!("Expects: {}", arg.value_names().join(" ")));
     }
-    if let Some(effective_value) = effective_value {
+    if let Some(effective_value) = help.effective_value {
         match effective_value.source {
             EffectiveValueSource::DefaultMissing if !effective_value.values.is_empty() => parts
                 .push(format!(
@@ -785,13 +817,15 @@ fn field_help_text(
             _ => {}
         }
     }
-    if selected && arg.is_inherited_global() && !selected_path.is_empty() {
+    if help.selected && arg.is_inherited_global() && !selected_path.is_empty() {
         parts.push(format!(
             "Inherited here; editing creates an override for {}.",
             selected_path.as_slice().join(" > ")
         ));
     }
-    if selected && let Some(hint) = widget_help_hint(widget) {
+    if help.selected
+        && let Some(hint) = widget_help_hint(widget)
+    {
         parts.push(hint.to_string());
     }
 
@@ -821,16 +855,12 @@ fn field_badges(
     if arg.is_inherited_global() {
         spans.extend(chip_spans(
             "Inherited",
-            Style::default()
-                .fg(config.theme.dim)
-                .bg(config.theme.pill_bg),
+            styles::metadata_badge(config, styles::MetadataKind::Inherited),
         ));
     } else if arg.is_global() {
         spans.extend(chip_spans(
             "Global",
-            Style::default()
-                .fg(config.theme.text)
-                .bg(config.theme.pill_bg),
+            styles::metadata_badge(config, styles::MetadataKind::Global),
         ));
     }
 
@@ -849,12 +879,14 @@ fn field_badges(
             EffectiveValueSource::ConditionalDefault => Some("Conditional"),
         };
         if let Some(label) = label {
-            spans.extend(chip_spans(
-                label,
-                Style::default()
-                    .fg(config.theme.dim)
-                    .bg(config.theme.pill_bg),
-            ));
+            let kind = match source {
+                EffectiveValueSource::Default => styles::MetadataKind::Default,
+                EffectiveValueSource::Env => styles::MetadataKind::Env,
+                EffectiveValueSource::DefaultMissing => styles::MetadataKind::Implicit,
+                EffectiveValueSource::ConditionalDefault => styles::MetadataKind::Conditional,
+                EffectiveValueSource::User => unreachable!("user source has no badge label"),
+            };
+            spans.extend(chip_spans(label, styles::metadata_badge(config, kind)));
         }
     }
 
@@ -976,10 +1008,7 @@ fn render_effective_value(arg: &ArgSpec, values: &[String]) -> String {
 }
 
 fn chip_spans(label: &str, style: Style) -> Vec<Span<'static>> {
-    vec![
-        Span::raw(" "),
-        Span::styled(format!(" {label} "), style.add_modifier(Modifier::BOLD)),
-    ]
+    vec![Span::raw(" "), Span::styled(format!(" {label} "), style)]
 }
 
 #[cfg(test)]
@@ -987,11 +1016,16 @@ mod tests {
     use clap::{Arg, ArgAction, Command};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
 
-    use super::{FieldWidget, field_help_text, populate_layout, text_input_is_truncated};
+    use super::{
+        FieldHelpContext, FieldWidget, compact_control_line, field_badges, field_help_text,
+        populate_layout, text_input_is_truncated,
+    };
     use crate::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, AppState, Focus, UiState};
+    use crate::pipeline::EffectiveValueSource;
     use crate::query::form::{visible_args, widget_for};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
@@ -1202,6 +1236,91 @@ mod tests {
     }
 
     #[test]
+    fn first_invalid_field_uses_summary_link_in_help_text() {
+        let mut arg = option_arg("name", "--name");
+        arg.required = true;
+
+        let help = field_help_text(
+            &arg,
+            FieldWidget::SingleText,
+            &crate::spec::CommandPath::default(),
+            FieldHelpContext {
+                selected: false,
+                validation_summary: Some("Missing required argument: --name"),
+                field_error: Some("Required argument"),
+                is_primary_invalid: true,
+                effective_value: None,
+            },
+        )
+        .expect("help text");
+
+        assert!(help.contains("Missing required argument: --name"));
+        assert!(help.contains("Required argument"));
+    }
+
+    #[test]
+    fn secondary_invalid_field_keeps_plain_error_text() {
+        let mut arg = option_arg("name", "--name");
+        arg.required = true;
+
+        let help = field_help_text(
+            &arg,
+            FieldWidget::SingleText,
+            &crate::spec::CommandPath::default(),
+            FieldHelpContext {
+                selected: false,
+                validation_summary: Some("Missing required argument: --name"),
+                field_error: Some("Required argument"),
+                is_primary_invalid: false,
+                effective_value: None,
+            },
+        )
+        .expect("help text");
+
+        assert_eq!(help, "Required argument");
+    }
+
+    #[test]
+    fn open_choice_control_uses_open_affordance() {
+        let line = compact_control_line(
+            &TuiConfig::default(),
+            FieldWidget::SingleChoice,
+            "dev",
+            20,
+            false,
+            false,
+            true,
+        );
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+
+        assert!(rendered.contains('^'));
+        assert!(rendered.contains("dev"));
+    }
+
+    #[test]
+    fn metadata_badges_use_one_muted_label_style() {
+        let config = TuiConfig::default();
+        let badges = field_badges(
+            &config,
+            &option_arg("name", "--name"),
+            Some(EffectiveValueSource::ConditionalDefault),
+            None,
+        );
+        let rendered = badges
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+
+        assert!(rendered.contains("Conditional"));
+        assert_eq!(badges[1].style.fg, Some(config.theme.metadata));
+        assert!(!badges[1].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
     fn layout_places_option_description_between_label_and_input() {
         let mut config = option_arg("config", "--config");
         config.help = Some("Path to the main config file".to_string());
@@ -1302,9 +1421,13 @@ mod tests {
             &include,
             FieldWidget::SingleText,
             &crate::spec::CommandPath::default(),
-            true,
-            None,
-            None,
+            FieldHelpContext {
+                selected: true,
+                validation_summary: None,
+                field_error: None,
+                is_primary_invalid: false,
+                effective_value: None,
+            },
         )
         .expect("selected help text");
 
@@ -1590,9 +1713,13 @@ mod tests {
             arg,
             widget_for(arg),
             &crate::spec::CommandPath::from(vec!["build".to_string(), "release".to_string()]),
-            true,
-            None,
-            None,
+            FieldHelpContext {
+                selected: true,
+                validation_summary: None,
+                field_error: None,
+                is_primary_invalid: false,
+                effective_value: None,
+            },
         )
         .expect("override help");
 

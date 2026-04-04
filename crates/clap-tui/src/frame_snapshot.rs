@@ -30,6 +30,7 @@ pub struct FrameLayout {
     pub form_view: Option<Rect>,
     pub form_tabs: Vec<TabButtonLayout>,
     pub footer_buttons: Vec<FooterButtonLayout>,
+    pub invalid_field_ids: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -40,6 +41,10 @@ pub struct FrameSnapshot {
 }
 
 impl FrameSnapshot {
+    pub fn first_invalid_field_id(&self) -> Option<&str> {
+        self.layout.invalid_field_ids.first().map(String::as_str)
+    }
+
     pub fn form_scroll(&self, requested_scroll: u16) -> u16 {
         requested_scroll.min(self.form_scroll_max)
     }
@@ -257,6 +262,7 @@ pub(crate) fn populate_form_layout(
     frame_layout.form_fields.clear();
     frame_layout.form_inputs.clear();
     frame_layout.form_tabs.clear();
+    frame_layout.invalid_field_ids.clear();
     frame_layout.form_view = Some(content_area);
 
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
@@ -310,6 +316,9 @@ pub(crate) fn populate_form_layout(
         let description = form_description_rect(item.arg, y, area, content_area, show_description);
 
         frame_layout.form_inputs.insert(item.arg.id.clone(), input);
+        if validation.field_errors.contains_key(&item.arg.id) {
+            frame_layout.invalid_field_ids.push(item.arg.id.clone());
+        }
         frame_layout.form_fields.push(FormFieldLayout {
             arg_id: item.arg.id.clone(),
             heading,
@@ -481,6 +490,105 @@ mod tests {
         assert_eq!(geometry.rect.width, input_rect.width);
         assert_eq!(geometry.rect.y, input_rect.y + input_rect.height);
         assert_eq!(geometry.visible_rows, 4);
+    }
+
+    #[test]
+    fn populate_form_layout_records_invalid_fields_in_form_order() {
+        use crate::input::{ActiveTab, Focus, UiState};
+        use crate::pipeline::ValidationState;
+        use crate::query::form::visible_args;
+        use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
+
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![
+                ArgSpec {
+                    id: "alpha".to_string(),
+                    display_name: "--alpha".to_string(),
+                    help: None,
+                    required: true,
+                    kind: ArgKind::Option,
+                    default_values: Vec::new(),
+                    choices: Vec::new(),
+                    position: None,
+                    value_cardinality: ValueCardinality::One,
+                    value_hint: None,
+                    ..ArgSpec::default()
+                },
+                ArgSpec {
+                    id: "beta".to_string(),
+                    display_name: "--beta".to_string(),
+                    help: None,
+                    required: true,
+                    kind: ArgKind::Option,
+                    default_values: Vec::new(),
+                    choices: Vec::new(),
+                    position: None,
+                    value_cardinality: ValueCardinality::One,
+                    value_hint: None,
+                    ..ArgSpec::default()
+                },
+            ],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = crate::ui::screen::ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: ValidationState {
+                is_valid: false,
+                summary: Some("Missing required arguments: --alpha, --beta".to_string()),
+                field_errors: std::collections::BTreeMap::from([
+                    ("beta".to_string(), "Required argument".to_string()),
+                    ("alpha".to_string(), "Required argument".to_string()),
+                ]),
+            },
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = UiState {
+            focus: Focus::Sidebar,
+            active_tab: ActiveTab::Inputs,
+            last_non_help_tab: ActiveTab::Inputs,
+            help_open: false,
+            help_scroll: 0,
+            selected_arg_index: 0,
+            search_query: String::new(),
+            editors: crate::editor_state::EditorState::default(),
+            dropdown_open: None,
+            dropdown_scroll: 0,
+            dropdown_cursor: 0,
+            sidebar_scroll: 0,
+            form_scroll: 0,
+            hover: None,
+            hover_tab: None,
+            mouse_select: None,
+        };
+
+        crate::frame_snapshot::populate_form_layout(
+            &ui,
+            Rect::new(0, 0, 40, 12),
+            &vm.active_args,
+            &vm.command.help,
+            &vm.validation,
+            &mut snapshot,
+        );
+
+        assert_eq!(
+            snapshot.layout.invalid_field_ids,
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
+        assert_eq!(snapshot.first_invalid_field_id(), Some("alpha"));
+        assert!(matches!(ui.focus, Focus::Sidebar));
     }
 }
 

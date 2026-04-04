@@ -1,20 +1,4 @@
-# command-context-orientation Specification
-
-## Purpose
-Ensure users can stay oriented around the selected command and its generated invocation without depending on a single panel for context.
-## Requirements
-### Requirement: Workspace surfaces the selected command hierarchy
-The TUI SHALL show enough command-path context in the main workspace for users to identify the currently selected nested command without relying on the sidebar alone.
-
-#### Scenario: Nested command is selected
-- **WHEN** the user selects a subcommand below the root command
-- **THEN** the main workspace renders the selected command path or breadcrumb context
-- **AND** the rendered context distinguishes the selected nested command from its ancestors
-
-#### Scenario: Sidebar is not the focused panel
-- **WHEN** focus is in the form or another non-sidebar surface
-- **THEN** the main workspace still renders the current command context
-- **AND** the user can identify which command the form edits
+## MODIFIED Requirements
 
 ### Requirement: Sidebar hierarchy remains easy to scan
 The TUI SHALL use visual hierarchy in the sidebar tree that makes group labels, actionable commands, child depth, branch state, and the active row easy to distinguish.

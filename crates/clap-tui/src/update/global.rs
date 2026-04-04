@@ -43,7 +43,7 @@ pub(crate) fn apply(
             state.ui.close_dropdown();
             Effect::None
         }
-        Action::ClickFooter(target) => apply_footer_click(*target, state),
+        Action::ClickFooter(target) => apply_footer_click(*target, state, frame_snapshot),
         Action::SwitchTab(tab) => {
             navigation::switch_tab(state, *tab);
             Effect::None
@@ -78,7 +78,11 @@ fn apply_paste(text: &str, state: &mut AppState) {
     }
 }
 
-fn apply_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
+fn apply_footer_click(
+    target: HoverTarget,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) -> Effect {
     match target {
         HoverTarget::Run => {
             state.ui.dismiss_transient_interaction();
@@ -100,7 +104,17 @@ fn apply_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
             navigation::toggle_help_tab(state);
             Effect::None
         }
-        HoverTarget::Preview => Effect::None,
+        HoverTarget::Preview => {
+            if state
+                .derived_validation()
+                .summary
+                .as_ref()
+                .is_some_and(|_| frame_snapshot.first_invalid_field_id().is_some())
+            {
+                navigation::focus_first_invalid_field(state, frame_snapshot);
+            }
+            Effect::None
+        }
     }
 }
 
@@ -349,5 +363,26 @@ mod tests {
         let effect = apply_action(&Action::ReverseFocus, &mut state, &snapshot);
         assert_eq!(effect, Effect::None);
         assert!(matches!(state.ui.focus, Focus::Sidebar));
+    }
+
+    #[test]
+    fn footer_status_click_focuses_first_invalid_field_when_available() {
+        let mut state = crate::input::AppState::from_command(
+            &clap::Command::new("tool").arg(clap::Arg::new("name").long("name").required(true)),
+        );
+        state.ui.focus = Focus::Sidebar;
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 6));
+        snapshot.layout.invalid_field_ids = vec!["name".to_string()];
+
+        let effect = apply_action(
+            &Action::ClickFooter(crate::input::HoverTarget::Preview),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.focus, Focus::Form);
+        assert_eq!(state.ui.selected_arg_index, 0);
     }
 }

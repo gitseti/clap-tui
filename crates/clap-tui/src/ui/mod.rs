@@ -4,7 +4,7 @@ mod form;
 mod header;
 mod layout;
 mod preview;
-mod screen;
+pub(crate) mod screen;
 mod sidebar;
 mod styles;
 mod toast;

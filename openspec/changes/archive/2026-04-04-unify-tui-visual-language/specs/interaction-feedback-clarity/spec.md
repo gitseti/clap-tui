@@ -1,22 +1,19 @@
-# interaction-feedback-clarity Specification
+## ADDED Requirements
 
-## Purpose
-Make controls, validation, and feedback surfaces explain themselves clearly enough that users can navigate and correct state without hidden interaction knowledge.
-## Requirements
-### Requirement: Focus traversal includes the search field
-The TUI SHALL let users reach the search field through the normal focus traversal model in addition to direct shortcuts or pointer input.
+### Requirement: Validation summary links errors back to fields
+The TUI SHALL present validation summaries in the same top-to-bottom order as the invalid fields in the current form and SHALL preserve a clear visual link between the summary and those fields.
 
-#### Scenario: User cycles focus with Tab
-- **WHEN** the user advances focus using the standard focus-cycle control
-- **THEN** focus advances in the order Sidebar -> Search -> Form
+#### Scenario: Multiple invalid fields are present
+- **WHEN** the current command has more than one invalid field
+- **THEN** the validation summary lists or summarizes those errors in the same order the fields appear in the form
+- **AND** the first invalid field uses the same error treatment family as the summary
 
-#### Scenario: User cycles focus with BackTab
-- **WHEN** the user reverses focus using the reverse focus-cycle control
-- **THEN** focus moves in the order Form -> Search -> Sidebar
+#### Scenario: User returns to a long invalid form
+- **WHEN** the form is long enough that not all invalid fields are simultaneously visible
+- **THEN** the UI identifies which invalid field is the next correction target
+- **AND** the user does not need to infer correction order from the raw option names alone
 
-#### Scenario: Footer advertises focus behavior
-- **WHEN** the footer renders a focus hint
-- **THEN** the hint matches the actual focus traversal behavior implemented by the TUI
+## MODIFIED Requirements
 
 ### Requirement: Choice and counter widgets expose accurate interaction hints
 The TUI SHALL present control affordances and inline hints that match each widget's real interaction model and make different widget types visually distinguishable before interaction.
@@ -65,24 +62,6 @@ The TUI SHALL use field copy and state treatments that make required empty state
 - **AND** inherited, default, environment, or implicit state markers use compact badge-like treatments instead of sentence-length metadata when space allows
 - **AND** the inherited indicator remains visually secondary to the editable value
 
-### Requirement: Dropdown dismissal does not require a sacrificial click
-The TUI SHALL allow users to click another actionable surface while a dropdown is open without forcing a separate close-only click first.
-
-#### Scenario: User clicks another field while a dropdown is open
-- **WHEN** the user left-clicks a different form field outside the open dropdown
-- **THEN** the dropdown closes
-- **AND** the clicked field receives the same interaction that would have occurred if the dropdown had not been open
-
-#### Scenario: User clicks search or sidebar while a dropdown is open
-- **WHEN** the user clicks the search field or a sidebar row outside the open dropdown
-- **THEN** the dropdown closes
-- **AND** the clicked search or sidebar target receives the same interaction that would have occurred if the dropdown had not been open
-
-#### Scenario: User clicks a non-form action while a dropdown is open
-- **WHEN** the user clicks a footer action or preview action outside the open dropdown
-- **THEN** the dropdown closes
-- **AND** the clicked action executes in that same interaction
-
 ### Requirement: Feedback styling distinguishes severity and priority
 The TUI SHALL visually distinguish primary actions, passive hints, validation summaries, success feedback, warning-like inherited or implicit metadata, and error feedback.
 
@@ -112,16 +91,3 @@ The TUI SHALL visually distinguish primary actions, passive hints, validation su
 #### Scenario: State hierarchy is viewed in any theme
 - **WHEN** the UI renders primary actions, inherited badges, validation summaries, success feedback, warning-like metadata, or error surfaces in any supported theme
 - **THEN** their hierarchy remains distinguishable through text, border, emphasis, label, or placement cues rather than color alone
-
-### Requirement: Validation summary links errors back to fields
-The TUI SHALL present validation summaries in the same top-to-bottom order as the invalid fields in the current form and SHALL preserve a clear visual link between the summary and those fields.
-
-#### Scenario: Multiple invalid fields are present
-- **WHEN** the current command has more than one invalid field
-- **THEN** the validation summary lists or summarizes those errors in the same order the fields appear in the form
-- **AND** the first invalid field uses the same error treatment family as the summary
-
-#### Scenario: User returns to a long invalid form
-- **WHEN** the form is long enough that not all invalid fields are simultaneously visible
-- **THEN** the UI identifies which invalid field is the next correction target
-- **AND** the user does not need to infer correction order from the raw option names alone

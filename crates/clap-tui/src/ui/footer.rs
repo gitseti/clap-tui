@@ -259,10 +259,18 @@ fn chip_width(label: &str) -> u16 {
 
 fn chip_style(config: &TuiConfig, variant: FooterChipVariant, hovered: bool) -> Style {
     match variant {
-        FooterChipVariant::Primary => styles::primary_chip(config, hovered),
-        FooterChipVariant::Secondary => styles::secondary_chip(config, hovered),
-        FooterChipVariant::Status => styles::status_chip(config, hovered),
-        FooterChipVariant::Subtle => styles::subtle_chip(config, hovered),
+        FooterChipVariant::Primary => {
+            styles::footer_chip(config, styles::FooterChipKind::Primary, hovered)
+        }
+        FooterChipVariant::Secondary => {
+            styles::footer_chip(config, styles::FooterChipKind::Secondary, hovered)
+        }
+        FooterChipVariant::Status => {
+            styles::footer_chip(config, styles::FooterChipKind::Status, hovered)
+        }
+        FooterChipVariant::Subtle => {
+            styles::footer_chip(config, styles::FooterChipKind::Subtle, hovered)
+        }
     }
 }
 
