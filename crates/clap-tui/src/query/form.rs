@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use crate::input::ActiveTab;
 use crate::spec::{ArgSpec, CommandSpec};
 
+pub(crate) const SECTION_FIELD_INDENT: u16 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldWidget {
     Toggle,
@@ -309,6 +311,21 @@ pub(crate) fn field_heading<'a>(
     } else {
         None
     }
+}
+
+pub(crate) fn field_is_in_section(arg: &ArgSpec) -> bool {
+    arg.help_heading()
+        .is_some_and(|heading| !heading.is_empty())
+}
+
+pub(crate) fn field_section_ends(current: &ArgSpec, next: Option<&ArgSpec>) -> bool {
+    let Some(current_heading) = current.help_heading().filter(|heading| !heading.is_empty()) else {
+        return false;
+    };
+
+    next.and_then(ArgSpec::help_heading)
+        .filter(|heading| !heading.is_empty())
+        != Some(current_heading)
 }
 
 fn is_help_arg(arg: &ArgSpec) -> bool {

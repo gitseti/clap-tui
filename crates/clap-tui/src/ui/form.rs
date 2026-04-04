@@ -126,15 +126,28 @@ fn render_fields(
         if let Some(heading_rect) = field.heading {
             if let Some(heading) = item.arg.help_heading() {
                 frame.render_widget(
-                    Paragraph::new(Line::from(Span::styled(
-                        heading.to_string(),
-                        Style::default()
-                            .fg(config.theme.dim)
-                            .add_modifier(Modifier::BOLD),
-                    ))),
+                    Paragraph::new(section_heading_line(config, heading, heading_rect.width)),
                     heading_rect,
                 );
             }
+        }
+        if let Some(rail_rect) = field.section_rail {
+            frame.render_widget(
+                Paragraph::new(
+                    (0..rail_rect.height)
+                        .map(|_| Line::from("│"))
+                        .collect::<Vec<_>>(),
+                )
+                .style(Style::default().fg(config.theme.divider)),
+                rail_rect,
+            );
+        }
+        if let Some(cap_rect) = field.section_cap {
+            frame.render_widget(
+                Paragraph::new(section_cap_line(cap_rect.width))
+                    .style(Style::default().fg(config.theme.divider)),
+                cap_rect,
+            );
         }
 
         if let Some(label_rect) = field.label {
@@ -832,6 +845,48 @@ fn field_help_text(
     (!parts.is_empty()).then(|| parts.join("  "))
 }
 
+fn section_heading_line(config: &TuiConfig, heading: &str, width: u16) -> Line<'static> {
+    let title = format!(" {heading} ");
+    let title_width = u16::try_from(title.chars().count()).unwrap_or(width);
+    let left = "╭─";
+    let left_width = u16::try_from(left.chars().count()).unwrap_or(2);
+
+    if width <= title_width.saturating_add(left_width) {
+        return Line::from(Span::styled(
+            heading.to_string(),
+            Style::default()
+                .fg(config.theme.dim)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    let right_width = width.saturating_sub(left_width.saturating_add(title_width));
+    Line::from(vec![
+        Span::styled(left, Style::default().fg(config.theme.divider)),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(config.theme.dim)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "─".repeat(usize::from(right_width)),
+            Style::default().fg(config.theme.divider),
+        ),
+    ])
+}
+
+fn section_cap_line(width: u16) -> Line<'static> {
+    if width <= 1 {
+        return Line::from("╰");
+    }
+
+    Line::from(format!(
+        "╰{}",
+        "─".repeat(usize::from(width.saturating_sub(1)))
+    ))
+}
+
 fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
     match widget {
         FieldWidget::RepeatedText => {
@@ -857,7 +912,7 @@ fn field_badges(
             "Inherited",
             styles::metadata_badge(config, styles::MetadataKind::Inherited),
         ));
-    } else if arg.is_global() {
+    } else if arg.is_global() && arg.help_heading() != Some("Global") {
         spans.extend(chip_spans(
             "Global",
             styles::metadata_badge(config, styles::MetadataKind::Global),
@@ -1321,6 +1376,40 @@ mod tests {
     }
 
     #[test]
+    fn global_badge_is_omitted_inside_global_section() {
+        let config = TuiConfig::default();
+        let mut arg = option_arg("profile", "--profile");
+        arg.metadata.placement.global = true;
+        arg.metadata.display.help_heading = Some("Global".to_string());
+
+        let badges = field_badges(&config, &arg, None, None);
+        let rendered = badges
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+
+        assert!(!rendered.contains("Global"));
+    }
+
+    #[test]
+    fn inherited_badge_remains_visible_inside_global_section() {
+        let config = TuiConfig::default();
+        let mut arg = option_arg("profile", "--profile");
+        arg.metadata.placement.global = true;
+        arg.metadata.ownership.inherited_global = true;
+        arg.metadata.display.help_heading = Some("Global".to_string());
+
+        let badges = field_badges(&config, &arg, None, None);
+        let rendered = badges
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+
+        assert!(rendered.contains("Inherited"));
+        assert!(!rendered.contains("Global"));
+    }
+
+    #[test]
     fn layout_places_option_description_between_label_and_input() {
         let mut config = option_arg("config", "--config");
         config.help = Some("Path to the main config file".to_string());
@@ -1349,7 +1438,7 @@ mod tests {
 
         populate_layout(
             &ui_state(),
-            ratatui::layout::Rect::new(0, 0, 40, 8),
+            ratatui::layout::Rect::new(0, 0, 40, 12),
             &vm,
             &mut snapshot,
         );
@@ -1406,8 +1495,102 @@ mod tests {
             .expect("draw");
 
         let rendered = buffer_text(terminal.backend());
-        assert!(rendered.contains("Inputs"));
+        assert!(rendered.contains("╭─ Inputs"));
         assert!(rendered.contains("-I, --include"));
+    }
+
+    #[test]
+    fn section_heading_draws_rail_and_bottom_cap() {
+        let mut include = option_arg("include", "--include");
+        include.metadata.display.help_heading = Some("Global".to_string());
+        let mut config = option_arg("config", "--config");
+        config.metadata.display.help_heading = Some("Global".to_string());
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![include, config],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+
+        populate_layout(
+            &ui_state(),
+            ratatui::layout::Rect::new(0, 0, 40, 12),
+            &vm,
+            &mut snapshot,
+        );
+
+        let first = &snapshot.layout.form_fields[0];
+        let second = &snapshot.layout.form_fields[1];
+
+        assert!(first.section_rail.is_some());
+        assert!(first.section_cap.is_none());
+        assert!(second.section_rail.is_some());
+        assert!(second.section_cap.is_some());
+        assert_eq!(first.label.expect("label rect").x, 1);
+        assert_eq!(second.input.x, 1);
+    }
+
+    #[test]
+    fn section_rendering_shows_left_rail_and_bottom_cap() {
+        let mut include = option_arg("include", "--include");
+        include.metadata.display.help_heading = Some("Global".to_string());
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![include],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains('│'));
+        assert!(rendered.contains("╰──"));
     }
 
     #[test]

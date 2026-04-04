@@ -267,8 +267,10 @@ pub(crate) fn populate_form_layout(
 
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
     let mut previous_heading = None;
-    for item in active_args {
+    for (index, item) in active_args.iter().enumerate() {
         let heading = form::field_heading(previous_heading, item.arg);
+        let next_arg = active_args.get(index + 1).map(|next| next.arg);
+        let section_ends = form::field_section_ends(item.arg, next_arg);
         let show_description = form::field_has_description(
             item.arg,
             validation
@@ -294,8 +296,9 @@ pub(crate) fn populate_form_layout(
         } else {
             None
         };
+        let (field_x, field_width) = field_content_geometry(area, item.arg);
         let label = if metrics.label_height > 0 {
-            clipped_rect(area.x, area.width, y, metrics.label_height, content_area)
+            clipped_rect(field_x, field_width, y, metrics.label_height, content_area)
         } else {
             None
         };
@@ -304,8 +307,8 @@ pub(crate) fn populate_form_layout(
             show_description,
         ));
         let Some(input) = clipped_rect(
-            area.x,
-            area.width,
+            field_x,
+            field_width,
             input_y,
             metrics.input_height,
             content_area,
@@ -314,6 +317,14 @@ pub(crate) fn populate_form_layout(
             continue;
         };
         let description = form_description_rect(item.arg, y, area, content_area, show_description);
+        let (section_rail, section_cap) = field_section_decorations(
+            item.arg,
+            y,
+            metrics.total_height,
+            area,
+            content_area,
+            section_ends,
+        );
 
         frame_layout.form_inputs.insert(item.arg.id.clone(), input);
         if validation.field_errors.contains_key(&item.arg.id) {
@@ -322,6 +333,8 @@ pub(crate) fn populate_form_layout(
         frame_layout.form_fields.push(FormFieldLayout {
             arg_id: item.arg.id.clone(),
             heading,
+            section_rail,
+            section_cap,
             label,
             input,
             description,
@@ -370,15 +383,64 @@ fn form_description_rect(
         arg,
         show_description,
     )?);
+    let (field_x, field_width) = field_content_geometry(area, arg);
     clipped_rect(
-        area.x,
-        area.width,
+        field_x,
+        field_width,
         description_y,
         form::field_metrics_with_description(arg, show_description)
             .description_height
             .max(1),
         content_area,
     )
+}
+
+fn field_section_decorations(
+    arg: &crate::spec::ArgSpec,
+    y: i32,
+    total_height: u16,
+    area: Rect,
+    content_area: Rect,
+    section_ends: bool,
+) -> (Option<Rect>, Option<Rect>) {
+    if !form::field_is_in_section(arg) || area.width == 0 || total_height == 0 {
+        return (None, None);
+    }
+
+    let rail_height = if section_ends {
+        total_height.saturating_sub(1)
+    } else {
+        total_height
+    };
+    let rail = if rail_height > 0 {
+        clipped_rect(area.x, 1, y, rail_height, content_area)
+    } else {
+        None
+    };
+    let cap = if section_ends {
+        clipped_rect(
+            area.x,
+            area.width,
+            y + i32::from(total_height.saturating_sub(1)),
+            1,
+            content_area,
+        )
+    } else {
+        None
+    };
+
+    (rail, cap)
+}
+
+fn field_content_geometry(area: Rect, arg: &crate::spec::ArgSpec) -> (u16, u16) {
+    if form::field_is_in_section(arg) && area.width > form::SECTION_FIELD_INDENT {
+        (
+            area.x.saturating_add(form::SECTION_FIELD_INDENT),
+            area.width.saturating_sub(form::SECTION_FIELD_INDENT),
+        )
+    } else {
+        (area.x, area.width)
+    }
 }
 
 fn intersect_rects(rect: Rect, bounds: Rect) -> Option<Rect> {
@@ -616,6 +678,8 @@ pub struct TabButtonLayout {
 pub struct FormFieldLayout {
     pub arg_id: String,
     pub heading: Option<Rect>,
+    pub section_rail: Option<Rect>,
+    pub section_cap: Option<Rect>,
     pub label: Option<Rect>,
     pub input: Rect,
     pub description: Option<Rect>,
