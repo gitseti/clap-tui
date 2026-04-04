@@ -268,9 +268,9 @@ pub(crate) fn populate_form_layout(
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
     let mut previous_heading = None;
     for (index, item) in active_args.iter().enumerate() {
-        let heading = form::field_heading(previous_heading, item.arg);
-        let next_arg = active_args.get(index + 1).map(|next| next.arg);
-        let section_ends = form::field_section_ends(item.arg, next_arg);
+        let heading = form::field_heading(previous_heading, item);
+        let next_arg = active_args.get(index + 1);
+        let section_ends = form::field_section_ends(item, next_arg);
         let show_description = form::field_has_description(
             item.arg,
             validation
@@ -286,7 +286,7 @@ pub(crate) fn populate_form_layout(
         }
         if item_bottom <= i32::from(content_area.y) {
             y += i32::from(u16::from(heading.is_some())) + i32::from(metrics.total_height);
-            previous_heading = item.arg.help_heading();
+            previous_heading = item.section_heading.as_deref();
             continue;
         }
         let heading = if heading.is_some() {
@@ -296,7 +296,7 @@ pub(crate) fn populate_form_layout(
         } else {
             None
         };
-        let (field_x, field_width) = field_content_geometry(area, item.arg);
+        let (field_x, field_width) = field_content_geometry(area, form::field_is_in_section(item));
         let label = if metrics.label_height > 0 {
             clipped_rect(field_x, field_width, y, metrics.label_height, content_area)
         } else {
@@ -316,9 +316,9 @@ pub(crate) fn populate_form_layout(
             y += i32::from(metrics.total_height);
             continue;
         };
-        let description = form_description_rect(item.arg, y, area, content_area, show_description);
+        let description = form_description_rect(item, y, area, content_area, show_description);
         let (section_rail, section_cap) = field_section_decorations(
-            item.arg,
+            item,
             y,
             metrics.total_height,
             area,
@@ -348,7 +348,7 @@ pub(crate) fn populate_form_layout(
         }
 
         y += i32::from(metrics.total_height);
-        previous_heading = item.arg.help_heading();
+        previous_heading = item.section_heading.as_deref();
     }
 }
 
@@ -372,7 +372,7 @@ pub(crate) fn help_overlay_content_rect(area: Rect) -> Rect {
 }
 
 fn form_description_rect(
-    arg: &crate::spec::ArgSpec,
+    item: &OrderedArg<'_>,
     y: i32,
     area: Rect,
     content_area: Rect,
@@ -380,15 +380,15 @@ fn form_description_rect(
 ) -> Option<Rect> {
     show_description.then_some(())?;
     let description_y = y + i32::from(form::field_description_offset_with_description(
-        arg,
+        item.arg,
         show_description,
     )?);
-    let (field_x, field_width) = field_content_geometry(area, arg);
+    let (field_x, field_width) = field_content_geometry(area, form::field_is_in_section(item));
     clipped_rect(
         field_x,
         field_width,
         description_y,
-        form::field_metrics_with_description(arg, show_description)
+        form::field_metrics_with_description(item.arg, show_description)
             .description_height
             .max(1),
         content_area,
@@ -396,14 +396,14 @@ fn form_description_rect(
 }
 
 fn field_section_decorations(
-    arg: &crate::spec::ArgSpec,
+    item: &OrderedArg<'_>,
     y: i32,
     total_height: u16,
     area: Rect,
     content_area: Rect,
     section_ends: bool,
 ) -> (Option<Rect>, Option<Rect>) {
-    if !form::field_is_in_section(arg) || area.width == 0 || total_height == 0 {
+    if !form::field_is_in_section(item) || area.width == 0 || total_height == 0 {
         return (None, None);
     }
 
@@ -432,8 +432,8 @@ fn field_section_decorations(
     (rail, cap)
 }
 
-fn field_content_geometry(area: Rect, arg: &crate::spec::ArgSpec) -> (u16, u16) {
-    if form::field_is_in_section(arg) && area.width > form::SECTION_FIELD_INDENT {
+fn field_content_geometry(area: Rect, in_section: bool) -> (u16, u16) {
+    if in_section && area.width > form::SECTION_FIELD_INDENT {
         (
             area.x.saturating_add(form::SECTION_FIELD_INDENT),
             area.width.saturating_sub(form::SECTION_FIELD_INDENT),
@@ -651,6 +651,63 @@ mod tests {
         );
         assert_eq!(snapshot.first_invalid_field_id(), Some("alpha"));
         assert!(matches!(ui.focus, Focus::Sidebar));
+    }
+
+    #[test]
+    fn inherited_section_descriptions_indent_with_the_section_rail() {
+        use clap::{Arg, Command};
+
+        use crate::input::{ActiveTab, Focus, UiState};
+        use crate::pipeline::ValidationState;
+        use crate::query::form::visible_args_for_path;
+        use crate::spec::CommandPath;
+
+        let root = crate::spec::CommandSpec::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("config").long("config").help("Config file"))
+                .subcommand(Command::new("kitchen-sink").subcommand(Command::new("child"))),
+        );
+        let selected_path =
+            CommandPath::from(vec!["kitchen-sink".to_string(), "child".to_string()]);
+        let active_args = visible_args_for_path(&root, &selected_path, ActiveTab::Inputs);
+        let ui = UiState {
+            focus: Focus::Sidebar,
+            active_tab: ActiveTab::Inputs,
+            last_non_help_tab: ActiveTab::Inputs,
+            help_open: false,
+            help_scroll: 0,
+            selected_arg_index: 0,
+            search_query: String::new(),
+            editors: crate::editor_state::EditorState::default(),
+            dropdown_open: None,
+            dropdown_scroll: 0,
+            dropdown_cursor: 0,
+            sidebar_scroll: 0,
+            form_scroll: 0,
+            hover: None,
+            hover_tab: None,
+            mouse_select: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+
+        crate::frame_snapshot::populate_form_layout(
+            &ui,
+            Rect::new(0, 0, 50, 12),
+            &active_args,
+            &root.help,
+            &ValidationState::default(),
+            &mut snapshot,
+        );
+
+        let inherited = snapshot
+            .layout
+            .form_fields
+            .iter()
+            .find(|field| field.arg_id == "config")
+            .expect("inherited config field");
+
+        assert_eq!(inherited.section_rail.expect("section rail").x, 0);
+        assert_eq!(inherited.description.expect("description rect").x, 1);
     }
 }
 

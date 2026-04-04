@@ -467,13 +467,13 @@ impl DomainState {
     }
 
     fn effective_form_for_path(&self, path: &CommandPath) -> Option<CommandFormState> {
-        let command = self.root.resolve_path(path.as_slice())?;
         let mut form = CommandFormState::default();
 
-        for arg in command
-            .all_args()
+        for (_, arg) in self
+            .root
+            .effective_args_for_path(path)?
             .into_iter()
-            .filter(|arg| !arg.is_help_action())
+            .filter(|(_, arg)| !arg.is_external_subcommand_field() || arg.owner_path() == path)
         {
             let input = self.stored_arg_input(arg);
             if let Some(input) = input {
@@ -485,9 +485,13 @@ impl DomainState {
     }
 
     pub(crate) fn arg_for_input(&self, arg_id: &str) -> Option<&ArgSpec> {
-        self.current_command()
-            .all_args()
+        self.root
+            .effective_args_for_path(&self.selected_path)?
             .into_iter()
+            .map(|(_, arg)| arg)
+            .filter(|arg| {
+                !arg.is_external_subcommand_field() || arg.owner_path() == &self.selected_path
+            })
             .find(|arg| arg.id == arg_id && !arg.is_help_action())
     }
 
@@ -1097,8 +1101,11 @@ impl AppState {
     }
 
     pub fn sync_visible_form_selection(&mut self) {
-        let current_command = self.domain.current_command().clone();
-        let active_args = form_query::visible_args(&current_command, self.ui.active_tab);
+        let active_args = form_query::visible_args_for_path(
+            &self.domain.root,
+            self.domain.selected_path(),
+            self.ui.active_tab,
+        );
         let visible = form_query::visible_arg_pairs(&active_args);
         self.ui.ensure_active_tab_visible(&visible);
         self.ui.ensure_selected_arg_visible(&visible);

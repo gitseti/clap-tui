@@ -80,8 +80,9 @@ pub(crate) fn move_form_selection(
     if state.ui.help_open {
         return;
     }
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     if args.is_empty() {
         return;
     }
@@ -190,8 +191,9 @@ pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSn
     if state.ui.help_open {
         return;
     }
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let Some(item) = args
         .iter()
         .find(|item| item.order_index == state.ui.selected_arg_index)
@@ -297,8 +299,9 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     let Some(form_area) = frame_snapshot.form_view_rect() else {
         return;
     };
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let validation = state.derived_validation();
     let Some((input_top, input_bottom)) = form::field_content_bounds_with_errors(
         &args,
@@ -327,8 +330,9 @@ pub(crate) fn focus_first_invalid_field(state: &mut AppState, frame_snapshot: &F
     let Some(arg_id) = frame_snapshot.first_invalid_field_id() else {
         return;
     };
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let Some(item) = args.iter().find(|item| item.arg.id == arg_id) else {
         return;
     };
@@ -465,8 +469,9 @@ pub(crate) fn ensure_selected_sidebar_visible(
 pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
     match state.select_command_by_search_path(start) {
         Ok(()) => {
-            let command = state.domain.current_command().clone();
-            let args = form::visible_args(&command, state.ui.active_tab);
+            let root = state.domain.root.clone();
+            let selected_path = state.domain.selected_path().clone();
+            let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
             state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
         }
         Err(SelectionError::UnknownPath) => {
@@ -492,8 +497,9 @@ fn selected_sidebar_row(rows: &[TreeRow], selected_path: &CommandPath) -> Option
 
 fn select_command(state: &mut AppState, path: &[String]) {
     if state.select_command_path(path).is_ok() {
-        let command = state.domain.current_command().clone();
-        let args = form::visible_args(&command, state.ui.active_tab);
+        let root = state.domain.root.clone();
+        let selected_path = state.domain.selected_path().clone();
+        let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
         state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
     }
 }

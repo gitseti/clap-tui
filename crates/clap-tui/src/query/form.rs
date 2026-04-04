@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::input::ActiveTab;
-use crate::spec::{ArgSpec, CommandSpec};
+use crate::spec::{ArgActionKind, ArgSpec, CommandPath, CommandSpec, format_command_path};
 
 pub(crate) const SECTION_FIELD_INDENT: u16 = 1;
 
@@ -29,11 +29,12 @@ impl FieldWidget {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct OrderedArg<'a> {
     pub(crate) order_index: usize,
     pub(crate) arg: &'a ArgSpec,
     pub(crate) widget: FieldWidget,
+    pub(crate) section_heading: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,12 +76,20 @@ pub(crate) fn widget_for(arg: &ArgSpec) -> FieldWidget {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
+    ordered_args_with_heading(command, None)
+}
+
+fn ordered_args_with_heading<'a>(
+    command: &'a CommandSpec,
+    section_heading_prefix: Option<&str>,
+) -> Vec<OrderedArg<'a>> {
     let mut positionals = command
         .all_args()
         .into_iter()
         .filter(|arg| arg.is_positional())
-        .filter(|arg| !is_help_arg(arg))
+        .filter(|arg| is_form_visible_arg(arg))
         .collect::<Vec<_>>();
     positionals.sort_by_key(|arg| (arg.position.unwrap_or(usize::MAX), arg.display_order()));
 
@@ -88,7 +97,7 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
         .all_args()
         .into_iter()
         .filter(|arg| !arg.is_positional())
-        .filter(|arg| !is_help_arg(arg))
+        .filter(|arg| is_form_visible_arg(arg))
         .collect::<Vec<_>>();
     others.sort_by_key(|arg| (arg.display_order(), arg.display_label().to_string()));
 
@@ -100,14 +109,66 @@ pub(crate) fn ordered_args(command: &CommandSpec) -> Vec<OrderedArg<'_>> {
             order_index,
             arg,
             widget: widget_for(arg),
+            section_heading: section_heading(arg, section_heading_prefix),
         })
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn visible_args(command: &CommandSpec, active_tab: ActiveTab) -> Vec<OrderedArg<'_>> {
     match active_tab {
         ActiveTab::Inputs => ordered_args(command),
     }
+}
+
+pub(crate) fn visible_args_for_path<'a>(
+    root: &'a CommandSpec,
+    selected_path: &CommandPath,
+    active_tab: ActiveTab,
+) -> Vec<OrderedArg<'a>> {
+    match active_tab {
+        ActiveTab::Inputs => visible_input_args_for_path(root, selected_path),
+    }
+}
+
+fn visible_input_args_for_path<'a>(
+    root: &'a CommandSpec,
+    selected_path: &CommandPath,
+) -> Vec<OrderedArg<'a>> {
+    let Some(lineage) = root.command_lineage(selected_path) else {
+        return Vec::new();
+    };
+    let Some(current) = lineage.last().copied() else {
+        return Vec::new();
+    };
+
+    let mut ordered = ordered_args_with_heading(current, None)
+        .into_iter()
+        .filter(|item| item.arg.owner_path() == selected_path)
+        .collect::<Vec<_>>();
+
+    for owner in lineage.iter().rev().skip(1) {
+        let owner_heading = format!(
+            "Inherited from {}",
+            format_command_path(&root.name, &owner.path)
+        );
+        ordered.extend(
+            ordered_args_with_heading(owner, Some(owner_heading.as_str()))
+                .into_iter()
+                .filter(|item| item.arg.owner_path() == &owner.path)
+                .filter(|item| !item.arg.is_external_subcommand_field())
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    ordered
+        .into_iter()
+        .enumerate()
+        .map(|(order_index, item)| OrderedArg {
+            order_index,
+            ..item
+        })
+        .collect()
 }
 
 pub(crate) fn visible_arg_pairs<'a>(args: &[OrderedArg<'a>]) -> Vec<(usize, &'a ArgSpec)> {
@@ -195,7 +256,7 @@ pub(crate) fn measure_fields_height_with_errors(
     let mut total = 0;
     let mut previous_heading = None;
     for item in args {
-        if field_heading(previous_heading, item.arg).is_some() {
+        if field_heading(previous_heading, item).is_some() {
             total += 1;
         }
         total += field_metrics_with_description(
@@ -203,7 +264,7 @@ pub(crate) fn measure_fields_height_with_errors(
             field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str)),
         )
         .total_height;
-        previous_heading = item.arg.help_heading();
+        previous_heading = item.section_heading.as_deref();
     }
     total
 }
@@ -228,7 +289,7 @@ pub(crate) fn field_content_bounds_with_errors(
     let mut y: u16 = 0;
     let mut previous_heading = None;
     for item in args {
-        if field_heading(previous_heading, item.arg).is_some() {
+        if field_heading(previous_heading, item).is_some() {
             y = y.saturating_add(1);
         }
         let show_description =
@@ -243,7 +304,7 @@ pub(crate) fn field_content_bounds_with_errors(
             return Some((input_top, input_bottom));
         }
         y = y.saturating_add(metrics.total_height);
-        previous_heading = item.arg.help_heading();
+        previous_heading = item.section_heading.as_deref();
     }
     None
 }
@@ -261,7 +322,7 @@ pub(crate) fn hit_test_form_content_with_errors(
     let mut y: u16 = 0;
     let mut previous_heading = None;
     for item in args {
-        if field_heading(previous_heading, item.arg).is_some() {
+        if field_heading(previous_heading, item).is_some() {
             y = y.saturating_add(1);
         }
         let show_description =
@@ -292,7 +353,7 @@ pub(crate) fn hit_test_form_content_with_errors(
             });
         }
         y = y.saturating_add(metrics.total_height);
-        previous_heading = item.arg.help_heading();
+        previous_heading = item.section_heading.as_deref();
     }
     None
 }
@@ -303,9 +364,12 @@ pub(crate) fn field_has_description(arg: &ArgSpec, field_error: Option<&str>) ->
 
 pub(crate) fn field_heading<'a>(
     previous_heading: Option<&'a str>,
-    arg: &'a ArgSpec,
+    item: &'a OrderedArg<'_>,
 ) -> Option<&'a str> {
-    let heading = arg.help_heading().filter(|heading| !heading.is_empty());
+    let heading = item
+        .section_heading
+        .as_deref()
+        .filter(|heading| !heading.is_empty());
     if heading.is_some() && heading != previous_heading {
         heading
     } else {
@@ -313,17 +377,22 @@ pub(crate) fn field_heading<'a>(
     }
 }
 
-pub(crate) fn field_is_in_section(arg: &ArgSpec) -> bool {
-    arg.help_heading()
+pub(crate) fn field_is_in_section(item: &OrderedArg<'_>) -> bool {
+    item.section_heading
+        .as_deref()
         .is_some_and(|heading| !heading.is_empty())
 }
 
-pub(crate) fn field_section_ends(current: &ArgSpec, next: Option<&ArgSpec>) -> bool {
-    let Some(current_heading) = current.help_heading().filter(|heading| !heading.is_empty()) else {
+pub(crate) fn field_section_ends(current: &OrderedArg<'_>, next: Option<&OrderedArg<'_>>) -> bool {
+    let Some(current_heading) = current
+        .section_heading
+        .as_deref()
+        .filter(|heading| !heading.is_empty())
+    else {
         return false;
     };
 
-    next.and_then(ArgSpec::help_heading)
+    next.and_then(|item| item.section_heading.as_deref())
         .filter(|heading| !heading.is_empty())
         != Some(current_heading)
 }
@@ -332,17 +401,32 @@ fn is_help_arg(arg: &ArgSpec) -> bool {
     arg.id == "help" || arg.display_name == "--help" || arg.display_name == "-h"
 }
 
+fn is_form_visible_arg(arg: &ArgSpec) -> bool {
+    !is_help_arg(arg) && arg.action_kind() != ArgActionKind::Version
+}
+
+fn section_heading(arg: &ArgSpec, prefix: Option<&str>) -> Option<String> {
+    match (
+        prefix,
+        arg.help_heading().filter(|heading| !heading.is_empty()),
+    ) {
+        (Some(prefix), Some(heading)) => Some(format!("{prefix} · {heading}")),
+        (Some(prefix), None) => Some(prefix.to_string()),
+        (None, heading) => heading.map(str::to_string),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use clap::Command;
+    use clap::{Arg, Command};
 
     use super::{
         FieldWidget, field_content_bounds, field_description_offset, field_heading,
         field_input_offset, field_metrics, hit_test_form_content, measure_fields_height,
-        ordered_args, visible_args, widget_for,
+        ordered_args, visible_args, visible_args_for_path, widget_for,
     };
     use crate::input::ActiveTab;
-    use crate::spec::{ArgKind, ArgSpec, CommandSpec};
+    use crate::spec::{ArgKind, ArgSpec, CommandPath, CommandSpec};
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
         ArgSpec {
@@ -415,6 +499,39 @@ mod tests {
     }
 
     #[test]
+    fn visible_args_for_path_keeps_local_fields_primary_and_groups_inherited_owners() {
+        let root = CommandSpec::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("config").long("config"))
+                .subcommand(
+                    Command::new("build")
+                        .arg(Arg::new("target").long("target"))
+                        .subcommand(
+                            Command::new("release").arg(Arg::new("profile").long("profile")),
+                        ),
+                ),
+        );
+        let selected_path = CommandPath::from(vec!["build".to_string(), "release".to_string()]);
+
+        let visible = visible_args_for_path(&root, &selected_path, ActiveTab::Inputs);
+        let ids = visible
+            .iter()
+            .map(|item| item.arg.id.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["profile", "target", "config"]);
+        assert_eq!(visible[0].section_heading, None);
+        assert_eq!(
+            visible[1].section_heading.as_deref(),
+            Some("Inherited from tool > build")
+        );
+        assert_eq!(
+            visible[2].section_heading.as_deref(),
+            Some("Inherited from tool")
+        );
+    }
+
+    #[test]
     fn field_metrics_match_single_and_multi_line_fields() {
         let single = arg("target", "--target", ArgKind::Option);
         let mut multi = arg("paths", "--path", ArgKind::Option);
@@ -441,6 +558,13 @@ mod tests {
         assert_eq!(field_metrics(version).total_height, 3);
         assert_eq!(field_input_offset(version), 0);
         assert_eq!(field_description_offset(version), Some(1));
+    }
+
+    #[test]
+    fn autogenerated_version_flags_are_excluded_from_visible_form_args() {
+        let command = CommandSpec::from_command(&Command::new("tool").version("1.2.3"));
+
+        assert!(visible_args(&command, ActiveTab::Inputs).is_empty());
     }
 
     #[test]
@@ -534,12 +658,9 @@ mod tests {
         let command = command(vec![first, second, third]);
         let visible = visible_args(&command, ActiveTab::Inputs);
 
-        assert_eq!(field_heading(None, visible[0].arg), Some("Inputs"));
-        assert_eq!(field_heading(Some("Inputs"), visible[1].arg), None);
-        assert_eq!(
-            field_heading(Some("Inputs"), visible[2].arg),
-            Some("Outputs")
-        );
+        assert_eq!(field_heading(None, &visible[0]), Some("Inputs"));
+        assert_eq!(field_heading(Some("Inputs"), &visible[1]), None);
+        assert_eq!(field_heading(Some("Inputs"), &visible[2]), Some("Outputs"));
         assert_eq!(measure_fields_height(&visible), 17);
         assert_eq!(field_content_bounds(&visible, 0), Some((2, 5)));
         assert_eq!(field_content_bounds(&visible, 2), Some((13, 16)));

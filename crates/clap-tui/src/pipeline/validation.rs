@@ -236,11 +236,17 @@ fn missing_required_args(state: &AppState) -> Vec<String> {
 }
 
 fn missing_required_arg_models(state: &AppState) -> Vec<&ArgModel> {
-    let current_command = state.domain.current_command();
     let current_form = state.domain.current_form().unwrap_or_default();
-    current_command
-        .args
-        .iter()
+    state
+        .domain
+        .root
+        .effective_args_for_path(state.domain.selected_path())
+        .into_iter()
+        .flatten()
+        .map(|(_, arg)| arg)
+        .filter(|arg| {
+            !arg.is_external_subcommand_field() || arg.owner_path() == state.domain.selected_path()
+        })
         .filter(|arg| arg.required && !arg.is_help_action())
         .filter(|arg| arg_is_missing(arg, &current_form))
         .collect()
@@ -250,9 +256,14 @@ fn referenced_arg_ids(state: &AppState, error: &clap::Error, summary: Option<&st
     let tokens = referenced_tokens(error, summary);
     state
         .domain
-        .current_command()
-        .args
-        .iter()
+        .root
+        .effective_args_for_path(state.domain.selected_path())
+        .into_iter()
+        .flatten()
+        .map(|(_, arg)| arg)
+        .filter(|arg| {
+            !arg.is_external_subcommand_field() || arg.owner_path() == state.domain.selected_path()
+        })
         .filter(|arg| {
             arg_reference_candidates(arg)
                 .iter()

@@ -40,7 +40,11 @@ impl<'a> ScreenView<'a> {
             selected_path: state.domain.selected_path().clone(),
             sidebar_scroll: 0,
             tree_rows,
-            active_args: form::visible_args(command, state.ui.active_tab),
+            active_args: form::visible_args_for_path(
+                root,
+                state.domain.selected_path(),
+                state.ui.active_tab,
+            ),
             preview_argv: derived.argv,
             validation: derived.validation,
             effective_values: derived.effective_values,

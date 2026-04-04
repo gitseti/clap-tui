@@ -31,22 +31,19 @@ pub(crate) fn derive_effective_values(
     let Ok(matches) = command.clone().try_get_matches_from(argv.iter().cloned()) else {
         return BTreeMap::new();
     };
-    let Some(current_matches) =
-        matches_for_selected_path(&matches, state.domain.selected_path().as_slice())
-    else {
-        return BTreeMap::new();
-    };
-
     let current_form = state.domain.current_form().unwrap_or_default();
     state
         .domain
-        .current_command()
-        .all_args()
+        .root
+        .effective_args_for_path(state.domain.selected_path())
         .into_iter()
-        .filter(|arg| !arg.is_help_action() && !arg.is_external_subcommand_field())
+        .flatten()
+        .map(|(_, arg)| arg)
+        .filter(|arg| !arg.is_external_subcommand_field())
         .filter_map(|arg| {
-            let source = current_matches.value_source(&arg.id)?;
-            let values = raw_values_for_arg(current_matches, arg);
+            let owner_matches = matches_for_selected_path(&matches, arg.owner_path().as_slice())?;
+            let source = owner_matches.value_source(&arg.id)?;
+            let values = raw_values_for_arg(owner_matches, arg);
             Some((
                 arg.id.clone(),
                 EffectiveArgValue {

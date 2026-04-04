@@ -44,8 +44,9 @@ fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &Fr
     };
 
     if *state.domain.selected_path() != path && state.select_command_path(path.as_slice()).is_ok() {
-        let command = state.domain.current_command().clone();
-        let args = form::visible_args(&command, state.ui.active_tab);
+        let root = state.domain.root.clone();
+        let selected_path = state.domain.selected_path().clone();
+        let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
         state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
     }
     if caret_hit && has_children {

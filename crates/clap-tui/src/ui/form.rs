@@ -12,7 +12,7 @@ use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ArgInput, ArgInputState, ArgValue, Focus, InputSource, UiState};
 use crate::pipeline::{EffectiveArgValue, EffectiveValueSource};
 use crate::query::form::{self, FieldWidget, field_metrics};
-use crate::spec::{ArgSpec, choice_value_matches_default};
+use crate::spec::{ArgSpec, choice_value_matches_default, format_command_path};
 
 use super::{screen::ScreenView, styles};
 
@@ -121,10 +121,16 @@ fn render_fields(
             .as_ref()
             .and_then(|inputs| inputs.input(&item.arg.id));
         let source_badge = effective_source_badge(vm, item.arg);
-        let badges = field_badges(config, item.arg, source_badge, input_state);
+        let badges = field_badges(
+            config,
+            item.arg,
+            &vm.selected_path,
+            source_badge,
+            input_state,
+        );
 
         if let Some(heading_rect) = field.heading {
-            if let Some(heading) = item.arg.help_heading() {
+            if let Some(heading) = item.section_heading.as_deref() {
                 frame.render_widget(
                     Paragraph::new(section_heading_line(config, heading, heading_rect.width)),
                     heading_rect,
@@ -305,6 +311,7 @@ fn render_fields(
 
         if let (Some(help), Some(help_rect)) = (
             field_help_text(
+                vm.root,
                 item.arg,
                 item.widget,
                 &vm.selected_path,
@@ -787,6 +794,7 @@ struct FieldHelpContext<'a> {
 }
 
 fn field_help_text(
+    root: &crate::spec::CommandSpec,
     arg: &ArgSpec,
     widget: FieldWidget,
     selected_path: &crate::spec::CommandPath,
@@ -830,10 +838,10 @@ fn field_help_text(
             _ => {}
         }
     }
-    if help.selected && arg.is_inherited_global() && !selected_path.is_empty() {
+    if help.selected && arg.is_inherited_for(selected_path) && !selected_path.is_empty() {
         parts.push(format!(
-            "Inherited here; editing creates an override for {}.",
-            selected_path.as_slice().join(" > ")
+            "Defined on {}. Editing here updates that shared option for commands in this lineage.",
+            format_command_path(&root.name, arg.owner_path())
         ));
     }
     if help.selected
@@ -902,12 +910,13 @@ fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
 fn field_badges(
     config: &TuiConfig,
     arg: &ArgSpec,
+    selected_path: &crate::spec::CommandPath,
     source: Option<EffectiveValueSource>,
     input_state: Option<&ArgInputState>,
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
-    if arg.is_inherited_global() {
+    if arg.is_inherited_for(selected_path) {
         spans.extend(chip_spans(
             "Inherited",
             styles::metadata_badge(config, styles::MetadataKind::Inherited),
@@ -1081,7 +1090,7 @@ mod tests {
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, AppState, Focus, UiState};
     use crate::pipeline::EffectiveValueSource;
-    use crate::query::form::{visible_args, widget_for};
+    use crate::query::form::{visible_args, visible_args_for_path, widget_for};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
     use crate::ui::screen::ScreenView;
@@ -1294,8 +1303,10 @@ mod tests {
     fn first_invalid_field_uses_summary_link_in_help_text() {
         let mut arg = option_arg("name", "--name");
         arg.required = true;
+        let root = command();
 
         let help = field_help_text(
+            &root,
             &arg,
             FieldWidget::SingleText,
             &crate::spec::CommandPath::default(),
@@ -1317,8 +1328,10 @@ mod tests {
     fn secondary_invalid_field_keeps_plain_error_text() {
         let mut arg = option_arg("name", "--name");
         arg.required = true;
+        let root = command();
 
         let help = field_help_text(
+            &root,
             &arg,
             FieldWidget::SingleText,
             &crate::spec::CommandPath::default(),
@@ -1359,9 +1372,11 @@ mod tests {
     #[test]
     fn metadata_badges_use_one_muted_label_style() {
         let config = TuiConfig::default();
+        let selected_path = crate::spec::CommandPath::default();
         let badges = field_badges(
             &config,
             &option_arg("name", "--name"),
+            &selected_path,
             Some(EffectiveValueSource::ConditionalDefault),
             None,
         );
@@ -1381,8 +1396,9 @@ mod tests {
         let mut arg = option_arg("profile", "--profile");
         arg.metadata.placement.global = true;
         arg.metadata.display.help_heading = Some("Global".to_string());
+        let selected_path = crate::spec::CommandPath::default();
 
-        let badges = field_badges(&config, &arg, None, None);
+        let badges = field_badges(&config, &arg, &selected_path, None, None);
         let rendered = badges
             .iter()
             .map(|span| span.content.to_string())
@@ -1397,9 +1413,11 @@ mod tests {
         let mut arg = option_arg("profile", "--profile");
         arg.metadata.placement.global = true;
         arg.metadata.ownership.inherited_global = true;
+        arg.metadata.ownership.owner_path = crate::spec::CommandPath::default();
         arg.metadata.display.help_heading = Some("Global".to_string());
+        let selected_path = crate::spec::CommandPath::from(vec!["build".to_string()]);
 
-        let badges = field_badges(&config, &arg, None, None);
+        let badges = field_badges(&config, &arg, &selected_path, None, None);
         let rendered = badges
             .iter()
             .map(|span| span.content.to_string())
@@ -1599,8 +1617,10 @@ mod tests {
         include.help = Some("Include path".to_string());
         include.metadata.display.long_help = Some("Include one or more paths".to_string());
         include.metadata.values.value_names = vec!["PATH".to_string()];
+        let root = command();
 
         let help = field_help_text(
+            &root,
             &include,
             FieldWidget::SingleText,
             &crate::spec::CommandPath::default(),
@@ -1840,14 +1860,15 @@ mod tests {
 
         let current = state.domain.current_command().clone();
         let root = state.domain.root.clone();
+        let selected_path = state.domain.selected_path().clone();
         let derived = crate::pipeline::derive(&state);
         let vm = ScreenView {
             command: &current,
             root: &root,
-            selected_path: crate::spec::CommandPath::default(),
+            selected_path: selected_path.clone(),
             tree_rows: Vec::new(),
             sidebar_scroll: 0,
-            active_args: visible_args(&current, ActiveTab::Inputs),
+            active_args: visible_args_for_path(&root, &selected_path, ActiveTab::Inputs),
             preview_argv: derived.argv,
             validation: derived.validation,
             effective_values: derived.effective_values,
@@ -1876,7 +1897,95 @@ mod tests {
     }
 
     #[test]
-    fn selected_inherited_field_explains_that_editing_creates_override() {
+    fn descendant_form_groups_ancestor_owned_fields_by_owner() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("config").long("config"))
+                .subcommand(
+                    Command::new("build")
+                        .arg(Arg::new("target").long("target"))
+                        .subcommand(
+                            Command::new("release").arg(Arg::new("profile").long("profile")),
+                        ),
+                ),
+        );
+        state
+            .select_command_path(&["build".to_string(), "release".to_string()])
+            .expect("valid descendant path");
+
+        let current = state.domain.current_command().clone();
+        let root = state.domain.root.clone();
+        let selected_path = state.domain.selected_path().clone();
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &current,
+            root: &root,
+            selected_path: selected_path.clone(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args_for_path(&root, &selected_path, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 72, 16),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(72, 16)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("--profile"));
+        assert!(rendered.contains("--target"));
+        assert!(rendered.contains("--config"));
+        assert!(rendered.contains("Inherited from tool > build"));
+        assert!(rendered.contains("Inherited from tool"));
+    }
+
+    #[test]
+    fn descendant_form_exposes_ancestor_option_that_also_appears_in_preview() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("config").long("config"))
+                .subcommand(Command::new("build").subcommand(Command::new("release"))),
+        );
+        state
+            .select_command_path(&["build".to_string(), "release".to_string()])
+            .expect("valid descendant path");
+        state.domain.set_text_value("config", "prod.toml");
+
+        let selected_path = state.domain.selected_path().clone();
+        let active_args =
+            visible_args_for_path(&state.domain.root, &selected_path, ActiveTab::Inputs);
+        let derived = crate::pipeline::derive(&state);
+
+        assert!(active_args.iter().any(|item| item.arg.id == "config"));
+        assert_eq!(
+            derived.argv,
+            vec![
+                "tool".to_string(),
+                "--config".to_string(),
+                "prod.toml".to_string(),
+                "build".to_string(),
+                "release".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn selected_inherited_field_explains_owner_and_shared_edit_scope() {
         let mut state = AppState::from_command(
             &Command::new("tool")
                 .arg(Arg::new("config").long("config").global(true))
@@ -1892,10 +2001,13 @@ mod tests {
             .iter()
             .find(|arg| arg.id == "config")
             .expect("inherited config arg");
+        let selected_path =
+            crate::spec::CommandPath::from(vec!["build".to_string(), "release".to_string()]);
         let help = field_help_text(
+            &state.domain.root,
             arg,
             widget_for(arg),
-            &crate::spec::CommandPath::from(vec!["build".to_string(), "release".to_string()]),
+            &selected_path,
             FieldHelpContext {
                 selected: true,
                 validation_summary: None,
@@ -1906,8 +2018,8 @@ mod tests {
         )
         .expect("override help");
 
-        assert!(help.contains("editing creates an override"));
-        assert!(help.contains("build > release"));
+        assert!(help.contains("Defined on tool"));
+        assert!(help.contains("updates that shared option"));
     }
 
     #[test]

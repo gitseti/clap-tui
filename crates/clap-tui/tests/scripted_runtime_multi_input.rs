@@ -69,7 +69,7 @@ fn repeated_occurrence_input_round_trips_through_the_real_app_loop() {
             .action(ArgAction::Append)
             .num_args(1),
     );
-    let mut events = vec![key(AppKeyCode::Tab)];
+    let mut events = vec![key(AppKeyCode::Tab), key(AppKeyCode::Tab)];
     events.extend(text("alpha"));
     events.push(key(AppKeyCode::Enter));
     events.extend(text("beta"));
@@ -96,7 +96,7 @@ fn repeated_occurrence_input_round_trips_through_the_real_app_loop() {
 #[test]
 fn grouped_multi_value_input_round_trips_through_the_real_app_loop() {
     let command = Command::new("tool").arg(Arg::new("pair").long("pair").num_args(1..));
-    let mut events = vec![key(AppKeyCode::Tab)];
+    let mut events = vec![key(AppKeyCode::Tab), key(AppKeyCode::Tab)];
     events.extend(text("alpha"));
     events.push(key(AppKeyCode::Enter));
     events.extend(text("beta"));
@@ -128,7 +128,7 @@ fn delimited_append_input_round_trips_through_the_real_app_loop() {
             .num_args(1..)
             .value_delimiter(','),
     );
-    let mut events = vec![key(AppKeyCode::Tab)];
+    let mut events = vec![key(AppKeyCode::Tab), key(AppKeyCode::Tab)];
     events.extend(text("alpha,beta"));
     events.push(key(AppKeyCode::Enter));
     events.extend(text("gamma"));
@@ -160,7 +160,7 @@ fn fixed_arity_append_input_preserves_grouped_occurrences() {
             .action(ArgAction::Append)
             .num_args(2),
     );
-    let mut events = vec![key(AppKeyCode::Tab)];
+    let mut events = vec![key(AppKeyCode::Tab), key(AppKeyCode::Tab)];
     events.extend(text("KEY1"));
     events.push(key(AppKeyCode::Enter));
     events.extend(text("VALUE1"));
@@ -199,7 +199,7 @@ fn positional_append_input_keeps_space_separated_values_in_one_occurrence() {
             .action(ArgAction::Append)
             .num_args(1..),
     );
-    let mut events = vec![key(AppKeyCode::Tab)];
+    let mut events = vec![key(AppKeyCode::Tab), key(AppKeyCode::Tab)];
     events.extend(text("src tests"));
     events.push(ctrl(AppKeyCode::Char('r')));
 
@@ -219,6 +219,7 @@ fn positional_append_input_keeps_space_separated_values_in_one_occurrence() {
 fn paste_event_round_trips_through_the_real_app_loop() {
     let command = Command::new("tool").arg(Arg::new("path").long("path"));
     let events = vec![
+        key(AppKeyCode::Tab),
         key(AppKeyCode::Tab),
         AppEvent::Paste("/tmp/foo".to_string()),
         ctrl(AppKeyCode::Char('r')),
@@ -253,6 +254,7 @@ fn inherited_global_choice_fields_work_from_descendant_forms() {
     let mut config = TuiConfig::default();
     config.start_command = Some("admin".to_string());
     let events = vec![
+        key(AppKeyCode::Tab),
         key(AppKeyCode::Tab),
         key(AppKeyCode::Enter),
         key(AppKeyCode::Down),

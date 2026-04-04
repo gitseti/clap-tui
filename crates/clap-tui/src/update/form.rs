@@ -37,8 +37,9 @@ pub(crate) fn apply_paste_text(state: &mut AppState, text: &str) {
     if state.ui.help_open {
         return;
     }
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let Some(item) = args
         .iter()
         .find(|item| item.order_index == state.ui.selected_arg_index)
@@ -59,8 +60,9 @@ fn apply_form_text_input(key: AppKeyEvent, state: &mut AppState) {
     if state.ui.help_open {
         return;
     }
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let Some(item) = args
         .iter()
         .find(|item| item.order_index == state.ui.selected_arg_index)
@@ -78,8 +80,9 @@ fn apply_form_text_input(key: AppKeyEvent, state: &mut AppState) {
 }
 
 fn apply_form_widget_input(key: AppKeyEvent, state: &mut AppState) {
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let Some(item) = args
         .iter()
         .find(|item| item.order_index == state.ui.selected_arg_index)
@@ -199,8 +202,9 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
         return;
     };
     state.ui.focus_form();
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let validation = state.derived_validation();
     if let Some(hit) =
         form::hit_test_form_content_with_errors(&args, content_y, &validation.field_errors)

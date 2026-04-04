@@ -258,6 +258,12 @@ impl CommandPath {
     }
 }
 
+pub(crate) fn format_command_path(root_name: &str, path: &CommandPath) -> String {
+    let mut parts = vec![root_name.to_string()];
+    parts.extend(path.iter().cloned());
+    parts.join(" > ")
+}
+
 impl From<Vec<String>> for CommandPath {
     fn from(value: Vec<String>) -> Self {
         Self(value)
@@ -308,6 +314,10 @@ impl ArgModel {
 
     pub(crate) fn is_inherited_global(&self) -> bool {
         self.metadata.ownership.inherited_global
+    }
+
+    pub(crate) fn is_inherited_for(&self, selected_path: &CommandPath) -> bool {
+        self.owner_path() != selected_path
     }
 
     pub(crate) fn action_kind(&self) -> ArgActionKind {

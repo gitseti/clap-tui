@@ -64,8 +64,9 @@ fn handle_form_widget_key_event(
     state: &AppState,
     config: &TuiConfig,
 ) -> Option<Action> {
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let item = args
         .iter()
         .find(|item| item.order_index == state.ui.selected_arg_index)?;
@@ -172,8 +173,9 @@ fn handle_focused_key_event(
 }
 
 fn is_form_text_input(key: AppKeyEvent, state: &AppState) -> bool {
-    let command = state.domain.current_command().clone();
-    let args = form::visible_args(&command, state.ui.active_tab);
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
     let Some(item) = args
         .iter()
         .find(|item| item.order_index == state.ui.selected_arg_index)
