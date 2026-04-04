@@ -27,6 +27,7 @@ struct FooterChip {
 enum FooterChipVariant {
     Primary,
     Secondary,
+    Status,
     Subtle,
 }
 
@@ -98,7 +99,7 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
             FooterChipVariant::Secondary,
         ),
     ];
-    let mut hints = vec![
+    let mut candidates = vec![
         build_chip(
             ui,
             HoverTarget::Search,
@@ -108,17 +109,18 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
         build_chip(
             ui,
             HoverTarget::Focus,
-            "Tab Focus",
+            "Tab/Shift+Tab Focus",
             FooterChipVariant::Subtle,
         ),
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
     ];
     if let Some(summary) = validation.summary.as_ref() {
-        hints.insert(
+        candidates.insert(
             0,
-            build_chip(ui, HoverTarget::Preview, summary, FooterChipVariant::Subtle),
+            build_chip(ui, HoverTarget::Preview, summary, FooterChipVariant::Status),
         );
     }
+    let hints = fit_footer_hints(area, &actions, candidates);
     FooterView {
         gap_width: footer_gap_width(area, &actions, &hints),
         actions,
@@ -141,6 +143,9 @@ fn build_chip(
 }
 
 fn footer_gap_width(area: Rect, actions: &[FooterChip], hints: &[FooterChip]) -> u16 {
+    if hints.is_empty() {
+        return 0;
+    }
     let action_width = chips_width(actions);
     let hint_width = chips_width(hints);
     let min_right_x = area
@@ -256,8 +261,56 @@ fn chip_style(config: &TuiConfig, variant: FooterChipVariant, hovered: bool) -> 
     match variant {
         FooterChipVariant::Primary => styles::primary_chip(config, hovered),
         FooterChipVariant::Secondary => styles::secondary_chip(config, hovered),
+        FooterChipVariant::Status => styles::status_chip(config, hovered),
         FooterChipVariant::Subtle => styles::subtle_chip(config, hovered),
     }
+}
+
+fn fit_footer_hints(
+    area: Rect,
+    actions: &[FooterChip],
+    candidates: Vec<FooterChip>,
+) -> Vec<FooterChip> {
+    let mut remaining = area.width.saturating_sub(chips_width(actions));
+    remaining = remaining.saturating_sub(u16::from(!candidates.is_empty()));
+    let mut hints = Vec::new();
+
+    for candidate in candidates {
+        let separator = u16::from(!hints.is_empty());
+        let width = chip_width(&candidate.label).saturating_add(separator);
+        if width <= remaining {
+            remaining = remaining.saturating_sub(width);
+            hints.push(candidate);
+            continue;
+        }
+
+        if matches!(candidate.variant, FooterChipVariant::Status) {
+            if let Some(truncated) = truncate_chip(&candidate, remaining.saturating_sub(separator))
+            {
+                hints.push(truncated);
+            }
+            break;
+        }
+    }
+
+    hints
+}
+
+fn truncate_chip(chip: &FooterChip, available_width: u16) -> Option<FooterChip> {
+    if available_width < 8 {
+        return None;
+    }
+    let inner = usize::from(available_width.saturating_sub(2));
+    let label = chip.label.trim();
+    let mut truncated = label
+        .chars()
+        .take(inner.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('…');
+    Some(FooterChip {
+        label: format!(" {truncated} "),
+        ..chip.clone()
+    })
 }
 
 #[cfg(test)]
@@ -299,7 +352,6 @@ mod tests {
                 HoverTarget::Exit,
                 HoverTarget::Search,
                 HoverTarget::Focus,
-                HoverTarget::Help,
             ]
         );
         assert_eq!(
@@ -309,10 +361,6 @@ mod tests {
         assert_eq!(
             layouts[2].rect.x + layouts[2].rect.width + 1,
             layouts[3].rect.x
-        );
-        assert_eq!(
-            layouts[3].rect.x + layouts[3].rect.width + 1,
-            layouts[4].rect.x
         );
     }
 
@@ -329,7 +377,7 @@ mod tests {
 
         assert!(view.actions[0].hovered);
         assert!(!view.actions[1].hovered);
-        assert_eq!(view.hints.len(), 3);
+        assert_eq!(view.hints.len(), 2);
     }
 
     #[test]
@@ -347,5 +395,27 @@ mod tests {
 
         assert_eq!(view.hints[0].label, " Missing required argument: --name ");
         assert_eq!(view.hints[0].target, HoverTarget::Preview);
+    }
+
+    #[test]
+    fn footer_view_drops_low_priority_hints_before_actions_or_status() {
+        let state = build_test_state();
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 50, 1),
+            &ValidationState {
+                is_valid: false,
+                summary: Some("Missing required argument: --name".to_string()),
+                field_errors: std::collections::BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(view.actions.len(), 2);
+        assert_eq!(view.hints[0].target, HoverTarget::Preview);
+        assert!(
+            view.hints
+                .iter()
+                .all(|hint| hint.target != HoverTarget::Help)
+        );
     }
 }

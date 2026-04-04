@@ -1,0 +1,49 @@
+## ADDED Requirements
+
+### Requirement: Screen chrome adapts to constrained terminal sizes
+The TUI SHALL reduce the space consumed by non-form chrome when terminal height or width is constrained so the form remains the primary visible workspace.
+
+#### Scenario: Terminal height is limited
+- **WHEN** the app renders below a compact-layout budget of 20 terminal rows
+- **THEN** the layout enters compact mode
+- **AND** the preview consumes at most one row of content
+- **AND** the form remains visible and editable without hidden focus
+
+#### Scenario: Terminal width is limited
+- **WHEN** the app renders below a compact-layout budget of 80 terminal columns
+- **THEN** the layout enters compact mode
+- **AND** low-priority footer hints yield space before primary actions or validation feedback
+- **AND** the form remains visible and editable without hidden focus
+
+#### Scenario: Command description is absent
+- **WHEN** the selected command has no `about` text or other header content
+- **THEN** the layout does not reserve empty header rows for that missing content
+
+### Requirement: Critical status remains visible in narrow layouts
+The TUI SHALL preserve primary actions and critical validation or status feedback in narrow layouts through priority-aware placement or truncation.
+
+#### Scenario: Validation summary appears on a narrow terminal
+- **WHEN** the current command is invalid and horizontal space is limited
+- **THEN** the UI still renders a visible validation summary
+- **AND** primary command actions remain accessible in the same layout
+
+#### Scenario: Low-priority hints compete for footer width
+- **WHEN** there is not enough horizontal space to render every footer hint
+- **THEN** low-priority hints are truncated, collapsed, or omitted before critical actions or validation feedback
+
+#### Scenario: Main panel has few visible fields
+- **WHEN** the selected command renders only a small number of visible fields
+- **THEN** the layout avoids adding extra empty chrome rows around auxiliary surfaces
+- **AND** the main panel preserves the available space for active content
+
+### Requirement: Overlays remain visible in compact layouts
+The TUI SHALL clamp transient overlays to the visible viewport in compact layouts.
+
+#### Scenario: Dropdown opens near the viewport edge
+- **WHEN** a dropdown opens in compact layout near the bottom or right edge of the visible viewport
+- **THEN** the dropdown geometry is clamped so the overlay remains fully visible within the terminal frame
+
+#### Scenario: Help overlay or toast appears in compact layout
+- **WHEN** the app renders the help overlay or a toast while compact mode is active
+- **THEN** the overlay remains fully visible within the terminal frame
+- **AND** it does not render outside the viewport bounds

@@ -1,17 +1,22 @@
 use crate::controller::navigation;
+use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, Focus, HoverTarget};
 use crate::runtime::{AppKeyCode, AppKeyEvent};
 
 use super::{Action, Effect};
 
-pub(crate) fn apply(action: &Action, state: &mut AppState) -> Effect {
+pub(crate) fn apply(
+    action: &Action,
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) -> Effect {
     match action {
         Action::Escape => {
             navigation::handle_escape(state);
             Effect::None
         }
         Action::SearchInput(key) => {
-            apply_search_input(*key, state);
+            apply_search_input(*key, state, frame_snapshot);
             Effect::None
         }
         Action::Paste(text) => {
@@ -19,15 +24,15 @@ pub(crate) fn apply(action: &Action, state: &mut AppState) -> Effect {
             Effect::None
         }
         Action::ToggleFocus => {
-            state.ui.toggle_focus();
+            state.ui.focus_next();
+            Effect::None
+        }
+        Action::ReverseFocus => {
+            state.ui.focus_previous();
             Effect::None
         }
         Action::ToggleHelp => {
             navigation::toggle_help_tab(state);
-            Effect::None
-        }
-        Action::CycleTabs => {
-            navigation::cycle_tabs(state);
             Effect::None
         }
         Action::FocusSearch => {
@@ -47,13 +52,20 @@ pub(crate) fn apply(action: &Action, state: &mut AppState) -> Effect {
     }
 }
 
-fn apply_search_input(key: AppKeyEvent, state: &mut AppState) {
+fn apply_search_input(key: AppKeyEvent, state: &mut AppState, frame_snapshot: &FrameSnapshot) {
     match key.code {
-        AppKeyCode::Esc | AppKeyCode::Enter => state.ui.focus_sidebar(),
+        AppKeyCode::Tab => state.ui.focus_form(),
+        AppKeyCode::Esc | AppKeyCode::Enter | AppKeyCode::BackTab => {
+            state.ui.focus_sidebar();
+        }
         AppKeyCode::Backspace => {
             state.ui.search_query.pop();
+            navigation::clamp_sidebar_selection_to_search(state, frame_snapshot);
         }
-        AppKeyCode::Char(c) => state.ui.search_query.push(c),
+        AppKeyCode::Char(c) => {
+            state.ui.search_query.push(c);
+            navigation::clamp_sidebar_selection_to_search(state, frame_snapshot);
+        }
         _ => {}
     }
 }
@@ -68,14 +80,20 @@ fn apply_paste(text: &str, state: &mut AppState) {
 
 fn apply_footer_click(target: HoverTarget, state: &mut AppState) -> Effect {
     match target {
-        HoverTarget::Run => Effect::Run(state.preview_argv()),
-        HoverTarget::Exit => Effect::Exit,
+        HoverTarget::Run => {
+            state.ui.dismiss_transient_interaction();
+            Effect::Run(state.preview_argv())
+        }
+        HoverTarget::Exit => {
+            state.ui.dismiss_transient_interaction();
+            Effect::Exit
+        }
         HoverTarget::Search => {
             state.ui.focus_search();
             Effect::None
         }
         HoverTarget::Focus => {
-            state.ui.toggle_focus();
+            state.ui.focus_next();
             Effect::None
         }
         HoverTarget::Help => {
@@ -144,6 +162,62 @@ mod tests {
         let effect = apply_action(&action, &mut state, &snapshot);
         assert_eq!(effect, Effect::None);
         assert!(matches!(state.ui.focus, crate::input::Focus::Sidebar));
+    }
+
+    #[test]
+    fn search_reducer_clamps_sidebar_selection_and_scroll_to_visible_matches() {
+        let mut state = crate::input::AppState::new(crate::spec::CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: vec![
+                crate::spec::CommandSpec {
+                    name: "build".to_string(),
+                    version: None,
+                    about: None,
+                    help: String::new(),
+                    args: Vec::new(),
+                    subcommands: Vec::new(),
+                    ..crate::spec::CommandSpec::default()
+                },
+                crate::spec::CommandSpec {
+                    name: "deploy".to_string(),
+                    version: None,
+                    about: None,
+                    help: String::new(),
+                    args: Vec::new(),
+                    subcommands: Vec::new(),
+                    ..crate::spec::CommandSpec::default()
+                },
+            ],
+            ..crate::spec::CommandSpec::default()
+        });
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        state.ui.focus_search();
+        state.ui.sidebar_scroll = 3;
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.sidebar_list = Some(ratatui::layout::Rect::new(0, 0, 20, 4));
+
+        let effect = apply_action(
+            &Action::SearchInput(AppKeyEvent::new(
+                AppKeyCode::Char('p'),
+                AppKeyModifiers::default(),
+            )),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.search_query, "p");
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["deploy".to_string()]
+        );
+        assert_eq!(state.ui.sidebar_scroll, 0);
     }
 
     #[test]
@@ -251,5 +325,29 @@ mod tests {
         assert_eq!(effect, Effect::None);
         assert!(state.ui.dropdown_open.is_none());
         assert!(matches!(state.ui.focus, Focus::Search));
+    }
+
+    #[test]
+    fn focus_traversal_cycles_sidebar_search_form_in_both_directions() {
+        let mut state = crate::input::AppState::new(command_with_build());
+        let snapshot = FrameSnapshot::default();
+
+        assert!(matches!(state.ui.focus, Focus::Sidebar));
+
+        let effect = apply_action(&Action::ToggleFocus, &mut state, &snapshot);
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Search));
+
+        let effect = apply_action(&Action::ToggleFocus, &mut state, &snapshot);
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Form));
+
+        let effect = apply_action(&Action::ReverseFocus, &mut state, &snapshot);
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Search));
+
+        let effect = apply_action(&Action::ReverseFocus, &mut state, &snapshot);
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Sidebar));
     }
 }

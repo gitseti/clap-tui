@@ -86,8 +86,10 @@ impl StatefulWidget for DropdownWidget<'_> {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .track_symbol(Some("┃"))
                 .thumb_symbol("█")
-                .thumb_style(Style::default().fg(self.config.theme.panel_focus_border))
-                .track_style(Style::default().fg(self.config.theme.dim));
+                .begin_style(super::styles::scrollbar_cap(self.config, true))
+                .end_style(super::styles::scrollbar_cap(self.config, true))
+                .thumb_style(super::styles::scrollbar_thumb(self.config, true))
+                .track_style(super::styles::scrollbar_track(self.config));
             StatefulWidget::render(scrollbar, area, buf, &mut scrollbar_state);
         }
     }
@@ -157,8 +159,10 @@ fn build_dropdown_view(
             let is_selected = index == selected_row;
             let is_checked = selected_values.iter().any(|selected| selected == value);
             let text_style = match (is_selected, is_default) {
-                (true, false) => Style::default().fg(config.theme.selection_fg),
-                (_, true) => Style::default().fg(config.theme.dim),
+                (true, _) => Style::default()
+                    .fg(config.theme.selection_fg)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+                (false, true) => Style::default().fg(config.theme.dim),
                 (false, false) => Style::default().fg(config.theme.text),
             };
             let description = arg
@@ -256,6 +260,18 @@ mod tests {
     }
 
     #[test]
+    fn dropdown_geometry_clamps_to_form_width_when_input_would_overflow() {
+        let form_view = Rect::new(10, 5, 20, 10);
+        let input_rect = Rect::new(24, 8, 12, 3);
+        let layout = dropdown_geometry(form_view, input_rect, 4).expect("layout");
+
+        assert_eq!(
+            layout.rect.x + layout.rect.width,
+            form_view.x + form_view.width
+        );
+    }
+
+    #[test]
     fn dropdown_hides_hidden_choices_and_shows_choice_help() {
         let mut state = AppState::from_command(&Command::new("tool").arg(
             Arg::new("mode").long("mode").value_parser([
@@ -299,5 +315,27 @@ mod tests {
         assert_eq!(view.total_rows, 2);
         assert_eq!(view.items[0].label, "red");
         assert_eq!(view.items[1].label, "green");
+    }
+
+    #[test]
+    fn selected_default_row_uses_selection_contrast_instead_of_default_dim() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("mode")
+                    .long("mode")
+                    .default_value("fast")
+                    .value_parser(["fast", "safe"]),
+            ),
+        );
+        state.ui.dropdown_open = Some("mode".to_string());
+        state.ui.dropdown_cursor = 0;
+        let mut snapshot = crate::frame_snapshot::FrameSnapshot::default();
+        snapshot.layout.dropdown = Some(Rect::new(0, 0, 30, 4));
+        let config = TuiConfig::default();
+
+        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &config)
+            .expect("dropdown view");
+
+        assert_eq!(view.items[0].text_style.fg, Some(config.theme.selection_fg));
     }
 }

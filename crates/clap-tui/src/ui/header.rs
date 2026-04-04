@@ -9,12 +9,22 @@ use crate::spec::CommandSpec;
 
 use super::{screen::ScreenView, styles};
 
+pub(crate) fn has_header_content(command: &CommandSpec) -> bool {
+    command
+        .about
+        .as_ref()
+        .is_some_and(|about| !about.is_empty())
+}
+
 pub(crate) fn render_header(
     frame: &mut Frame<'_>,
     config: &TuiConfig,
     area: Rect,
     vm: &ScreenView<'_>,
 ) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
     frame.render_widget(
         Paragraph::new(header_lines(config, vm.command)).style(styles::panel(config)),
         area,
@@ -22,18 +32,17 @@ pub(crate) fn render_header(
 }
 
 fn header_lines(config: &TuiConfig, command: &CommandSpec) -> Vec<Line<'static>> {
-    let description = command
+    command
         .about
         .as_ref()
         .filter(|about| !about.is_empty())
         .map(|about| {
-            Line::from(Span::styled(
+            vec![Line::from(Span::styled(
                 about.clone(),
                 Style::default().fg(config.theme.dim),
-            ))
+            ))]
         })
-        .unwrap_or_default();
-    vec![description, Line::default()]
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -80,6 +89,6 @@ mod tests {
     fn header_renders_blank_first_line_when_about_is_missing() {
         let lines = header_lines(&TuiConfig::default(), &command("serve", None));
 
-        assert!(lines[0].spans.is_empty());
+        assert!(lines.is_empty());
     }
 }

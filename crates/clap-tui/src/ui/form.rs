@@ -77,12 +77,19 @@ pub(crate) fn render_form(
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .track_symbol(Some("┃"))
             .thumb_symbol("█")
-            .thumb_style(
-                Style::default()
-                    .fg(config.theme.panel_focus_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .track_style(Style::default().fg(config.theme.dim));
+            .begin_style(styles::scrollbar_cap(
+                config,
+                matches!(ui.focus, Focus::Form),
+            ))
+            .end_style(styles::scrollbar_cap(
+                config,
+                matches!(ui.focus, Focus::Form),
+            ))
+            .thumb_style(styles::scrollbar_thumb(
+                config,
+                matches!(ui.focus, Focus::Form),
+            ))
+            .track_style(styles::scrollbar_track(config));
         frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
 }
@@ -164,7 +171,11 @@ fn render_fields(
             .border_type(BorderType::Rounded)
             .border_style(field_border_style(config, selected, field_error.is_some()));
         let fill_style = styles::input(config, selected);
-        let text_style = if is_default || shows_choice_placeholder {
+        let text_style = if shows_choice_placeholder && item.arg.required {
+            Style::default()
+                .fg(config.theme.error)
+                .add_modifier(Modifier::BOLD)
+        } else if is_default || shows_choice_placeholder {
             styles::placeholder(config)
         } else {
             Style::default().fg(config.theme.text)
@@ -186,12 +197,13 @@ fn render_fields(
             FieldWidget::SingleChoice | FieldWidget::MultiChoice | FieldWidget::Counter
         ) {
             let display = if value.is_empty() {
-                compact_placeholder(item.widget)
+                compact_placeholder(item.arg, item.widget)
             } else {
                 value.as_str()
             };
-            let input = Paragraph::new(enum_display_line(
+            let input = Paragraph::new(compact_control_line(
                 config,
+                item.widget,
                 display,
                 field.input.width,
                 selected,
@@ -223,7 +235,7 @@ fn render_fields(
             );
         } else if input_is_truncated {
             frame.render_widget(
-                Paragraph::new(repeated_display_lines(item.widget, &value))
+                Paragraph::new(repeated_display_lines(item.arg, item.widget, &value))
                     .style(fill_style.patch(text_style)),
                 field.input,
             );
@@ -248,11 +260,22 @@ fn render_fields(
                     .bg(config.theme.surface_raised)
                     .add_modifier(Modifier::REVERSED),
             );
+            if value.is_empty()
+                && field_error.is_none()
+                && let Some(placeholder) = required_empty_prompt(item.arg, item.widget)
+            {
+                textarea.set_placeholder_text(placeholder);
+                textarea.set_placeholder_style(
+                    Style::default()
+                        .fg(config.theme.error)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
             frame.render_widget(textarea.widget(), field.input);
             place_textarea_cursor(frame, &textarea, field.input);
         } else {
             frame.render_widget(
-                Paragraph::new(repeated_display_lines(item.widget, &value))
+                Paragraph::new(repeated_display_lines(item.arg, item.widget, &value))
                     .block(block)
                     .style(fill_style.patch(text_style)),
                 field.input,
@@ -263,6 +286,7 @@ fn render_fields(
             field_help_text(
                 item.arg,
                 item.widget,
+                &vm.selected_path,
                 selected,
                 field_error.map(String::as_str),
                 vm.effective_values.get(&item.arg.id),
@@ -318,20 +342,29 @@ fn display_value(
     }
 }
 
-fn compact_placeholder(widget: FieldWidget) -> &'static str {
+fn compact_placeholder(arg: &ArgSpec, widget: FieldWidget) -> &'static str {
     match widget {
         FieldWidget::Counter => "0",
+        FieldWidget::MultiChoice if arg.required => "Press Space to choose",
+        FieldWidget::SingleChoice if arg.required => "Press Enter to choose",
         _ => "Select...",
     }
 }
 
-fn repeated_display_lines(widget: FieldWidget, value: &str) -> Vec<Line<'static>> {
+fn repeated_display_lines(arg: &ArgSpec, widget: FieldWidget, value: &str) -> Vec<Line<'static>> {
     if !matches!(widget, FieldWidget::RepeatedText) {
+        if value.is_empty()
+            && let Some(prompt) = required_empty_prompt(arg, widget)
+        {
+            return vec![Line::from(prompt)];
+        }
         return vec![Line::from(value.to_string())];
     }
 
     if value.is_empty() {
-        return vec![Line::from("No values added".to_string())];
+        return vec![Line::from(
+            required_empty_prompt(arg, widget).unwrap_or_else(|| "No values added".to_string()),
+        )];
     }
 
     value
@@ -610,8 +643,9 @@ fn render_flag_toggle(
     );
 }
 
-fn enum_display_line(
+fn compact_control_line(
     config: &TuiConfig,
+    widget: FieldWidget,
     value: &str,
     inner_width: u16,
     selected: bool,
@@ -619,8 +653,16 @@ fn enum_display_line(
     open: bool,
 ) -> Line<'static> {
     let value_style = styles::compact_control_value(config, selected, is_default);
-    let affordance_style = styles::compact_control_affordance(config, selected, open);
-    let affordance_width = 3;
+    let affordance_style = styles::compact_control_affordance(
+        config,
+        selected,
+        open || matches!(widget, FieldWidget::Counter),
+    );
+    let affordance = match widget {
+        FieldWidget::Counter => " +/- ",
+        _ => " v ",
+    };
+    let affordance_width = u16::try_from(affordance.chars().count()).unwrap_or(3);
     let available_value = inner_width.saturating_sub(affordance_width + 1);
     let value_width = u16::try_from(value.chars().count()).unwrap_or(available_value);
     let padding = available_value.saturating_sub(value_width.saturating_add(1));
@@ -628,7 +670,7 @@ fn enum_display_line(
         Span::raw(" "),
         Span::styled(value.to_string(), value_style),
         Span::raw(" ".repeat(usize::from(padding))),
-        Span::styled(" v ", affordance_style),
+        Span::styled(affordance, affordance_style),
     ])
 }
 
@@ -660,10 +702,7 @@ fn render_help_overlay(
     scroll: u16,
     help: &str,
 ) {
-    let popup = area.inner(ratatui::layout::Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
+    let popup = crate::frame_snapshot::help_overlay_popup_rect(area);
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw(" "),
@@ -674,10 +713,7 @@ fn render_help_overlay(
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(config.theme.panel_focus_border))
         .style(styles::panel(config));
-    let inner = popup.inner(ratatui::layout::Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
+    let inner = crate::frame_snapshot::help_overlay_content_rect(area);
     frame.render_widget(block, popup);
     frame.render_widget(
         Paragraph::new(help.to_string())
@@ -700,12 +736,10 @@ fn render_help_overlay(
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .track_symbol(Some("┃"))
             .thumb_symbol("█")
-            .thumb_style(
-                Style::default()
-                    .fg(config.theme.panel_focus_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .track_style(Style::default().fg(config.theme.dim));
+            .begin_style(styles::scrollbar_cap(config, true))
+            .end_style(styles::scrollbar_cap(config, true))
+            .thumb_style(styles::scrollbar_thumb(config, true))
+            .track_style(styles::scrollbar_track(config));
         frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
     }
 }
@@ -713,6 +747,7 @@ fn render_help_overlay(
 fn field_help_text(
     arg: &ArgSpec,
     widget: FieldWidget,
+    selected_path: &crate::spec::CommandPath,
     selected: bool,
     field_error: Option<&str>,
     effective_value: Option<&EffectiveArgValue>,
@@ -750,6 +785,12 @@ fn field_help_text(
             _ => {}
         }
     }
+    if selected && arg.is_inherited_global() && !selected_path.is_empty() {
+        parts.push(format!(
+            "Inherited here; editing creates an override for {}.",
+            selected_path.as_slice().join(" > ")
+        ));
+    }
     if selected && let Some(hint) = widget_help_hint(widget) {
         parts.push(hint.to_string());
     }
@@ -762,6 +803,7 @@ fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
         FieldWidget::RepeatedText => {
             Some("Enter adds rows. Alt+Up/Down reorders. Ctrl+Delete removes.")
         }
+        FieldWidget::MultiChoice => Some("Space toggles choices. Enter finishes selection."),
         FieldWidget::Counter => Some("Right/+ increments. Left/- decrements."),
         FieldWidget::OptionalValue => Some("Right enables. Left/Delete disables."),
         _ => None,
@@ -780,7 +822,7 @@ fn field_badges(
         spans.extend(chip_spans(
             "Inherited",
             Style::default()
-                .fg(config.theme.text)
+                .fg(config.theme.dim)
                 .bg(config.theme.pill_bg),
         ));
     } else if arg.is_global() {
@@ -817,6 +859,20 @@ fn field_badges(
     }
 
     spans
+}
+
+fn required_empty_prompt(arg: &ArgSpec, widget: FieldWidget) -> Option<String> {
+    if !arg.required {
+        return None;
+    }
+
+    Some(match widget {
+        FieldWidget::RepeatedText => "Press Enter to add the first value".to_string(),
+        FieldWidget::SingleText => "Enter a value to continue".to_string(),
+        FieldWidget::SingleChoice => "Press Enter to choose a value".to_string(),
+        FieldWidget::MultiChoice => "Press Space to choose at least one value".to_string(),
+        _ => return None,
+    })
 }
 
 fn suppress_default_badge(arg: &ArgSpec, input_state: Option<&ArgInputState>) -> bool {
@@ -936,7 +992,7 @@ mod tests {
     use crate::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, AppState, Focus, UiState};
-    use crate::query::form::visible_args;
+    use crate::query::form::{visible_args, widget_for};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
     use crate::ui::screen::ScreenView;
@@ -966,6 +1022,7 @@ mod tests {
             dropdown_open: None,
             dropdown_scroll: 0,
             dropdown_cursor: 0,
+            sidebar_scroll: 0,
             form_scroll: 0,
             hover: None,
             hover_tab: None,
@@ -1010,7 +1067,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
@@ -1039,7 +1098,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
@@ -1079,7 +1140,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: Vec::new(),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
@@ -1095,7 +1158,7 @@ mod tests {
             &mut snapshot,
         );
 
-        assert_eq!(snapshot.help_scroll_max, 6);
+        assert_eq!(snapshot.help_scroll_max, 4);
     }
 
     #[test]
@@ -1106,7 +1169,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
@@ -1152,7 +1217,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
@@ -1193,7 +1260,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
@@ -1229,8 +1298,15 @@ mod tests {
         include.metadata.display.long_help = Some("Include one or more paths".to_string());
         include.metadata.values.value_names = vec!["PATH".to_string()];
 
-        let help = field_help_text(&include, FieldWidget::SingleText, true, None, None)
-            .expect("selected help text");
+        let help = field_help_text(
+            &include,
+            FieldWidget::SingleText,
+            &crate::spec::CommandPath::default(),
+            true,
+            None,
+            None,
+        )
+        .expect("selected help text");
 
         assert!(help.contains("Include one or more paths"));
         assert!(help.contains("Expects: PATH"));
@@ -1254,7 +1330,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
@@ -1318,7 +1396,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),
@@ -1343,6 +1423,93 @@ mod tests {
             .expect("draw");
 
         assert!(buffer_text(terminal.backend()).contains("Select..."));
+    }
+
+    #[test]
+    fn required_choice_empty_state_is_instructional() {
+        let mut required_choice = choice_arg("mode", "--mode", &["fast", "safe"]);
+        required_choice.required = true;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![required_choice],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 50, 8),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(50, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        assert!(buffer_text(terminal.backend()).contains("Press Enter to choose"));
+    }
+
+    #[test]
+    fn counter_fields_render_stepper_affordance_instead_of_dropdown_chevron() {
+        let command = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("verbose").short('v').action(ArgAction::Count)),
+        );
+        let current = command.domain.current_command().clone();
+        let root = command.domain.root.clone();
+        let derived = crate::pipeline::derive(&command);
+        let vm = ScreenView {
+            command: &current,
+            root: &root,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&current, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: command.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("+/-"));
+        assert!(!rendered.contains(" v "));
     }
 
     #[test]
@@ -1371,7 +1538,9 @@ mod tests {
         let vm = ScreenView {
             command: &current,
             root: &root,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&current, ActiveTab::Inputs),
             preview_argv: derived.argv,
             validation: derived.validation,
@@ -1401,6 +1570,83 @@ mod tests {
     }
 
     #[test]
+    fn selected_inherited_field_explains_that_editing_creates_override() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("config").long("config").global(true))
+                .subcommand(Command::new("build").subcommand(Command::new("release"))),
+        );
+        state
+            .select_command_path(&["build".to_string(), "release".to_string()])
+            .expect("valid descendant path");
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "config")
+            .expect("inherited config arg");
+        let help = field_help_text(
+            arg,
+            widget_for(arg),
+            &crate::spec::CommandPath::from(vec!["build".to_string(), "release".to_string()]),
+            true,
+            None,
+            None,
+        )
+        .expect("override help");
+
+        assert!(help.contains("editing creates an override"));
+        assert!(help.contains("build > release"));
+    }
+
+    #[test]
+    fn compact_help_overlay_keeps_help_content_visible() {
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: "Line one\nLine two\nLine three".to_string(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: Vec::new(),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.help_open = true;
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 18, 6),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(18, 6)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("Help"));
+        assert!(rendered.contains("Line one"));
+    }
+
+    #[test]
     fn selected_optional_value_without_explicit_text_renders_editor_state() {
         let mut state = AppState::from_command(
             &Command::new("tool").arg(
@@ -1421,7 +1667,9 @@ mod tests {
         let vm = ScreenView {
             command: &current,
             root: &root,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&current, ActiveTab::Inputs),
             preview_argv: derived.argv,
             validation: derived.validation,
@@ -1471,7 +1719,9 @@ mod tests {
         let vm = ScreenView {
             command: &current,
             root: &root,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&current, ActiveTab::Inputs),
             preview_argv: derived.argv,
             validation: derived.validation,
@@ -1507,7 +1757,9 @@ mod tests {
         let vm = ScreenView {
             command: &command,
             root: &command,
+            selected_path: crate::spec::CommandPath::default(),
             tree_rows: Vec::new(),
+            sidebar_scroll: 0,
             active_args: visible_args(&command, ActiveTab::Inputs),
             preview_argv: Vec::new(),
             validation: crate::pipeline::ValidationState::default(),

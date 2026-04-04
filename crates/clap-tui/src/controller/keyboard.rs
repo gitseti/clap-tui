@@ -17,6 +17,9 @@ pub(crate) fn handle_key_event(
     if key.code == AppKeyCode::Char('r') && key.modifiers.control {
         return Some(Action::Run);
     }
+    if key.code == AppKeyCode::Char('y') && key.modifiers.control {
+        return Some(Action::CopyPreview);
+    }
     if key.code == AppKeyCode::Enter && key.modifiers.control {
         return Some(Action::Run);
     }
@@ -122,13 +125,7 @@ fn handle_focused_key_event(
         AppKeyCode::Tab => Some(Action::ToggleFocus),
         AppKeyCode::Char(c) if c == config.keymap.help => Some(Action::ToggleHelp),
         AppKeyCode::F(1) => Some(Action::ToggleHelp),
-        AppKeyCode::BackTab => {
-            if matches!(state.ui.focus, Focus::Form) {
-                Some(Action::CycleTabs)
-            } else {
-                None
-            }
-        }
+        AppKeyCode::BackTab => Some(Action::ReverseFocus),
         AppKeyCode::Char(c) if c == config.keymap.search => Some(Action::FocusSearch),
         AppKeyCode::Up => match state.ui.focus {
             Focus::Sidebar => Some(Action::MoveSidebarSelection(-1)),
@@ -301,6 +298,27 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_y_emits_copy_preview_action() {
+        let state = AppState::new(command());
+
+        let action = handle_key_event(
+            AppKeyEvent::new(
+                AppKeyCode::Char('y'),
+                AppKeyModifiers {
+                    control: true,
+                    alt: false,
+                    shift: false,
+                },
+            ),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::CopyPreview));
+    }
+
+    #[test]
     fn counter_fields_route_left_and_right_to_widget_input() {
         let mut state = AppState::from_command(
             &clap::Command::new("tool")
@@ -469,5 +487,19 @@ mod tests {
         );
 
         assert_eq!(action, Some(Action::FocusSearch));
+    }
+
+    #[test]
+    fn backtab_emits_reverse_focus_action() {
+        let state = AppState::new(command());
+
+        let action = handle_key_event(
+            key(AppKeyCode::BackTab),
+            &state,
+            &FrameSnapshot::default(),
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::ReverseFocus));
     }
 }

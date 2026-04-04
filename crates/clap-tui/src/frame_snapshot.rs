@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Margin, Rect};
 
 use crate::input::{ActiveTab, HoverTarget, UiState};
 use crate::pipeline::ValidationState;
@@ -18,6 +18,7 @@ pub(crate) struct DropdownGeometry {
 #[derive(Debug, Default, Clone)]
 pub struct FrameLayout {
     pub sidebar: Option<Rect>,
+    pub sidebar_list: Option<Rect>,
     pub form: Option<Rect>,
     pub search: Option<Rect>,
     pub preview: Option<Rect>,
@@ -98,6 +99,12 @@ impl FrameSnapshot {
 
     pub fn sidebar_contains(&self, x: u16, y: u16) -> bool {
         self.layout.sidebar.is_some_and(|area| contains(area, x, y))
+    }
+
+    pub fn sidebar_visible_rows(&self) -> Option<usize> {
+        self.layout
+            .sidebar_list
+            .map(|area| usize::from(area.height))
     }
 
     pub fn form_contains(&self, x: u16, y: u16) -> bool {
@@ -181,7 +188,7 @@ pub(crate) fn dropdown_geometry(
     input_rect: Rect,
     total_options: usize,
 ) -> Option<DropdownGeometry> {
-    if total_options == 0 || form_view.height == 0 || input_rect.width < 3 {
+    if total_options == 0 || form_view.height == 0 || form_view.width < 3 || input_rect.width < 3 {
         return None;
     }
 
@@ -215,8 +222,14 @@ pub(crate) fn dropdown_geometry(
         input_rect.y.saturating_sub(popup_height)
     };
 
+    let width = input_rect.width.min(form_view.width);
+    let max_x = form_view
+        .x
+        .saturating_add(form_view.width.saturating_sub(width));
+    let x = input_rect.x.clamp(form_view.x, max_x);
+
     Some(DropdownGeometry {
-        rect: Rect::new(input_rect.x, y, input_rect.width, popup_height),
+        rect: Rect::new(x, y, width, popup_height),
         visible_rows,
     })
 }
@@ -234,7 +247,7 @@ pub(crate) fn populate_form_layout(
         form::measure_fields_height_with_errors(active_args, &validation.field_errors);
     let help_height = form::measure_help_height(help);
     let viewport_height = content_area.height;
-    let help_viewport_height = viewport_height.saturating_sub(4);
+    let help_viewport_height = help_overlay_content_rect(content_area).height;
     frame_snapshot.form_scroll_max = content_height.saturating_sub(viewport_height);
     frame_snapshot.help_scroll_max = help_height.saturating_sub(help_viewport_height);
     let form_scroll = ui.form_scroll(frame_snapshot);
@@ -315,6 +328,25 @@ pub(crate) fn populate_form_layout(
         y += i32::from(metrics.total_height);
         previous_heading = item.arg.help_heading();
     }
+}
+
+pub(crate) fn help_overlay_popup_rect(area: Rect) -> Rect {
+    let horizontal = u16::from(area.width > 24);
+    let vertical = u16::from(area.height > 8);
+    area.inner(Margin {
+        horizontal,
+        vertical,
+    })
+}
+
+pub(crate) fn help_overlay_content_rect(area: Rect) -> Rect {
+    let popup = help_overlay_popup_rect(area);
+    let horizontal = u16::from(popup.width > 4);
+    let vertical = u16::from(popup.height > 4);
+    popup.inner(Margin {
+        horizontal,
+        vertical,
+    })
 }
 
 fn form_description_rect(

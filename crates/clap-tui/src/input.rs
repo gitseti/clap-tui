@@ -114,6 +114,7 @@ pub struct UiState {
     pub dropdown_open: Option<String>,
     pub dropdown_scroll: usize,
     pub dropdown_cursor: usize,
+    pub sidebar_scroll: usize,
     pub form_scroll: u16,
     pub hover: Option<HoverTarget>,
     pub hover_tab: Option<ActiveTab>,
@@ -850,14 +851,6 @@ impl UiState {
         self.help_scroll = self.help_scroll(frame_snapshot);
     }
 
-    pub fn toggle_focus(&mut self) {
-        self.dismiss_transient_interaction();
-        self.focus = match self.focus {
-            Focus::Sidebar => Focus::Form,
-            _ => Focus::Sidebar,
-        };
-    }
-
     pub fn focus_sidebar(&mut self) {
         self.dismiss_transient_interaction();
         self.focus = Focus::Sidebar;
@@ -870,6 +863,24 @@ impl UiState {
     pub fn focus_search(&mut self) {
         self.dismiss_transient_interaction();
         self.focus = Focus::Search;
+    }
+
+    pub fn focus_next(&mut self) {
+        self.dismiss_transient_interaction();
+        self.focus = match self.focus {
+            Focus::Sidebar => Focus::Search,
+            Focus::Search => Focus::Form,
+            Focus::Form => Focus::Sidebar,
+        };
+    }
+
+    pub fn focus_previous(&mut self) {
+        self.dismiss_transient_interaction();
+        self.focus = match self.focus {
+            Focus::Sidebar => Focus::Form,
+            Focus::Search => Focus::Sidebar,
+            Focus::Form => Focus::Search,
+        };
     }
 
     pub fn toggle_help(&mut self) {
@@ -929,6 +940,50 @@ impl UiState {
 
     pub fn set_form_scroll(&mut self, scroll: u16) {
         self.form_scroll = scroll;
+    }
+
+    pub fn sidebar_scroll(&self, total_rows: usize, visible_rows: usize) -> usize {
+        clamp_dropdown_scroll(self.sidebar_scroll, total_rows, visible_rows)
+    }
+
+    pub fn set_sidebar_scroll(&mut self, scroll: usize) {
+        self.sidebar_scroll = scroll;
+    }
+
+    pub fn clamp_sidebar_scroll(&mut self, total_rows: usize, visible_rows: usize) {
+        self.sidebar_scroll = self.sidebar_scroll(total_rows, visible_rows);
+    }
+
+    pub fn adjust_sidebar_scroll(
+        &mut self,
+        delta: i16,
+        total_rows: usize,
+        visible_rows: usize,
+        selected_row: Option<usize>,
+    ) {
+        if delta.is_negative() {
+            self.sidebar_scroll = self
+                .sidebar_scroll
+                .saturating_sub(usize::from(delta.unsigned_abs()));
+        } else {
+            self.sidebar_scroll = self
+                .sidebar_scroll
+                .saturating_add(usize::from(delta.unsigned_abs()));
+        }
+        self.clamp_sidebar_scroll(total_rows, visible_rows);
+
+        let Some(selected_row) = selected_row else {
+            return;
+        };
+        if visible_rows == 0 || total_rows == 0 {
+            self.sidebar_scroll = 0;
+            return;
+        }
+
+        let max_scroll = total_rows.saturating_sub(visible_rows.min(total_rows));
+        let min_visible = selected_row.saturating_add(1).saturating_sub(visible_rows);
+        let max_visible = selected_row.min(max_scroll);
+        self.sidebar_scroll = self.sidebar_scroll.clamp(min_visible, max_visible);
     }
 
     pub fn adjust_form_scroll(&mut self, delta: i16) {
@@ -1023,6 +1078,7 @@ impl AppState {
                 dropdown_open: None,
                 dropdown_scroll: 0,
                 dropdown_cursor: 0,
+                sidebar_scroll: 0,
                 form_scroll: 0,
                 hover: None,
                 hover_tab: None,

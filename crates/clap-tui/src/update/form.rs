@@ -198,6 +198,7 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
     else {
         return;
     };
+    state.ui.focus_form();
     let command = state.domain.current_command().clone();
     let args = form::visible_args(&command, state.ui.active_tab);
     let validation = state.derived_validation();
@@ -205,7 +206,6 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
         form::hit_test_form_content_with_errors(&args, content_y, &validation.field_errors)
     {
         state.ui.set_selected_arg_index(hit.order_index);
-        state.ui.focus_form();
         if matches!(
             hit.widget,
             FieldWidget::Toggle | FieldWidget::Counter | FieldWidget::OptionalValue
@@ -365,6 +365,33 @@ mod tests {
                 .unwrap_or_default(),
             vec!["green".to_string()]
         );
+    }
+
+    #[test]
+    fn clicking_blank_form_space_still_moves_focus_to_form() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("path").long("path"))
+                .arg(Arg::new("name").long("name")),
+        );
+        state.ui.focus_sidebar();
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 40, 10));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 10));
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 1,
+                row: 9,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, crate::input::Focus::Form));
     }
 
     #[test]

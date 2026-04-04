@@ -86,6 +86,13 @@ pub(crate) fn handle_mouse_event(
     if state.ui.help_open {
         return None;
     }
+    if frame_snapshot.sidebar_contains(event.column, event.row) {
+        match event.kind {
+            AppMouseEventKind::ScrollDown => return Some(Action::ScrollSidebar(2)),
+            AppMouseEventKind::ScrollUp => return Some(Action::ScrollSidebar(-2)),
+            _ => {}
+        }
+    }
     if let AppMouseEventKind::ScrollDown = event.kind {
         return Some(Action::ScrollForm(2));
     }
@@ -107,7 +114,7 @@ mod tests {
     use crate::input::{ActiveTab, AppState, Focus, HoverTarget};
     use crate::runtime::{AppKeyModifiers, AppMouseButton, AppMouseEvent, AppMouseEventKind};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
-    use crate::update::{Effect, apply_action};
+    use crate::update::{Action, Effect, apply_action};
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
         ArgSpec {
@@ -231,6 +238,84 @@ mod tests {
     }
 
     #[test]
+    fn footer_run_click_closes_dropdown_before_running() {
+        let mut state = AppState::new(command(Vec::new()));
+        let mut frame_snapshot = FrameSnapshot::default();
+        state.ui.dropdown_open = Some("color".to_string());
+        frame_snapshot.layout.footer = Some(Rect::new(0, 20, 20, 1));
+        frame_snapshot.layout.footer_buttons = vec![FooterButtonLayout {
+            target: HoverTarget::Run,
+            rect: Rect::new(0, 20, 8, 1),
+        }];
+
+        let action =
+            handle_mouse_event(click(1, 20), &state, &frame_snapshot, &TuiConfig::default())
+                .expect("run action");
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
+
+        assert_eq!(effect, Effect::Run(vec!["tool".to_string()]));
+        assert!(state.ui.dropdown_open.is_none());
+    }
+
+    #[test]
+    fn preview_click_copies_preview() {
+        let state = AppState::new(command(Vec::new()));
+        let mut frame_snapshot = FrameSnapshot::default();
+        frame_snapshot.layout.preview = Some(Rect::new(10, 18, 20, 3));
+
+        let action = handle_mouse_event(
+            click(12, 19),
+            &state,
+            &frame_snapshot,
+            &TuiConfig::default(),
+        );
+
+        assert_eq!(action, Some(Action::CopyPreview));
+    }
+
+    #[test]
+    fn outside_click_retargets_search_while_closing_dropdown() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.choices = vec!["red".to_string(), "green".to_string()];
+        let mut state = AppState::new(command(vec![color]));
+        let mut frame_snapshot = FrameSnapshot::default();
+        state.ui.dropdown_open = Some("color".to_string());
+        frame_snapshot.layout.dropdown = Some(Rect::new(20, 5, 20, 5));
+        frame_snapshot.layout.search = Some(Rect::new(0, 0, 20, 1));
+
+        let action =
+            handle_mouse_event(click(1, 0), &state, &frame_snapshot, &TuiConfig::default())
+                .expect("search action");
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.dropdown_open.is_none());
+        assert!(matches!(state.ui.focus, Focus::Search));
+    }
+
+    #[test]
+    fn outside_click_retargets_form_while_closing_dropdown() {
+        let mut color = arg("color", "--color", ArgKind::Enum);
+        color.choices = vec!["red".to_string(), "green".to_string()];
+        let path = arg("path", "--path", ArgKind::Option);
+        let mut state = AppState::new(command(vec![color, path]));
+        let mut frame_snapshot = FrameSnapshot::default();
+        state.ui.dropdown_open = Some("color".to_string());
+        frame_snapshot.layout.dropdown = Some(Rect::new(20, 5, 20, 5));
+        frame_snapshot.layout.form = Some(Rect::new(0, 2, 30, 8));
+        frame_snapshot.layout.form_view = Some(Rect::new(0, 2, 30, 8));
+
+        let action =
+            handle_mouse_event(click(1, 6), &state, &frame_snapshot, &TuiConfig::default())
+                .expect("form action");
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.dropdown_open.is_none());
+        assert!(matches!(state.ui.focus, Focus::Form));
+    }
+
+    #[test]
     fn tab_click_switches_active_tab() {
         let mut state = AppState::new(command(Vec::new()));
         let mut frame_snapshot = FrameSnapshot::default();
@@ -302,6 +387,93 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(state.ui.dropdown_scroll, 1);
+        assert_eq!(state.ui.form_scroll, 4);
+    }
+
+    #[test]
+    fn sidebar_scroll_events_adjust_sidebar_scroll_without_touching_form_scroll() {
+        let mut state = AppState::new(CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: (0..6)
+                .map(|index| CommandSpec {
+                    name: format!("cmd-{index}"),
+                    version: None,
+                    about: None,
+                    help: String::new(),
+                    args: Vec::new(),
+                    subcommands: Vec::new(),
+                    ..CommandSpec::default()
+                })
+                .collect(),
+            ..CommandSpec::default()
+        });
+        state
+            .select_command_path(&["cmd-2".to_string()])
+            .expect("valid path");
+        let mut frame_snapshot = FrameSnapshot::default();
+        frame_snapshot.layout.sidebar = Some(Rect::new(0, 0, 20, 10));
+        frame_snapshot.layout.sidebar_list = Some(Rect::new(1, 2, 18, 3));
+        state.ui.form_scroll = 4;
+
+        let action = handle_mouse_event(
+            scroll(AppMouseEventKind::ScrollDown, 2, 3),
+            &state,
+            &frame_snapshot,
+            &TuiConfig::default(),
+        )
+        .expect("scroll action");
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.sidebar_scroll, 2);
+        assert_eq!(state.ui.form_scroll, 4);
+    }
+
+    #[test]
+    fn sidebar_scroll_events_over_search_or_chrome_still_scroll_sidebar() {
+        let mut state = AppState::new(CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: (0..6)
+                .map(|index| CommandSpec {
+                    name: format!("cmd-{index}"),
+                    version: None,
+                    about: None,
+                    help: String::new(),
+                    args: Vec::new(),
+                    subcommands: Vec::new(),
+                    ..CommandSpec::default()
+                })
+                .collect(),
+            ..CommandSpec::default()
+        });
+        state
+            .select_command_path(&["cmd-2".to_string()])
+            .expect("valid path");
+        let mut frame_snapshot = FrameSnapshot::default();
+        frame_snapshot.layout.sidebar = Some(Rect::new(0, 0, 20, 10));
+        frame_snapshot.layout.sidebar_list = Some(Rect::new(1, 2, 18, 3));
+        frame_snapshot.layout.search = Some(Rect::new(1, 1, 18, 1));
+        state.ui.form_scroll = 4;
+
+        let action = handle_mouse_event(
+            scroll(AppMouseEventKind::ScrollDown, 2, 1),
+            &state,
+            &frame_snapshot,
+            &TuiConfig::default(),
+        )
+        .expect("scroll action");
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.sidebar_scroll, 2);
         assert_eq!(state.ui.form_scroll, 4);
     }
 

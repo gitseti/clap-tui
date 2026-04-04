@@ -6,6 +6,26 @@ use crate::input::UiState;
 
 use super::{footer, screen::ScreenView, sidebar};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LayoutMode {
+    Roomy,
+    Compact,
+}
+
+impl LayoutMode {
+    pub(crate) fn for_size(size: Rect) -> Self {
+        if size.height < 20 || size.width < 80 {
+            Self::Compact
+        } else {
+            Self::Roomy
+        }
+    }
+
+    pub(crate) fn is_compact(self) -> bool {
+        matches!(self, Self::Compact)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ScreenAreas {
     pub(crate) sidebar: Rect,
@@ -28,10 +48,16 @@ pub(crate) fn build_screen_layout(
     size: Rect,
     vm: &ScreenView<'_>,
 ) -> ScreenLayout {
+    let mode = LayoutMode::for_size(size);
     let mut sidebar_width =
         u16::try_from(u32::from(size.width) * u32::from(config.layout.sidebar_ratio) / 100)
             .unwrap_or(size.width);
-    sidebar_width = sidebar_width.clamp(22, 30);
+    sidebar_width = if mode.is_compact() {
+        sidebar_width.clamp(18, 24)
+    } else {
+        sidebar_width.clamp(22, 30)
+    };
+    let preview_height = if mode.is_compact() { 1 } else { 3 };
 
     let inner_size = size.inner(Margin {
         horizontal: 1,
@@ -41,7 +67,7 @@ pub(crate) fn build_screen_layout(
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(3),
-            Constraint::Length(3),
+            Constraint::Length(preview_height),
             Constraint::Length(1),
         ])
         .split(inner_size);
@@ -54,7 +80,7 @@ pub(crate) fn build_screen_layout(
         .constraints([
             Constraint::Length(
                 sidebar_width
-                    .max(20)
+                    .max(if mode.is_compact() { 18 } else { 20 })
                     .min(body_area.width.saturating_sub(20)),
             ),
             Constraint::Min(20),
@@ -67,7 +93,8 @@ pub(crate) fn build_screen_layout(
         horizontal: 1,
         vertical: 1,
     });
-    let header_height = main_inner.height.min(2);
+    let header_height =
+        u16::from(!mode.is_compact() && super::header::has_header_content(vm.command));
     let main_sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(header_height), Constraint::Min(0)])
@@ -102,4 +129,110 @@ pub(crate) fn build_screen_layout(
     footer::populate_layout(ui, footer_area, &mut snapshot.layout);
 
     ScreenLayout { areas, snapshot }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::input::{ActiveTab, Focus, UiState};
+    use crate::pipeline::ValidationState;
+    use crate::spec::{CommandPath, CommandSpec};
+
+    use super::{LayoutMode, build_screen_layout};
+    use crate::config::TuiConfig;
+    use crate::ui::screen::ScreenView;
+    use ratatui::layout::Rect;
+
+    fn ui_state() -> UiState {
+        UiState {
+            focus: Focus::Sidebar,
+            active_tab: ActiveTab::Inputs,
+            last_non_help_tab: ActiveTab::Inputs,
+            help_open: false,
+            help_scroll: 0,
+            selected_arg_index: 0,
+            search_query: String::new(),
+            editors: crate::editor_state::EditorState::default(),
+            dropdown_open: None,
+            dropdown_scroll: 0,
+            dropdown_cursor: 0,
+            sidebar_scroll: 0,
+            form_scroll: 0,
+            hover: None,
+            hover_tab: None,
+            mouse_select: None,
+        }
+    }
+
+    fn command(about: Option<&str>) -> CommandSpec {
+        CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: about.map(str::to_string),
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        }
+    }
+
+    fn view(command: &CommandSpec) -> ScreenView<'_> {
+        ScreenView {
+            command,
+            root: command,
+            selected_path: CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: Vec::new(),
+            preview_argv: vec!["tool".to_string()],
+            validation: ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        }
+    }
+
+    #[test]
+    fn layout_mode_switches_at_compact_thresholds() {
+        assert_eq!(
+            LayoutMode::for_size(Rect::new(0, 0, 80, 20)),
+            LayoutMode::Roomy
+        );
+        assert_eq!(
+            LayoutMode::for_size(Rect::new(0, 0, 79, 20)),
+            LayoutMode::Compact
+        );
+        assert_eq!(
+            LayoutMode::for_size(Rect::new(0, 0, 80, 19)),
+            LayoutMode::Compact
+        );
+    }
+
+    #[test]
+    fn compact_layout_collapses_header_and_preview_first() {
+        let command = command(Some("Run the selected tool"));
+        let layout = build_screen_layout(
+            &ui_state(),
+            &TuiConfig::default(),
+            Rect::new(0, 0, 70, 18),
+            &view(&command),
+        );
+
+        assert_eq!(layout.areas.header.height, 0);
+        assert_eq!(layout.areas.preview.height, 1);
+        assert_eq!(layout.areas.footer.height, 1);
+    }
+
+    #[test]
+    fn roomy_layout_keeps_header_when_description_is_available() {
+        let command = command(Some("Run the selected tool"));
+        let layout = build_screen_layout(
+            &ui_state(),
+            &TuiConfig::default(),
+            Rect::new(0, 0, 100, 24),
+            &view(&command),
+        );
+
+        assert_eq!(layout.areas.header.height, 1);
+        assert_eq!(layout.areas.preview.height, 3);
+        assert_eq!(layout.areas.footer.height, 1);
+    }
 }

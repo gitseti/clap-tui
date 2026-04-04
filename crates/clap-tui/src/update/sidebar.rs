@@ -11,11 +11,14 @@ pub(crate) fn apply(
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
     match action {
-        Action::MoveSidebarSelection(delta) => navigation::move_sidebar_selection(state, *delta),
-        Action::SidebarRight => navigation::sidebar_right(state),
-        Action::CollapseSelected => navigation::collapse_selected(state),
-        Action::SelectSidebar => navigation::select_sidebar(state),
+        Action::MoveSidebarSelection(delta) => {
+            navigation::move_sidebar_selection(state, frame_snapshot, *delta);
+        }
+        Action::SidebarRight => navigation::sidebar_right(state, frame_snapshot),
+        Action::CollapseSelected => navigation::collapse_selected(state, frame_snapshot),
+        Action::SelectSidebar => navigation::select_sidebar(state, frame_snapshot),
         Action::ClickSidebar { x, y } => apply_sidebar_click(*x, *y, state, frame_snapshot),
+        Action::ScrollSidebar(delta) => navigation::scroll_sidebar(state, frame_snapshot, *delta),
         _ => {}
     }
     Effect::None
@@ -53,12 +56,13 @@ fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &Fr
         );
         if let Some(item) = items.iter().find(|item| item.path == path) {
             if item.expanded {
-                navigation::collapse_selected(state);
+                navigation::collapse_selected(state, frame_snapshot);
             } else {
-                navigation::expand_selected(state);
+                navigation::expand_selected(state, frame_snapshot);
             }
         }
     }
+    navigation::ensure_selected_sidebar_visible(state, frame_snapshot);
     state.ui.focus_sidebar();
 }
 

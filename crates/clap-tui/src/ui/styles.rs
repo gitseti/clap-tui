@@ -136,6 +136,18 @@ pub(crate) fn subtle_chip(config: &TuiConfig, hovered: bool) -> Style {
     }
 }
 
+pub(crate) fn status_chip(config: &TuiConfig, hovered: bool) -> Style {
+    let style = Style::default()
+        .fg(config.theme.error)
+        .bg(config.theme.pill_bg)
+        .add_modifier(Modifier::BOLD);
+    if hovered {
+        style.fg(config.theme.panel_bg).bg(config.theme.error)
+    } else {
+        style
+    }
+}
+
 pub(crate) fn secondary_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
         .fg(config.theme.text)
@@ -152,16 +164,34 @@ pub(crate) fn secondary_chip(config: &TuiConfig, hovered: bool) -> Style {
 
 pub(crate) fn primary_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
-        .fg(config.theme.text)
-        .bg(config.theme.pill_bg);
+        .fg(config.theme.primary_action_fg)
+        .bg(config.theme.primary_action_bg)
+        .add_modifier(Modifier::BOLD);
     if hovered {
         style
-            .fg(config.theme.panel_bg)
-            .bg(config.theme.accent)
+            .fg(config.theme.primary_action_bg)
+            .bg(config.theme.primary_action_fg)
             .add_modifier(Modifier::BOLD)
     } else {
         style
     }
+}
+
+pub(crate) fn scrollbar_thumb(config: &TuiConfig, focused: bool) -> Style {
+    let color = if focused {
+        config.theme.panel_focus_border
+    } else {
+        config.theme.dim
+    };
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn scrollbar_cap(config: &TuiConfig, focused: bool) -> Style {
+    scrollbar_thumb(config, focused)
+}
+
+pub(crate) fn scrollbar_track(config: &TuiConfig) -> Style {
+    Style::default().fg(config.theme.dim)
 }
 
 #[cfg(test)]
@@ -170,7 +200,7 @@ mod tests {
 
     use crate::config::TuiConfig;
 
-    use super::panel_border;
+    use super::{panel_border, scrollbar_cap, scrollbar_thumb, scrollbar_track};
 
     #[test]
     fn panel_border_uses_focus_border_for_focused_panels() {
@@ -188,5 +218,28 @@ mod tests {
 
         assert_eq!(panel_border(&config, false).fg, Some(config.theme.border));
         assert_ne!(panel_border(&config, false).fg, Some(Color::Reset));
+    }
+
+    #[test]
+    fn focused_scrollbar_uses_focus_border_color() {
+        let config = TuiConfig::default();
+
+        assert_eq!(
+            scrollbar_thumb(&config, true).fg,
+            Some(config.theme.panel_focus_border)
+        );
+        assert_eq!(
+            scrollbar_cap(&config, true).fg,
+            Some(config.theme.panel_focus_border)
+        );
+    }
+
+    #[test]
+    fn unfocused_scrollbar_uses_dim_color() {
+        let config = TuiConfig::default();
+
+        assert_eq!(scrollbar_thumb(&config, false).fg, Some(config.theme.dim));
+        assert_eq!(scrollbar_cap(&config, false).fg, Some(config.theme.dim));
+        assert_eq!(scrollbar_track(&config).fg, Some(config.theme.dim));
     }
 }

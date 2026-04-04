@@ -8,17 +8,31 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use crate::config::TuiConfig;
 use crate::input::{HoverTarget, UiState};
 
-use super::screen::ScreenView;
 use super::styles;
+use super::{layout::LayoutMode, screen::ScreenView};
 
 struct PreviewWidget<'a> {
     config: &'a TuiConfig,
     argv: &'a [String],
     hovered: bool,
+    mode: LayoutMode,
 }
 
 impl Widget for PreviewWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.height <= 1 || self.mode.is_compact() {
+            let preview_bg = if self.hovered {
+                self.config.theme.surface_raised
+            } else {
+                self.config.theme.preview_bg
+            };
+            let compact =
+                Paragraph::new(compact_preview_line(self.config, self.argv, self.hovered))
+                    .style(Style::default().fg(self.config.theme.text).bg(preview_bg));
+            Widget::render(compact, area, buf);
+            return;
+        }
+
         let border_style = if self.hovered {
             Style::default()
                 .fg(self.config.theme.accent)
@@ -35,6 +49,7 @@ impl Widget for PreviewWidget<'_> {
             .style(Style::default().bg(preview_bg))
             .block(
                 Block::default()
+                    .title(preview_title(self.hovered))
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(border_style)
@@ -52,14 +67,25 @@ pub(crate) fn render_preview(
     vm: &ScreenView<'_>,
 ) {
     let hovered = ui.hover == Some(HoverTarget::Preview);
+    let mode = LayoutMode::for_size(frame.area());
     frame.render_widget(
         PreviewWidget {
             config,
             argv: &vm.preview_argv,
             hovered,
+            mode,
         },
         area,
     );
+}
+
+fn preview_title(hovered: bool) -> Line<'static> {
+    let hint = if hovered {
+        " Preview - Click or Ctrl+Y copies "
+    } else {
+        " Preview - Click/Ctrl+Y copy "
+    };
+    Line::from(hint.to_string())
 }
 
 fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: bool) -> Line<'a> {
@@ -96,11 +122,34 @@ fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: boo
     Line::from(spans)
 }
 
+fn compact_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: bool) -> Line<'a> {
+    let mut spans = vec![
+        Span::styled(
+            "[Preview]",
+            Style::default()
+                .fg(if hovered {
+                    config.theme.text
+                } else {
+                    config.theme.accent
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ];
+    spans.extend(command_preview_line(config, argv, hovered).spans);
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(
+        "Ctrl+Y copy",
+        Style::default().fg(config.theme.dim),
+    ));
+    Line::from(spans)
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::style::{Color, Modifier};
 
-    use super::command_preview_line;
+    use super::{command_preview_line, compact_preview_line};
     use crate::config::TuiConfig;
 
     #[test]
@@ -138,5 +187,22 @@ mod tests {
         assert!(line.spans[1].style.add_modifier.contains(Modifier::ITALIC));
         assert_eq!(line.spans[3].style.fg, Some(config.theme.accent));
         assert_eq!(line.spans[3].style.bg, None);
+    }
+
+    #[test]
+    fn compact_preview_line_advertises_keyboard_copy_path() {
+        let config = TuiConfig::default();
+        let argv = vec!["tool".to_string(), "serve".to_string()];
+
+        let line = compact_preview_line(&config, &argv, false);
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+
+        assert!(rendered.contains("Preview"));
+        assert!(rendered.contains("Ctrl+Y copy"));
+        assert!(rendered.contains("$ "));
     }
 }

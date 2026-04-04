@@ -2,7 +2,7 @@ use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, ArgValue, Focus, UiState};
 use crate::query::{
     form::{self, FieldWidget},
-    tree,
+    tree::{self, TreeRow},
 };
 use crate::spec::{CommandPath, SelectionError};
 
@@ -21,20 +21,15 @@ pub(crate) fn switch_tab(state: &mut AppState, tab: ActiveTab) {
     state.ui.reset_transient_form_ui();
 }
 
-pub(crate) fn cycle_tabs(state: &mut AppState) {
-    let tabs = UiState::visible_tabs();
-    let current = tabs
-        .iter()
-        .position(|tab| *tab == state.ui.active_tab)
-        .unwrap_or(0);
-    switch_tab(state, tabs[(current + 1) % tabs.len()]);
-}
-
 pub(crate) fn toggle_help_tab(state: &mut AppState) {
     state.ui.toggle_help();
 }
 
-pub(crate) fn move_sidebar_selection(state: &mut AppState, delta: isize) {
+pub(crate) fn move_sidebar_selection(
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+    delta: isize,
+) {
     let items = tree::tree_items(
         &state.domain.root,
         &state.domain.expanded,
@@ -74,6 +69,7 @@ pub(crate) fn move_sidebar_selection(state: &mut AppState, delta: isize) {
     if *state.domain.selected_path() != items[next_index].path {
         select_command(state, items[next_index].path.as_slice());
     }
+    ensure_selected_sidebar_visible(state, frame_snapshot);
 }
 
 pub(crate) fn move_form_selection(
@@ -98,7 +94,7 @@ pub(crate) fn move_form_selection(
     ensure_form_visible(state, frame_snapshot);
 }
 
-pub(crate) fn select_sidebar(state: &mut AppState) {
+pub(crate) fn select_sidebar(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
     let items = tree::tree_items(
         &state.domain.root,
         &state.domain.expanded,
@@ -111,9 +107,10 @@ pub(crate) fn select_sidebar(state: &mut AppState) {
     {
         toggle_expand(state, &item.path, item.expanded);
     }
+    ensure_selected_sidebar_visible(state, frame_snapshot);
 }
 
-pub(crate) fn collapse_selected(state: &mut AppState) {
+pub(crate) fn collapse_selected(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
     let items = tree::tree_items(
         &state.domain.root,
         &state.domain.expanded,
@@ -126,9 +123,10 @@ pub(crate) fn collapse_selected(state: &mut AppState) {
     {
         toggle_expand(state, &item.path, true);
     }
+    ensure_selected_sidebar_visible(state, frame_snapshot);
 }
 
-pub(crate) fn expand_selected(state: &mut AppState) {
+pub(crate) fn expand_selected(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
     let items = tree::tree_items(
         &state.domain.root,
         &state.domain.expanded,
@@ -141,9 +139,10 @@ pub(crate) fn expand_selected(state: &mut AppState) {
     {
         toggle_expand(state, &item.path, false);
     }
+    ensure_selected_sidebar_visible(state, frame_snapshot);
 }
 
-pub(crate) fn sidebar_right(state: &mut AppState) {
+pub(crate) fn sidebar_right(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
     if state.domain.selected_path().is_empty() {
         state.ui.focus_form();
         return;
@@ -164,6 +163,7 @@ pub(crate) fn sidebar_right(state: &mut AppState) {
 
     if item.has_children && !item.expanded {
         toggle_expand(state, &item.path, false);
+        ensure_selected_sidebar_visible(state, frame_snapshot);
     } else {
         state.ui.focus_form();
     }
@@ -347,6 +347,24 @@ pub(crate) fn scroll_enum(state: &mut AppState, frame_snapshot: &FrameSnapshot, 
     state.ui.adjust_dropdown_scroll(delta, total, visible);
 }
 
+pub(crate) fn scroll_sidebar(state: &mut AppState, frame_snapshot: &FrameSnapshot, delta: i16) {
+    let rows = tree::tree_rows(
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
+    );
+    let Some(visible_rows) = frame_snapshot.sidebar_visible_rows() else {
+        return;
+    };
+    if visible_rows == 0 {
+        return;
+    }
+    let selected_row = selected_sidebar_row(&rows, state.domain.selected_path());
+    state
+        .ui
+        .adjust_sidebar_scroll(delta, rows.len(), visible_rows, selected_row);
+}
+
 pub(crate) fn ensure_enum_visible(
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
@@ -372,6 +390,64 @@ pub(crate) fn ensure_enum_visible(
         .set_dropdown_scroll(state.ui.dropdown_scroll.min(max_scroll));
 }
 
+pub(crate) fn clamp_sidebar_selection_to_search(
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) {
+    let items = tree::tree_items(
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
+    );
+    if items.is_empty() {
+        if !state.domain.selected_path().is_empty() {
+            select_root(state);
+        }
+        state.ui.set_sidebar_scroll(0);
+        return;
+    }
+
+    if !items
+        .iter()
+        .any(|item| item.path == *state.domain.selected_path())
+    {
+        select_command(state, items[0].path.as_slice());
+    }
+
+    ensure_selected_sidebar_visible(state, frame_snapshot);
+}
+
+pub(crate) fn ensure_selected_sidebar_visible(
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+) {
+    let rows = tree::tree_rows(
+        &state.domain.root,
+        &state.domain.expanded,
+        &state.ui.search_query,
+    );
+    let Some(visible_rows) = frame_snapshot.sidebar_visible_rows() else {
+        return;
+    };
+    let Some(selected_row) = selected_sidebar_row(&rows, state.domain.selected_path()) else {
+        state.ui.set_sidebar_scroll(0);
+        return;
+    };
+    if visible_rows == 0 {
+        state.ui.set_sidebar_scroll(0);
+        return;
+    }
+
+    let max_scroll = rows.len().saturating_sub(visible_rows.min(rows.len()));
+    let mut scroll = state.ui.sidebar_scroll(rows.len(), visible_rows);
+    if selected_row < scroll {
+        scroll = selected_row;
+    } else if selected_row >= scroll.saturating_add(visible_rows) {
+        scroll = selected_row.saturating_add(1).saturating_sub(visible_rows);
+    }
+    state.ui.set_sidebar_scroll(scroll.min(max_scroll));
+}
+
 pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
     match state.select_command_by_search_path(start) {
         Ok(()) => {
@@ -391,6 +467,13 @@ pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
 
 pub(crate) fn select_root(state: &mut AppState) {
     select_command(state, &[]);
+}
+
+fn selected_sidebar_row(rows: &[TreeRow], selected_path: &CommandPath) -> Option<usize> {
+    rows.iter().position(|row| match row {
+        TreeRow::Item(item) => item.path == *selected_path,
+        TreeRow::Heading { .. } => false,
+    })
 }
 
 fn select_command(state: &mut AppState, path: &[String]) {
@@ -420,10 +503,17 @@ mod tests {
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
 
     use super::{
-        activate_form_field, apply_start_command, collapse_selected, ensure_enum_visible,
-        expand_selected, handle_escape, move_form_selection, move_sidebar_selection,
-        open_enum_dropdown, sidebar_right,
+        activate_form_field, apply_start_command, clamp_sidebar_selection_to_search,
+        collapse_selected, ensure_enum_visible, expand_selected, handle_escape,
+        move_form_selection, move_sidebar_selection, open_enum_dropdown, scroll_sidebar,
+        sidebar_right,
     };
+
+    fn sidebar_snapshot() -> FrameSnapshot {
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.sidebar_list = Some(Rect::new(0, 0, 20, 3));
+        snapshot
+    }
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
         ArgSpec {
@@ -501,7 +591,7 @@ mod tests {
         );
         let mut state = AppState::new(root);
 
-        move_sidebar_selection(&mut state, 1);
+        move_sidebar_selection(&mut state, &sidebar_snapshot(), 1);
 
         assert_eq!(state.domain.current_command().name, "build");
         assert!(
@@ -522,8 +612,9 @@ mod tests {
         );
         let mut state = AppState::new(root);
 
-        move_sidebar_selection(&mut state, 1);
-        move_sidebar_selection(&mut state, -1);
+        let snapshot = sidebar_snapshot();
+        move_sidebar_selection(&mut state, &snapshot, 1);
+        move_sidebar_selection(&mut state, &snapshot, -1);
 
         assert!(state.domain.selected_path().is_empty());
         assert_eq!(state.domain.current_command().name, "tool");
@@ -546,7 +637,7 @@ mod tests {
             .expect("valid path");
         state.ui.search_query = "de".to_string();
 
-        move_sidebar_selection(&mut state, 1);
+        move_sidebar_selection(&mut state, &sidebar_snapshot(), 1);
 
         assert_eq!(state.domain.current_command().name, "deploy");
         assert_eq!(
@@ -572,7 +663,7 @@ mod tests {
             .expect("valid path");
         state.ui.search_query = "de".to_string();
 
-        move_sidebar_selection(&mut state, -1);
+        move_sidebar_selection(&mut state, &sidebar_snapshot(), -1);
 
         assert_eq!(state.domain.current_command().name, "debug");
         assert_eq!(
@@ -614,10 +705,11 @@ mod tests {
             .expect("valid path");
         state.domain.expanded.remove("tool::build");
 
-        expand_selected(&mut state);
+        let snapshot = sidebar_snapshot();
+        expand_selected(&mut state, &snapshot);
         assert!(state.domain.expanded.contains("tool::build"));
 
-        collapse_selected(&mut state);
+        collapse_selected(&mut state, &snapshot);
         assert!(!state.domain.expanded.contains("tool::build"));
     }
 
@@ -638,7 +730,7 @@ mod tests {
             .expect("valid path");
         state.ui.focus = Focus::Sidebar;
 
-        sidebar_right(&mut state);
+        sidebar_right(&mut state, &sidebar_snapshot());
 
         assert!(state.domain.expanded.contains("tool::build"));
         assert!(matches!(state.ui.focus, Focus::Sidebar));
@@ -666,7 +758,7 @@ mod tests {
         state.domain.expanded.insert("tool::build".to_string());
         state.ui.focus = Focus::Sidebar;
 
-        sidebar_right(&mut state);
+        sidebar_right(&mut state, &sidebar_snapshot());
 
         assert!(matches!(state.ui.focus, Focus::Form));
         assert!(state.domain.expanded.contains("tool::build"));
@@ -682,7 +774,7 @@ mod tests {
         let mut state = AppState::new(root);
         state.ui.focus = Focus::Sidebar;
 
-        sidebar_right(&mut state);
+        sidebar_right(&mut state, &sidebar_snapshot());
         assert!(matches!(state.ui.focus, Focus::Form));
 
         state.ui.focus = Focus::Sidebar;
@@ -690,7 +782,7 @@ mod tests {
             .select_command_path(&["build".to_string()])
             .expect("valid path");
 
-        sidebar_right(&mut state);
+        sidebar_right(&mut state, &sidebar_snapshot());
         assert!(matches!(state.ui.focus, Focus::Form));
     }
 
@@ -707,13 +799,86 @@ mod tests {
         );
         let mut state = AppState::new(root);
 
-        move_sidebar_selection(&mut state, 1);
+        move_sidebar_selection(&mut state, &sidebar_snapshot(), 1);
 
         assert_eq!(
             state.domain.selected_path().as_slice(),
             &["build".to_string()]
         );
         assert!(!state.domain.expanded.contains("tool::build"));
+    }
+
+    #[test]
+    fn moving_sidebar_selection_scrolls_window_to_keep_selected_row_visible() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![
+                command("one", Vec::new(), Vec::new()),
+                command("two", Vec::new(), Vec::new()),
+                command("three", Vec::new(), Vec::new()),
+                command("four", Vec::new(), Vec::new()),
+                command("five", Vec::new(), Vec::new()),
+            ],
+        );
+        let mut state = AppState::new(root);
+        let snapshot = sidebar_snapshot();
+
+        for _ in 0..4 {
+            move_sidebar_selection(&mut state, &snapshot, 1);
+        }
+
+        assert_eq!(state.domain.current_command().name, "four");
+        assert!(state.ui.sidebar_scroll > 0);
+    }
+
+    #[test]
+    fn search_clamp_reselects_first_visible_match_and_resets_sidebar_window() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![
+                command("build", Vec::new(), Vec::new()),
+                command("deploy", Vec::new(), Vec::new()),
+                command("debug", Vec::new(), Vec::new()),
+            ],
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid path");
+        state.ui.search_query = "de".to_string();
+        state.ui.sidebar_scroll = 3;
+
+        clamp_sidebar_selection_to_search(&mut state, &sidebar_snapshot());
+
+        assert_eq!(state.domain.current_command().name, "deploy");
+        assert_eq!(state.ui.sidebar_scroll, 0);
+    }
+
+    #[test]
+    fn sidebar_wheel_scroll_keeps_selected_row_visible() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![
+                command("one", Vec::new(), Vec::new()),
+                command("two", Vec::new(), Vec::new()),
+                command("three", Vec::new(), Vec::new()),
+                command("four", Vec::new(), Vec::new()),
+                command("five", Vec::new(), Vec::new()),
+            ],
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["three".to_string()])
+            .expect("valid path");
+        let snapshot = sidebar_snapshot();
+
+        scroll_sidebar(&mut state, &snapshot, 3);
+
+        assert!(state.ui.sidebar_scroll <= 2);
+        assert!(state.ui.sidebar_scroll >= 1);
     }
 
     #[test]

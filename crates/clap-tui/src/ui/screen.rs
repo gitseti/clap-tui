@@ -1,19 +1,17 @@
-use ratatui::Frame;
-use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders};
-use std::collections::HashSet;
-
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
-use crate::input::{ActiveTab, AppState, CommandFormState, Focus, UiState};
+use crate::input::{AppState, CommandFormState, Focus, UiState};
 use crate::pipeline::{self, EffectiveArgValue, ValidationState};
 use crate::query::{
     form,
     tree::{self, TreeRow},
 };
-use crate::spec::CommandSpec;
+use crate::spec::{CommandPath, CommandSpec};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders};
 
 use super::{dropdown, footer, form as form_ui, header, layout, preview, sidebar, styles, toast};
 
@@ -21,7 +19,9 @@ use super::{dropdown, footer, form as form_ui, header, layout, preview, sidebar,
 pub(crate) struct ScreenView<'a> {
     pub(crate) command: &'a CommandSpec,
     pub(crate) root: &'a CommandSpec,
+    pub(crate) selected_path: CommandPath,
     pub(crate) tree_rows: Vec<TreeRow>,
+    pub(crate) sidebar_scroll: usize,
     pub(crate) active_args: Vec<form::OrderedArg<'a>>,
     pub(crate) preview_argv: Vec<String>,
     pub(crate) validation: ValidationState,
@@ -30,24 +30,21 @@ pub(crate) struct ScreenView<'a> {
 }
 
 impl<'a> ScreenView<'a> {
-    pub(crate) fn build(
-        command: &'a CommandSpec,
-        root: &'a CommandSpec,
-        expanded: &HashSet<String>,
-        search_query: &str,
-        active_tab: ActiveTab,
-        inputs: Option<CommandFormState>,
-        derived: pipeline::DerivedState,
-    ) -> Self {
+    pub(crate) fn from_state(state: &'a AppState, derived: pipeline::DerivedState) -> Self {
+        let command = state.domain.current_command();
+        let root = &state.domain.root;
+        let tree_rows = tree::tree_rows(root, &state.domain.expanded, &state.ui.search_query);
         Self {
             command,
             root,
-            tree_rows: tree::tree_rows(root, expanded, search_query),
-            active_args: form::visible_args(command, active_tab),
+            selected_path: state.domain.selected_path().clone(),
+            sidebar_scroll: 0,
+            tree_rows,
+            active_args: form::visible_args(command, state.ui.active_tab),
             preview_argv: derived.argv,
             validation: derived.validation,
             effective_values: derived.effective_values,
-            inputs,
+            inputs: state.domain.current_form(),
         }
     }
 }
@@ -66,16 +63,8 @@ pub(crate) fn render(
         .style(styles::panel(config));
     frame.render_widget(background, size);
     let derived = state.derived().clone();
-    let selected_path = state.domain.selected_path().clone();
-    let vm = ScreenView::build(
-        state.domain.current_command(),
-        &state.domain.root,
-        &state.domain.expanded,
-        &state.ui.search_query,
-        state.ui.active_tab,
-        state.domain.current_form(),
-        derived,
-    );
+    let mut vm = ScreenView::from_state(state, derived);
+    vm.sidebar_scroll = state.ui.sidebar_scroll;
     let screen_layout = layout::build_screen_layout(&state.ui, config, size, &vm);
     let frame_snapshot = screen_layout.snapshot.clone();
     render_main(
@@ -90,7 +79,7 @@ pub(crate) fn render(
     sidebar::render_sidebar(
         frame,
         &state.ui,
-        &selected_path,
+        &vm.selected_path,
         config,
         screen_layout.areas.sidebar,
         &vm,
@@ -133,23 +122,41 @@ fn render_main(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(styles::panel_border(config, workspace_focused))
-        .title(workspace_title(config, vm.command))
+        .title(workspace_title(config, vm))
         .style(styles::panel(config));
     frame.render_widget(workspace, area);
-    if header_area.height == 0 || header_area.width == 0 {
-        return;
+    if header_area.height > 0 && header_area.width > 0 {
+        header::render_header(frame, config, header_area, vm);
     }
-
-    header::render_header(frame, config, header_area, vm);
     form_ui::render_form(frame, ui, config, vm, frame_snapshot);
 }
 
-fn workspace_title(config: &TuiConfig, command: &CommandSpec) -> Line<'static> {
-    Line::from(vec![
-        Span::raw(" "),
-        Span::styled(command.name.clone(), Style::default().fg(config.theme.text)),
-        Span::raw(" "),
-    ])
+fn workspace_title(config: &TuiConfig, vm: &ScreenView<'_>) -> Line<'static> {
+    let mut spans = vec![Span::raw(" ")];
+    spans.push(Span::styled(
+        vm.root.name.clone(),
+        Style::default().fg(if vm.selected_path.is_empty() {
+            config.theme.text
+        } else {
+            config.theme.dim
+        }),
+    ));
+    for (index, segment) in vm.selected_path.as_slice().iter().enumerate() {
+        spans.push(Span::styled(" > ", Style::default().fg(config.theme.dim)));
+        let selected = index + 1 == vm.selected_path.as_slice().len();
+        spans.push(Span::styled(
+            segment.clone(),
+            if selected {
+                Style::default()
+                    .fg(config.theme.text)
+                    .add_modifier(ratatui::style::Modifier::BOLD)
+            } else {
+                Style::default().fg(config.theme.dim)
+            },
+        ));
+    }
+    spans.push(Span::raw(" "));
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -159,15 +166,27 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::layout::{Position, Rect};
 
-    use super::render;
+    use super::{ScreenView, render, workspace_title};
     use crate::TuiConfig;
+    use crate::controller;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::AppState;
     use crate::pipeline;
-    use crate::runtime::{AppKeyCode, AppKeyEvent, AppKeyModifiers};
+    use crate::runtime::{
+        AppKeyCode, AppKeyEvent, AppKeyModifiers, AppMouseButton, AppMouseEvent, AppMouseEventKind,
+    };
+    use crate::update::{Effect, apply_action};
 
     fn render_app(state: &mut AppState) -> (TestBackend, FrameSnapshot) {
-        let mut terminal = Terminal::new(TestBackend::new(100, 24)).expect("terminal");
+        render_app_with_size(state, 100, 24)
+    }
+
+    fn render_app_with_size(
+        state: &mut AppState,
+        width: u16,
+        height: u16,
+    ) -> (TestBackend, FrameSnapshot) {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
         let mut snapshot = None;
         terminal
             .draw(|frame| {
@@ -211,6 +230,15 @@ mod tests {
 
     fn key(code: AppKeyCode) -> AppKeyEvent {
         AppKeyEvent::new(code, AppKeyModifiers::default())
+    }
+
+    fn click(column: u16, row: u16) -> AppMouseEvent {
+        AppMouseEvent {
+            kind: AppMouseEventKind::Down(AppMouseButton::Left),
+            column,
+            row,
+            modifiers: AppKeyModifiers::default(),
+        }
     }
 
     #[test]
@@ -499,6 +527,15 @@ mod tests {
         );
         state.ui.focus_form();
         state.ui.selected_arg_index = 1;
+        let (before_backend, before_snapshot) = render_app(&mut state);
+        let program_input_before = before_snapshot
+            .layout
+            .form_fields
+            .iter()
+            .find(|field| field.arg_id == "program")
+            .expect("program field")
+            .input;
+        let program_text_before = rect_text(&before_backend, program_input_before);
 
         let argv_arg = state
             .domain
@@ -511,7 +548,7 @@ mod tests {
         crate::form_editor::apply_key_to_text_field(
             &mut state,
             &argv_arg,
-            key(AppKeyCode::Char('a')),
+            key(AppKeyCode::Char('z')),
         );
 
         let (backend, snapshot) = render_app(&mut state);
@@ -533,7 +570,95 @@ mod tests {
         let program_text = rect_text(&backend, program_input);
         let argv_text = rect_text(&backend, argv_input);
 
-        assert!(!program_text.contains('a'));
-        assert!(argv_text.contains('a'));
+        assert_eq!(program_text, program_text_before);
+        assert!(argv_text.contains('z'));
+    }
+
+    #[test]
+    fn scrolled_sidebar_snapshot_uses_windowed_rows_for_hit_testing() {
+        let mut subcommands = Vec::new();
+        for index in 0..18 {
+            subcommands.push(crate::spec::CommandSpec {
+                name: format!("cmd-{index}"),
+                version: None,
+                about: None,
+                help: String::new(),
+                args: Vec::new(),
+                subcommands: Vec::new(),
+                ..crate::spec::CommandSpec::default()
+            });
+        }
+        let mut state = AppState::new(crate::spec::CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands,
+            ..crate::spec::CommandSpec::default()
+        });
+        state.ui.sidebar_scroll = 6;
+
+        let (_, snapshot) = render_app_with_size(&mut state, 80, 16);
+        let first_row = snapshot
+            .layout
+            .sidebar_items
+            .first()
+            .expect("visible sidebar row")
+            .clone();
+
+        assert_eq!(first_row.path.as_slice(), &["cmd-6".to_string()]);
+
+        let action = controller::handle_mouse_event(
+            click(first_row.row.x, first_row.row.y),
+            &state,
+            &snapshot,
+            &TuiConfig::default(),
+        )
+        .expect("sidebar click action");
+        let effect = apply_action(&action, &mut state, &snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["cmd-6".to_string()]
+        );
+    }
+
+    #[test]
+    fn workspace_title_shows_nested_command_path_context() {
+        let root = crate::spec::CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+            ..crate::spec::CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &root,
+            root: &root,
+            selected_path: crate::spec::CommandPath::from(vec![
+                "build".to_string(),
+                "release".to_string(),
+            ]),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: Vec::new(),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+
+        let title = workspace_title(&TuiConfig::default(), &vm);
+        let rendered = title
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+
+        assert_eq!(rendered, " tool > build > release ");
     }
 }

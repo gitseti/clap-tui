@@ -20,8 +20,8 @@ pub(crate) enum Action {
     FormTextInput(AppKeyEvent),
     FormWidgetInput(AppKeyEvent),
     ToggleFocus,
+    ReverseFocus,
     ToggleHelp,
-    CycleTabs,
     FocusSearch,
     MoveSidebarSelection(isize),
     MoveFormSelection(isize),
@@ -38,6 +38,7 @@ pub(crate) enum Action {
     ClickSidebar { x: u16, y: u16 },
     SwitchTab(ActiveTab),
     ClickForm(AppMouseEvent),
+    ScrollSidebar(i16),
     ScrollDropdown(i16),
     ScrollForm(i16),
 }
@@ -61,17 +62,18 @@ pub(crate) fn apply_action(
         | Action::SearchInput(_)
         | Action::Paste(_)
         | Action::ToggleFocus
+        | Action::ReverseFocus
         | Action::ToggleHelp
-        | Action::CycleTabs
         | Action::FocusSearch
         | Action::CloseDropdown
         | Action::ClickFooter(_)
-        | Action::SwitchTab(_) => global::apply(action, state),
+        | Action::SwitchTab(_) => global::apply(action, state, frame_snapshot),
         Action::MoveSidebarSelection(_)
         | Action::SidebarRight
         | Action::CollapseSelected
         | Action::SelectSidebar
-        | Action::ClickSidebar { .. } => sidebar::apply(action, state, frame_snapshot),
+        | Action::ClickSidebar { .. }
+        | Action::ScrollSidebar(_) => sidebar::apply(action, state, frame_snapshot),
         Action::ChoiceInput { .. }
         | Action::FormTextInput(_)
         | Action::FormWidgetInput(_)
