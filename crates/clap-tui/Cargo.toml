@@ -12,6 +12,9 @@ documentation = "https://docs.rs/clap-tui"
 keywords = ["clap", "tui", "terminal", "cli", "ratatui"]
 categories = ["command-line-interface", "development-tools"]
 
+[package.metadata.release]
+tag-name = "v{{version}}"
+
 [features]
 default = ["mouse"]
 mouse = []
@@ -22,7 +25,7 @@ clap.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 thiserror.workspace = true
-clap-tui-macros = { path = "../clap-tui-macros", version = "0.1.0" }
+clap-tui-macros = { path = "../clap-tui-macros", version = "=0.1.0" }
 tracing = { version = "0.1", optional = true }
 tui-textarea = "0.4"
 arboard = "3.6.1"

@@ -19,7 +19,7 @@ Pass --publish-dry-run to additionally run:
   - cargo publish -p clap-tui --locked --dry-run
 
 The publish dry-run only works after the referenced clap-tui-macros version has
-already been published to crates.io.
+already been published to crates.io as an independent release prerequisite.
 CI intentionally runs the clean-tree default.
 EOF
 }

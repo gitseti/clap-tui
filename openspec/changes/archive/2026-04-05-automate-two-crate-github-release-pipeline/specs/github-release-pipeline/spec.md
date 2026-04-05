@@ -1,15 +1,4 @@
-## ADDED Requirements
-
-### Requirement: Pull requests are gated by Rust verification
-The repository SHALL run a GitHub Actions verification workflow for pushes and pull requests with a stable required job named `verify` that checks formatting, linting, tests, and package-surface verification for the crates intended to be published from this repository. Maintainer documentation SHALL state that the `verify` job must be configured as a required status check in GitHub branch protection for the default branch.
-
-#### Scenario: Pull request triggers verification
-- **WHEN** a contributor opens or updates a pull request
-- **THEN** GitHub Actions runs the `verify` job and reports pass or fail status before the change is considered release-ready
-
-#### Scenario: Maintainers configure merge enforcement
-- **WHEN** maintainers follow the repository setup instructions
-- **THEN** they are told to mark the `verify` job as a required status check in GitHub branch protection
+## MODIFIED Requirements
 
 ### Requirement: Proc-macro releases use a dedicated GitHub workflow
 The repository SHALL provide a GitHub-based release workflow at
@@ -49,7 +38,8 @@ tagged revision.
 
 #### Scenario: Tagged release starts publish flow
 - **WHEN** maintainers push a `vX.Y.Z` tag for a reviewed commit
-- **THEN** GitHub runs the publish workflow against that exact revision instead of publishing from an unreviewed working state
+- **THEN** GitHub runs the publish workflow against that exact revision instead of publishing from
+  an unreviewed working state
 
 #### Scenario: Maintainers prepare a release tag
 - **WHEN** maintainers follow the documented release process for `clap-tui`
@@ -57,7 +47,8 @@ tagged revision.
   check has already passed
 
 #### Scenario: Tag version does not match Cargo version
-- **WHEN** the pushed `vX.Y.Z` tag does not match the crate version declared in `crates/clap-tui/Cargo.toml`
+- **WHEN** the pushed `vX.Y.Z` tag does not match the crate version declared in
+  `crates/clap-tui/Cargo.toml`
 - **THEN** the publish workflow fails before attempting crates.io authentication or publication
 
 #### Scenario: Publishing is disabled
@@ -76,10 +67,3 @@ tagged revision.
   available on crates.io
 - **THEN** the workflow fails with guidance to publish `clap-tui-macros` independently before
   retrying the `clap-tui` tag workflow
-
-### Requirement: Publishing credentials minimize long-lived secrets
-The release workflow SHALL use GitHub OIDC trusted publishing for crates.io authentication by default via `rust-lang/crates-io-auth-action@v1` and SHALL document `CRATES_IO_TOKEN` as the explicit fallback when trusted publishing cannot yet be configured.
-
-#### Scenario: Repository authentication is configured
-- **WHEN** maintainers enable the repository for automated publishing
-- **THEN** the workflow uses the documented OIDC path by default and only falls back to `CRATES_IO_TOKEN` if the preferred integration cannot be used

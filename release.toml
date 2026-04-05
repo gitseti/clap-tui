@@ -1,0 +1,6 @@
+allow-branch = ["main"]
+dependent-version = "fix"
+disable-publish = true
+no-dev-version = true
+pre-release-commit-message = "release {{crate_name}} {{version}}"
+tag-message = "{{crate_name}} {{version}}"

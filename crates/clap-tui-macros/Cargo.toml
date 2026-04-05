@@ -12,6 +12,9 @@ documentation = "https://docs.rs/clap-tui-macros"
 keywords = ["clap", "tui", "proc-macro", "attribute", "terminal"]
 categories = ["command-line-interface", "development-tools"]
 
+[package.metadata.release]
+tag-name = "clap-tui-macros-v{{version}}"
+
 [lib]
 proc-macro = true
 
