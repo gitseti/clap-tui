@@ -1,6 +1,9 @@
 use ratatui::style::Color;
 
-/// UI theming options.
+/// UI colors used across the TUI.
+///
+/// Most applications can start from [`Theme::from_preset`] and override only the fields they
+/// want to change.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Theme {
@@ -205,7 +208,9 @@ impl Default for LayoutConfig {
     }
 }
 
-/// Top-level configuration.
+/// Top-level configuration for [`crate::TuiLauncher`], [`crate::TypedTuiApp`], and [`crate::TuiApp`].
+///
+/// Most applications only need to customize the theme or `start_command`.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct TuiConfig {

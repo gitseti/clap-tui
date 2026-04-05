@@ -3,19 +3,22 @@
 #![deny(rust_2018_idioms)]
 #![warn(rust_2024_compatibility)]
 
-//! Auto-generate a TUI from a `clap` command definition.
+//! `clap-tui` turns a `clap` CLI into an interactive terminal UI while preserving the original
+//! command-line interface.
 //!
-//! `clap-tui` gives a `clap` command an interactive terminal form without replacing the
-//! ordinary CLI path. Applications can keep `clap` as the source of truth, collect input in
-//! the TUI, and then hand the selected argv back to `clap` for typed parsing.
+//! You can keep `clap` as the source of truth, collect input in the TUI, and then hand the
+//! selected argv back to `clap` for typed parsing.
+//!
+//! This crate was heavily inspired by [Trogon](https://github.com/Textualize/trogon).
+//! `clap-tui` is a community crate and is not an official `clap` project.
 //!
 //! # Quick Start
 //!
-//! Prefer [`ParserLauncher`] for derive-based CLIs:
+//! Use [`TuiLauncher`] for most derive-based CLIs:
 //!
 //! ```no_run
 //! use clap::Parser;
-//! use clap_tui::ParserLauncher;
+//! use clap_tui::TuiLauncher;
 //!
 //! #[derive(Debug, Parser)]
 //! #[command(name = "tool")]
@@ -25,7 +28,7 @@
 //! }
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-//!     ParserLauncher::<Cli>::new().run(|cli| {
+//!     TuiLauncher::<Cli>::new().run(|cli| {
 //!         println!("Hello, {}!", cli.name);
 //!         Ok::<_, clap_tui::TuiError>(())
 //!     })?;
@@ -33,22 +36,41 @@
 //! }
 //! ```
 //!
-//! That typed launcher adds a synthetic root `tui` subcommand, so users can launch the form
+//! `TuiLauncher` adds a synthetic root `tui` subcommand, so users can launch the form
 //! with `tool tui` while ordinary invocations still parse through `Cli`.
-//! Call [`ParserLauncher::with_launcher_name`] to override that default subcommand name.
+//! Call [`TuiLauncher::with_launcher_name`] to override that default subcommand name.
 //!
-//! # Supported Public Surface
+//! # Choosing An Entry Point
 //!
-//! The stable public surface is intentionally small:
-//! - [`ParserLauncher`] is the canonical typed launcher for derive-based CLIs.
-//! - [`TuiApp`] is the primary untyped entry point for hand-built [`clap::Command`] values.
-//! - [`ParserTuiApp`] is the schema-bound typed wrapper for direct TUI execution.
-//! - [`TuiConfig`], [`Theme`], and related config types customize theme, layout, and startup.
-//! - [`Runtime`] plus the exported runtime event types support advanced integration.
-//! - [`ParserLauncher::with_launcher_name`] customizes the synthetic root subcommand name.
+//! You probably want [`TuiLauncher`].
 //!
-//! Internal reducers, query helpers, frame snapshots, and clap-projection models are
-//! implementation details and are not stable extension points.
+//! - Use [`TuiLauncher`] if your app already uses `#[derive(clap::Parser)]` and you want to add
+//!   a `tool tui` entry point while keeping the normal CLI behavior.
+//! - Use [`crate::main`] if you want the same launcher behavior with less boilerplate.
+//! - Use [`TypedTuiApp`] only when you want to launch the TUI directly, without the synthetic
+//!   launcher subcommand.
+//! - Use [`TuiApp`] when you are working directly with a hand-built [`clap::Command`].
+//!
+//! # Direct Typed TUI
+//!
+//! ```no_run
+//! use clap::Parser;
+//! use clap_tui::TuiApp;
+//!
+//! #[derive(Debug, Parser)]
+//! #[command(name = "tool")]
+//! struct Cli {
+//!     #[arg(long)]
+//!     name: String,
+//! }
+//!
+//! fn main() -> Result<(), clap_tui::TuiError> {
+//!     TuiApp::from_parser::<Cli>().run_with_parser(|cli| {
+//!         println!("Hello, {}!", cli.name);
+//!         Ok::<_, std::io::Error>(())
+//!     })
+//! }
+//! ```
 //!
 //! # Feature Flags And Runtime Expectations
 //!
@@ -57,11 +79,17 @@
 //! - The default [`CrosstermRuntime`] expects an interactive terminal with raw mode and an
 //!   alternate screen.
 //!
+//! # Customization
+//!
+//! - [`TuiConfig`] controls theme, layout, key bindings, and initial command selection.
+//! - [`Theme`] and [`ThemePreset`] help you start from a built-in look and adjust from there.
+//! - [`Runtime`] plus the exported runtime event types support advanced integration.
+//!
 //! # Examples
 //!
 //! The crate ships with three public examples:
 //! - `simple` for the smallest derive-based setup
-//! - `subcommands` for typed launch with nested command trees
+//! - `subcommands` for `TuiLauncher` with nested command trees
 //! - `kitchen_sink` for the untyped [`TuiApp`] surface and broader `clap` coverage
 
 mod app;
@@ -81,16 +109,16 @@ mod spec;
 mod ui;
 mod update;
 
-/// Primary TUI application entry point.
-pub use app::{ParserTuiApp, TuiApp};
+/// TUI application entry points.
+pub use app::{TuiApp, TypedTuiApp};
 /// Convenience macro for the canonical typed launcher.
 pub use clap_tui_macros::main;
 /// Public configuration and theming types.
 pub use config::{Keymap, LayoutConfig, Theme, ThemePreset, TuiConfig};
 /// Error type returned by public `clap-tui` operations.
 pub use error::TuiError;
-/// Canonical typed launcher for derive-based CLIs.
-pub use launcher::ParserLauncher;
+/// Recommended typed launcher for derive-based CLIs.
+pub use launcher::TuiLauncher;
 /// Runtime customization surface for advanced integrations.
 pub use runtime::{
     AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, AppMouseButton, AppMouseEvent,

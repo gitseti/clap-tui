@@ -1,6 +1,8 @@
 # clap-tui
 
-`clap-tui` turns a `clap` command definition into an interactive terminal UI without replacing your existing CLI flow. You can keep `clap` as the source of truth, collect input in a terminal form, and still hand the final argv back to `clap` for typed parsing.
+`clap-tui` turns a `clap` CLI into an interactive terminal UI while preserving the original command-line interface. You can keep `clap` as the source of truth, collect input in a terminal form, and still hand the final argv back to `clap` for typed parsing.
+
+This crate was heavily inspired by [Trogon](https://github.com/Textualize/trogon). `clap-tui` is a community crate and is not an official `clap` project.
 
 ## Add `clap-tui` to your project
 
@@ -16,7 +18,7 @@ Minimum supported Rust version: `1.85`.
 
 ```rust
 use clap::Parser;
-use clap_tui::{ParserLauncher, Theme, ThemePreset, TuiConfig};
+use clap_tui::TuiLauncher;
 
 #[derive(Debug, Parser)]
 #[command(name = "tool")]
@@ -26,32 +28,50 @@ struct Cli {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut config = TuiConfig::default();
-    config.theme = Theme::from_preset(ThemePreset::HighContrastDark);
-
-    ParserLauncher::<Cli>::new()
-        .with_config(config)
-        .run(|cli| {
-            println!("Hello, {}!", cli.name);
-            Ok::<_, clap_tui::TuiError>(())
-        })?;
+    TuiLauncher::<Cli>::new().run(|cli| {
+        println!("Hello, {}!", cli.name);
+        Ok::<_, clap_tui::TuiError>(())
+    })?;
 
     Ok(())
 }
 ```
 
-`ParserLauncher` is the canonical typed entrypoint for derive-based CLIs. It augments the root command with a synthetic `tui` subcommand, so users can launch the form with `tool tui` while ordinary invocations still parse through `Cli`.
+`TuiLauncher` is the recommended entry point for derive-based CLIs. It augments the root command with a synthetic `tui` subcommand, so users can launch the form with `tool tui` while ordinary invocations still parse through `Cli`.
 
 If you want a different launch path, call `.with_launcher_name("form")` or use
 `#[clap_tui::main(launcher = "form")]`.
 
 ## Choose an entrypoint
 
-- `ParserLauncher::<Cli>::run(...)` is the canonical typed launcher for derive-based CLIs.
-- `#[clap_tui::main]` is convenience syntax over `ParserLauncher` with the same runtime behavior.
-- `ParserLauncher::<Cli>::with_launcher_name(...)` overrides the default synthetic subcommand name.
-- `TuiApp::from_command(...)` is the untyped entrypoint for hand-built `clap::Command` values.
-- `TuiApp::from_factory::<Cli>().run_with_parser(...)` runs the TUI directly and reparses the selected argv into the bound parser type.
+You probably want `TuiLauncher`.
+
+- Use `TuiLauncher::<Cli>::run(...)` if your app already uses `#[derive(Parser)]` and you want to add a `tool tui` entrypoint while keeping the normal CLI behavior. This is the default choice.
+- Use `#[clap_tui::main]` if you want the same `TuiLauncher` behavior with less boilerplate.
+- Use `TuiApp::from_parser::<Cli>().run_with_parser(...)` only if you want to open the TUI directly, without adding a synthetic `tui` subcommand to your CLI.
+- Use `TuiApp::from_command(...)` if you are building a `clap::Command` by hand and want the untyped API.
+- Use `TuiLauncher::<Cli>::with_launcher_name(...)` only when you want a launch path other than `tool tui`.
+
+## Direct typed TUI
+
+```rust
+use clap::Parser;
+use clap_tui::TuiApp;
+
+#[derive(Debug, Parser)]
+#[command(name = "tool")]
+struct Cli {
+    #[arg(long)]
+    name: String,
+}
+
+fn main() -> Result<(), clap_tui::TuiError> {
+    TuiApp::from_parser::<Cli>().run_with_parser(|cli| {
+        println!("Hello, {}!", cli.name);
+        Ok::<_, std::io::Error>(())
+    })
+}
+```
 
 ## Supported customization seams
 
@@ -76,7 +96,7 @@ Internal reducers, projections, render helpers, and other support modules are no
 ## Example guide
 
 - `simple` shows the smallest derive-based setup with `#[clap_tui::main]`.
-- `subcommands` shows the typed launcher flow for a CLI with nested subcommands.
+- `subcommands` shows the `TuiLauncher` flow for a CLI with nested subcommands.
 - `kitchen_sink` demonstrates the untyped `TuiApp::from_command(...)` path and a wider range of `clap` surface area.
 
 ```bash
@@ -91,15 +111,6 @@ Maintainers can run `./scripts/verify-release-readiness.sh` for the same formatt
 linting, test, and package-surface checks that the GitHub `verify` workflow enforces.
 See `docs/release-readiness.md` for the branch-protection setup, tag dry-run flow,
 the proc-macro publishing prerequisite, and the current manual-publish boundary.
-
-## Synthetic `tui` scope
-
-The v1 synthetic launcher is intentionally narrow:
-
-- it attaches only at the CLI root, producing paths such as `tool tui` by default
-- it appears in ordinary clap help and parse diagnostics
-- it is hidden from the rendered TUI command tree itself
-- it is rejected when the root command already defines a conflicting `tui` path or uses ambiguous host grammar such as external subcommands or trailing raw capture
 
 ## Theme presets
 

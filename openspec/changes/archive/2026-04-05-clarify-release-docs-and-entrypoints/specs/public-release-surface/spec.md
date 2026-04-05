@@ -1,16 +1,4 @@
-## ADDED Requirements
-
-### Requirement: Published crate metadata supports public discovery
-The `clap-tui` crate SHALL declare the public metadata needed for a polished crates.io release, including an attached README, repository link, documentation or homepage link, keywords, and categories. The packaged crate SHALL include the referenced README so crates.io renders the same public overview users see in the repository.
-
-#### Scenario: Manifest exposes public release metadata
-- **WHEN** maintainers inspect `crates/clap-tui/Cargo.toml`
-- **THEN** they find the README path and crates.io discovery metadata populated for the published crate
-
-#### Scenario: Packaged crate contains the public README
-- **WHEN** maintainers inspect the packaged file list for `clap-tui`
-- **THEN** the package contains the README referenced by the manifest
-- **THEN** the crates.io package can render the intended public overview
+## MODIFIED Requirements
 
 ### Requirement: README onboards external users
 The public README SHALL describe `clap-tui` as an installable library for external users rather than as a repo-local development artifact. It SHALL explain how to add the crate as a dependency, state the supported Rust version, present the crate's value proposition early, disclose that the crate was heavily inspired by Trogon, state that it is not an official `clap` crate, include a minimal quick-start path, explain how to choose between the supported entry points, and surface examples or visuals directly enough that a new user can understand the main flows without leaving the page.
@@ -34,11 +22,4 @@ The crate root rustdoc SHALL provide a concise quick-start path for docs.rs user
 - **THEN** they can see that `clap-tui` is inspired by Trogon and is not an official `clap` project
 - **THEN** they can understand the recommended way to launch `clap-tui`
 - **THEN** they can tell when to use the other supported entry points
-- **THEN** they can discover where to look next for examples or supported customization
-
-### Requirement: Release surface is checked before publish
-The repository SHALL define a repeatable release-readiness verification step that confirms public package presentation remains intact, including metadata presence, README attachment, and rustdoc validation.
-
-#### Scenario: Maintainer performs a readiness pass
-- **WHEN** a maintainer runs the documented release-readiness checks
-- **THEN** they verify the crate metadata, packaged file list, and rustdoc output before publishing
+- **THEN** they can discover where to look next for examples or customization

@@ -15,10 +15,10 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::error::TuiError;
 
-/// Public input event emitted by a [`Runtime`] implementation.
+/// Input event emitted by a custom [`Runtime`] implementation.
 ///
-/// Applications that provide a custom runtime use this type to forward keyboard, mouse, and
-/// terminal events into [`crate::TuiApp`].
+/// Most applications can use [`CrosstermRuntime`]. Implement this surface only when you need to
+/// feed keyboard, mouse, or terminal events into [`crate::TuiApp`] from another runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppEvent {
     /// Keyboard input.
@@ -42,7 +42,7 @@ pub enum AppEvent {
     Unsupported,
 }
 
-/// Public keyboard event used by the [`Runtime`] integration surface.
+/// Keyboard event used by custom [`Runtime`] implementations.
 ///
 /// Custom runtimes can construct this type directly when translating backend-specific input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,7 +53,7 @@ pub struct AppKeyEvent {
     pub modifiers: AppKeyModifiers,
 }
 
-/// Public key code used by [`AppKeyEvent`].
+/// Key code used by [`AppKeyEvent`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppKeyCode {
     /// Character input.
@@ -92,7 +92,7 @@ pub enum AppKeyCode {
     Null,
 }
 
-/// Public key modifiers used by keyboard and mouse events.
+/// Key modifiers used by keyboard and mouse events.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AppKeyModifiers {
     /// Ctrl was pressed.
@@ -103,7 +103,7 @@ pub struct AppKeyModifiers {
     pub shift: bool,
 }
 
-/// Public mouse event used by the [`Runtime`] integration surface.
+/// Mouse event used by custom [`Runtime`] implementations.
 ///
 /// Custom runtimes can construct this type directly when translating backend-specific input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -118,7 +118,7 @@ pub struct AppMouseEvent {
     pub modifiers: AppKeyModifiers,
 }
 
-/// Public mouse event kind used by [`AppMouseEvent`].
+/// Mouse event kind used by [`AppMouseEvent`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppMouseEventKind {
     /// Button press.
@@ -139,7 +139,7 @@ pub enum AppMouseEventKind {
     ScrollRight,
 }
 
-/// Public mouse button used by [`AppMouseEventKind`].
+/// Mouse button used by [`AppMouseEventKind`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppMouseButton {
     /// Left mouse button.
@@ -250,11 +250,11 @@ impl From<Event> for AppEvent {
 
 /// Runtime services required by `TuiApp`.
 ///
-/// This trait allows advanced users to plug in custom terminal/event/clipboard
-/// implementations while the default crate experience still uses crossterm.
+/// Most applications should use [`CrosstermRuntime`]. Implement this trait only when you need
+/// to provide your own terminal, event, or clipboard integration.
 ///
-/// The associated event types re-exported by the crate are intentionally part of this
-/// customization seam. Other internal modules remain implementation details.
+/// The associated event types re-exported by the crate are part of this advanced integration
+/// path. Other internal modules remain implementation details.
 pub trait Runtime {
     /// Terminal backend used by the runtime.
     type Backend: ratatui::backend::Backend;

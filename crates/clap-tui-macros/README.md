@@ -3,7 +3,7 @@
 `clap-tui-macros` provides the procedural macro support for
 [`clap-tui`](https://github.com/gitseti/clap-tui), including the
 `#[clap_tui::main]` attribute that wraps a `clap` parser in the
-`clap_tui::ParserLauncher` runtime.
+`clap_tui::TuiLauncher` runtime.
 
 Most applications should depend on `clap-tui` directly rather than adding
 `clap-tui-macros` as a standalone dependency.

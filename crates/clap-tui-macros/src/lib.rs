@@ -6,7 +6,9 @@ use syn::{
     Token, Type, parse_macro_input,
 };
 
-/// Expand a `main` wrapper that delegates to `clap_tui::ParserLauncher`.
+/// Convenience attribute that wraps a derive-based CLI in `clap_tui::TuiLauncher`.
+///
+/// Supports `config = path::to::fn` and `launcher = "name"` arguments.
 #[proc_macro_attribute]
 pub fn main(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as MainArgs);
@@ -94,7 +96,7 @@ fn expand_main(args: MainArgs, function: ItemFn) -> syn::Result<proc_macro2::Tok
         fn #runner_name(#input) #output #block
 
         #vis fn #function_name() #output {
-            ::clap_tui::ParserLauncher::<#parser_ty>::new()
+            ::clap_tui::TuiLauncher::<#parser_ty>::new()
                 .with_config(#config_expr)
                 .with_launcher_name(#launcher_expr)
                 .run(#runner_name)

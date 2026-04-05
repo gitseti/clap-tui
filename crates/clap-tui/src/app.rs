@@ -15,32 +15,30 @@ use crate::runtime::{AppEvent, CrosstermRuntime, Runtime};
 use crate::ui;
 use crate::update::{self, Effect};
 
-/// Primary entry point for building and running the TUI.
+/// Build and run a TUI from a hand-built [`clap::Command`].
 ///
-/// Supported extension points for library users are:
-/// - custom runtimes via [`TuiApp::with_runtime`]
-/// - theming and layout via [`TuiApp::with_config`]
-/// - startup command selection via [`crate::TuiConfig::start_command`]
-///
-/// Other public items are exported to support those seams, but internal controller,
-/// pipeline, and rendering details are not stable extension points.
+/// Use [`crate::TuiLauncher`] for most derive-based CLIs.
+/// Use `TuiApp` when you are already building a [`clap::Command`] by hand, or when you want
+/// the untyped surface that returns argv or `ArgMatches`.
 pub struct TuiApp<R: Runtime = CrosstermRuntime> {
     command: Command,
     config: TuiConfig,
     runtime: R,
 }
 
-/// Schema-bound TUI application for derive-based `clap` parsers.
+/// Direct typed TUI execution for a derive-based `clap` parser.
 ///
-/// This wrapper ties parser execution to the same `Parser + CommandFactory` type that produced
-/// the rendered clap schema, avoiding post-hoc parser selection against an unrelated command.
-pub struct ParserTuiApp<T, R: Runtime = CrosstermRuntime> {
+/// Use `TypedTuiApp` when you want to launch the TUI directly and parse the selected argv back
+/// into the same parser type, without adding a synthetic `tool tui` launcher to your CLI.
+///
+/// Most derive-based applications should prefer [`crate::TuiLauncher`].
+pub struct TypedTuiApp<T, R: Runtime = CrosstermRuntime> {
     inner: TuiApp<R>,
     _parser: PhantomData<fn() -> T>,
 }
 
 impl TuiApp<CrosstermRuntime> {
-    /// Create from a `clap::Command`.
+    /// Create a TUI from a hand-built [`clap::Command`].
     #[must_use]
     pub fn from_command(command: Command) -> Self {
         Self {
@@ -50,15 +48,17 @@ impl TuiApp<CrosstermRuntime> {
         }
     }
 
-    /// Create a schema-bound app from a derive-based CLI.
+    /// Create a typed app from a derive-based parser.
+    ///
+    /// This is the direct-run alternative to [`crate::TuiLauncher`].
     #[must_use]
-    pub fn from_factory<T: Parser + CommandFactory>() -> ParserTuiApp<T, CrosstermRuntime> {
-        ParserTuiApp::new()
+    pub fn from_parser<T: Parser + CommandFactory>() -> TypedTuiApp<T, CrosstermRuntime> {
+        TypedTuiApp::new()
     }
 }
 
 impl<R: Runtime> TuiApp<R> {
-    /// Apply configuration.
+    /// Apply configuration before the TUI starts.
     #[must_use]
     pub fn with_config(mut self, config: TuiConfig) -> Self {
         self.config = config;
@@ -126,11 +126,11 @@ impl<R: Runtime> TuiApp<R> {
     }
 }
 
-impl<T> ParserTuiApp<T, CrosstermRuntime>
+impl<T> TypedTuiApp<T, CrosstermRuntime>
 where
     T: Parser + CommandFactory,
 {
-    /// Create a schema-bound app from a derive-based CLI.
+    /// Create a typed app from a derive-based parser.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -140,7 +140,7 @@ where
     }
 }
 
-impl<T> Default for ParserTuiApp<T, CrosstermRuntime>
+impl<T> Default for TypedTuiApp<T, CrosstermRuntime>
 where
     T: Parser + CommandFactory,
 {
@@ -149,11 +149,11 @@ where
     }
 }
 
-impl<T, R: Runtime> ParserTuiApp<T, R>
+impl<T, R: Runtime> TypedTuiApp<T, R>
 where
     T: Parser + CommandFactory,
 {
-    /// Apply configuration.
+    /// Apply configuration before the TUI starts.
     #[must_use]
     pub fn with_config(self, config: TuiConfig) -> Self {
         Self {
@@ -164,8 +164,8 @@ where
 
     /// Replace the default runtime.
     #[must_use]
-    pub fn with_runtime<NR: Runtime>(self, runtime: NR) -> ParserTuiApp<T, NR> {
-        ParserTuiApp {
+    pub fn with_runtime<NR: Runtime>(self, runtime: NR) -> TypedTuiApp<T, NR> {
+        TypedTuiApp {
             inner: self.inner.with_runtime(runtime),
             _parser: PhantomData,
         }
@@ -202,7 +202,7 @@ where
         self.inner.run_with_matches(runner)
     }
 
-    /// Run the TUI and parse into the bound `clap::Parser` type.
+    /// Run the TUI and parse into the bound parser type.
     ///
     /// Returns `Ok(())` when the user exits without running. When the user does run, this
     /// method reparses the selected argv with the bound parser type before calling the
@@ -807,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_bound_app_runs_with_its_bound_parser_type() {
+    fn typed_tui_app_runs_with_its_bound_parser_type() {
         #[derive(Debug, clap::Parser, PartialEq, Eq)]
         #[command(name = "tool")]
         struct Cli {
@@ -824,7 +824,7 @@ mod tests {
         ))]);
 
         let mut parsed = None;
-        let result = super::TuiApp::from_factory::<Cli>()
+        let result = super::TuiApp::from_parser::<Cli>()
             .with_runtime(runtime)
             .run_with_parser(|cli| {
                 parsed = Some(cli);

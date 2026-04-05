@@ -15,7 +15,7 @@ pub enum TuiError {
     Runner(Box<dyn std::error::Error + Send + Sync>),
     /// Lower-level TUI flow exited without running.
     ///
-    /// Higher-level entry points such as `TuiApp::run`, `ParserTuiApp::run`,
+    /// Higher-level entry points such as `TuiApp::run`, `TypedTuiApp::run`,
     /// `run_with_matches`, and `run_with_parser` normalize this into `Ok(None)` or `Ok(())`.
     #[error("cancelled")]
     Cancelled,

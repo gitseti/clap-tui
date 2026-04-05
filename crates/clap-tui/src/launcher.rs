@@ -11,25 +11,28 @@ use crate::runtime::{CrosstermRuntime, Runtime};
 const DEFAULT_SYNTHETIC_LAUNCHER_NAME: &str = "tui";
 const SYNTHETIC_LAUNCHER_ABOUT: &str = "Launch the interactive terminal UI";
 
-/// Canonical typed launcher for derive-based root `clap` parsers.
+/// Recommended launcher for derive-based root `clap` parsers.
 ///
-/// `ParserLauncher` owns the synthetic root launcher entrypoint flow:
+/// `TuiLauncher` adds a synthetic root launcher entry point:
 /// - ordinary CLI help, version output, and diagnostics come from the augmented command surface
 /// - `tool tui` launches the TUI by default and parses successful output back into the same
 ///   root parser type
 /// - non-TUI invocations fall through to the bound typed parser
-pub struct ParserLauncher<T, R: Runtime = CrosstermRuntime> {
+///
+/// Use [`crate::TypedTuiApp`] instead when you want to launch the TUI directly without adding
+/// a synthetic subcommand to your CLI.
+pub struct TuiLauncher<T, R: Runtime = CrosstermRuntime> {
     config: TuiConfig,
     runtime: R,
     launcher_name: String,
     _parser: PhantomData<fn() -> T>,
 }
 
-impl<T> ParserLauncher<T, CrosstermRuntime>
+impl<T> TuiLauncher<T, CrosstermRuntime>
 where
     T: Parser + CommandFactory,
 {
-    /// Create the canonical typed launcher for a derive-based CLI root parser.
+    /// Create the recommended launcher for a derive-based CLI root parser.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -41,7 +44,7 @@ where
     }
 }
 
-impl<T> Default for ParserLauncher<T, CrosstermRuntime>
+impl<T> Default for TuiLauncher<T, CrosstermRuntime>
 where
     T: Parser + CommandFactory,
 {
@@ -50,21 +53,21 @@ where
     }
 }
 
-impl<T, R: Runtime> ParserLauncher<T, R>
+impl<T, R: Runtime> TuiLauncher<T, R>
 where
     T: Parser + CommandFactory,
 {
-    /// Apply configuration used when the synthetic launcher starts the TUI.
+    /// Apply configuration used when the launcher starts the TUI.
     #[must_use]
     pub fn with_config(mut self, config: TuiConfig) -> Self {
         self.config = config;
         self
     }
 
-    /// Replace the default runtime used by the synthetic launcher.
+    /// Replace the default runtime used by the launcher.
     #[must_use]
-    pub fn with_runtime<NR: Runtime>(self, runtime: NR) -> ParserLauncher<T, NR> {
-        ParserLauncher {
+    pub fn with_runtime<NR: Runtime>(self, runtime: NR) -> TuiLauncher<T, NR> {
+        TuiLauncher {
             config: self.config,
             runtime,
             launcher_name: self.launcher_name,
@@ -82,7 +85,7 @@ where
         self
     }
 
-    /// Run the typed launcher against `std::env::args_os()`.
+    /// Run the launcher against `std::env::args_os()`.
     ///
     /// Clap help, version output, and diagnostics terminate directly from the augmented command
     /// surface. TUI runtime/setup failures are converted through `E: From<TuiError>`.
@@ -99,7 +102,7 @@ where
         self.run_with_args(std::env::args_os(), runner)
     }
 
-    /// Run the typed launcher against a custom argv source.
+    /// Run the launcher against a custom argv source.
     ///
     /// Clap help, version output, and diagnostics terminate directly from the augmented command
     /// surface. TUI runtime/setup failures are converted through `E: From<TuiError>`.
@@ -307,7 +310,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use super::{ParserLauncher, PreparedRootCommand};
+    use super::{PreparedRootCommand, TuiLauncher};
     use crate::TuiError;
     use crate::runtime::{AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, Runtime};
     use crate::spec::CommandSpec;
@@ -348,7 +351,7 @@ mod tests {
     }
 
     fn dispatch<T, I, A>(
-        launcher: ParserLauncher<T, TestRuntime>,
+        launcher: TuiLauncher<T, TestRuntime>,
         args: I,
     ) -> Result<Option<T>, String>
     where
@@ -430,7 +433,7 @@ mod tests {
     #[test]
     fn augmented_help_includes_synthetic_tui_launcher() {
         let launcher =
-            ParserLauncher::<CommandCli, _>::new().with_runtime(TestRuntime::with_events([]));
+            TuiLauncher::<CommandCli, _>::new().with_runtime(TestRuntime::with_events([]));
         let error = dispatch(launcher, ["tool", "--help"]).expect_err("help should short-circuit");
 
         assert!(error.contains("tui"));
@@ -440,7 +443,7 @@ mod tests {
     #[test]
     fn parse_failures_use_augmented_command_surface() {
         let launcher =
-            ParserLauncher::<SimpleCli, _>::new().with_runtime(TestRuntime::with_events([]));
+            TuiLauncher::<SimpleCli, _>::new().with_runtime(TestRuntime::with_events([]));
         let error = dispatch(launcher, ["tool", "tui", "unexpected"])
             .expect_err("parse failure should short-circuit");
 
@@ -451,7 +454,7 @@ mod tests {
     #[test]
     fn ordinary_invocation_uses_typed_parser_path() {
         let launcher =
-            ParserLauncher::<SimpleCli, _>::new().with_runtime(TestRuntime::with_events([]));
+            TuiLauncher::<SimpleCli, _>::new().with_runtime(TestRuntime::with_events([]));
         let parsed =
             dispatch(launcher, ["tool", "--name", "friend"]).expect("non-tui parse should work");
 
@@ -472,7 +475,7 @@ mod tests {
                 ..AppKeyModifiers::default()
             },
         ))]);
-        let launcher = ParserLauncher::<SimpleCli, _>::new().with_runtime(runtime);
+        let launcher = TuiLauncher::<SimpleCli, _>::new().with_runtime(runtime);
 
         let parsed = dispatch(launcher, ["tool", "tui"]).expect("synthetic tui launch should work");
 
@@ -493,7 +496,7 @@ mod tests {
                 ..AppKeyModifiers::default()
             },
         ))]);
-        let launcher = ParserLauncher::<SimpleCli, _>::new().with_runtime(runtime);
+        let launcher = TuiLauncher::<SimpleCli, _>::new().with_runtime(runtime);
 
         let parsed =
             dispatch(launcher, ["tool", "tui"]).expect("cancelled tui launch should succeed");
@@ -517,7 +520,7 @@ mod tests {
     #[test]
     fn launcher_run_preserves_user_handler_errors() {
         let launcher =
-            ParserLauncher::<SimpleCli, _>::new().with_runtime(TestRuntime::with_events([]));
+            TuiLauncher::<SimpleCli, _>::new().with_runtime(TestRuntime::with_events([]));
 
         let error = launcher
             .run_with_args(["tool"], |_cli| {
@@ -539,7 +542,7 @@ mod tests {
                 ..AppKeyModifiers::default()
             },
         ))]);
-        let launcher = ParserLauncher::<SimpleCli, _>::new()
+        let launcher = TuiLauncher::<SimpleCli, _>::new()
             .with_launcher_name("form")
             .with_runtime(runtime);
 
@@ -556,7 +559,7 @@ mod tests {
 
     #[test]
     fn custom_launcher_name_appears_in_augmented_help() {
-        let launcher = ParserLauncher::<CommandCli, _>::new()
+        let launcher = TuiLauncher::<CommandCli, _>::new()
             .with_launcher_name("form")
             .with_runtime(TestRuntime::with_events([]));
         let error = dispatch(launcher, ["tool", "--help"]).expect_err("help should short-circuit");
