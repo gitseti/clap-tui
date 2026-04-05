@@ -121,13 +121,7 @@ fn render_fields(
             .as_ref()
             .and_then(|inputs| inputs.input(&item.arg.id));
         let source_badge = effective_source_badge(vm, item.arg);
-        let badges = field_badges(
-            config,
-            item.arg,
-            &vm.selected_path,
-            source_badge,
-            input_state,
-        );
+        let badges = field_badges(config, item.arg, &vm.selected_path, source_badge);
 
         if let Some(heading_rect) = field.heading {
             if let Some(heading) = item.section_heading.as_deref() {
@@ -193,6 +187,16 @@ fn render_fields(
                 .as_ref()
                 .is_some_and(|inputs| inputs.is_touched(&item.arg.id)),
         );
+        let shows_text_placeholder = value.is_empty()
+            && matches!(
+                item.widget,
+                FieldWidget::SingleText | FieldWidget::RepeatedText
+            );
+        let shows_passive_toggle = matches!(item.widget, FieldWidget::Toggle)
+            && value == "[ ]"
+            && !input_state.is_some_and(|input| {
+                input.touched || matches!(input.input_source(), Some(InputSource::User))
+            });
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -206,7 +210,11 @@ fn render_fields(
         let fill_style = styles::input(config, selected);
         let text_style = if shows_choice_placeholder && item.arg.required {
             styles::required_prompt(config)
-        } else if is_default || shows_choice_placeholder {
+        } else if is_default
+            || shows_choice_placeholder
+            || shows_text_placeholder
+            || shows_passive_toggle
+        {
             styles::placeholder(config)
         } else {
             Style::default().fg(config.theme.text)
@@ -296,7 +304,7 @@ fn render_fields(
                 && let Some(placeholder) = required_empty_prompt(item.arg, item.widget)
             {
                 textarea.set_placeholder_text(placeholder);
-                textarea.set_placeholder_style(styles::required_prompt(config));
+                textarea.set_placeholder_style(styles::placeholder(config));
             }
             frame.render_widget(textarea.widget(), field.input);
             place_textarea_cursor(frame, &textarea, field.input);
@@ -912,16 +920,13 @@ fn field_badges(
     arg: &ArgSpec,
     selected_path: &crate::spec::CommandPath,
     source: Option<EffectiveValueSource>,
-    input_state: Option<&ArgInputState>,
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
-    if arg.is_inherited_for(selected_path) {
-        spans.extend(chip_spans(
-            "Inherited",
-            styles::metadata_badge(config, styles::MetadataKind::Inherited),
-        ));
-    } else if arg.is_global() && arg.help_heading() != Some("Global") {
+    if !arg.is_inherited_for(selected_path)
+        && arg.is_global()
+        && arg.help_heading() != Some("Global")
+    {
         spans.extend(chip_spans(
             "Global",
             styles::metadata_badge(config, styles::MetadataKind::Global),
@@ -930,14 +935,7 @@ fn field_badges(
 
     if let Some(source) = source {
         let label = match source {
-            EffectiveValueSource::User => None,
-            EffectiveValueSource::Default => {
-                if suppress_default_badge(arg, input_state) {
-                    None
-                } else {
-                    Some("Default")
-                }
-            }
+            EffectiveValueSource::User | EffectiveValueSource::Default => None,
             EffectiveValueSource::Env => Some("Env"),
             EffectiveValueSource::DefaultMissing => Some("Default-missing"),
             EffectiveValueSource::ConditionalDefault => Some("Conditional"),
@@ -969,26 +967,6 @@ fn required_empty_prompt(arg: &ArgSpec, widget: FieldWidget) -> Option<String> {
         FieldWidget::MultiChoice => "Press Space to choose at least one value".to_string(),
         _ => return None,
     })
-}
-
-fn suppress_default_badge(arg: &ArgSpec, input_state: Option<&ArgInputState>) -> bool {
-    let Some(input_state) = input_state else {
-        return false;
-    };
-    if input_state.touched {
-        return false;
-    }
-
-    match &input_state.value {
-        ArgInput::Flag { present, source } => {
-            arg.uses_toggle_semantics() && !present && *source == InputSource::Default
-        }
-        ArgInput::Count {
-            occurrences,
-            source,
-        } => arg.uses_count_semantics() && *occurrences == 0 && *source == InputSource::Default,
-        ArgInput::Values { .. } => false,
-    }
 }
 
 fn effective_source_badge(vm: &ScreenView<'_>, arg: &ArgSpec) -> Option<EffectiveValueSource> {
@@ -1378,7 +1356,6 @@ mod tests {
             &option_arg("name", "--name"),
             &selected_path,
             Some(EffectiveValueSource::ConditionalDefault),
-            None,
         );
         let rendered = badges
             .iter()
@@ -1398,7 +1375,7 @@ mod tests {
         arg.metadata.display.help_heading = Some("Global".to_string());
         let selected_path = crate::spec::CommandPath::default();
 
-        let badges = field_badges(&config, &arg, &selected_path, None, None);
+        let badges = field_badges(&config, &arg, &selected_path, None);
         let rendered = badges
             .iter()
             .map(|span| span.content.to_string())
@@ -1408,7 +1385,7 @@ mod tests {
     }
 
     #[test]
-    fn inherited_badge_remains_visible_inside_global_section() {
+    fn inherited_fields_do_not_render_redundant_row_badges_inside_grouped_sections() {
         let config = TuiConfig::default();
         let mut arg = option_arg("profile", "--profile");
         arg.metadata.placement.global = true;
@@ -1417,13 +1394,13 @@ mod tests {
         arg.metadata.display.help_heading = Some("Global".to_string());
         let selected_path = crate::spec::CommandPath::from(vec!["build".to_string()]);
 
-        let badges = field_badges(&config, &arg, &selected_path, None, None);
+        let badges = field_badges(&config, &arg, &selected_path, None);
         let rendered = badges
             .iter()
             .map(|span| span.content.to_string())
             .collect::<String>();
 
-        assert!(rendered.contains("Inherited"));
+        assert!(!rendered.contains("Inherited"));
         assert!(!rendered.contains("Global"));
     }
 

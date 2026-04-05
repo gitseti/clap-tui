@@ -20,13 +20,15 @@ pub(crate) fn render_header(
     frame: &mut Frame<'_>,
     config: &TuiConfig,
     area: Rect,
+    focused: bool,
     vm: &ScreenView<'_>,
 ) {
     if area.height == 0 || area.width == 0 {
         return;
     }
     frame.render_widget(
-        Paragraph::new(header_lines(config, vm.command)).style(styles::panel(config)),
+        Paragraph::new(header_lines(config, vm.command))
+            .style(styles::panel_surface(config, focused)),
         area,
     );
 }

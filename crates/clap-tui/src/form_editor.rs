@@ -37,6 +37,19 @@ pub(crate) fn displayed_text(state: &AppState, arg: &ArgModel) -> String {
     String::new()
 }
 
+pub(crate) fn click_cursor_position(
+    state: &AppState,
+    arg: &ArgModel,
+    row: u16,
+    col: u16,
+) -> (u16, u16) {
+    if shows_untouched_default_value(state, arg) {
+        (0, 0)
+    } else {
+        (row, col)
+    }
+}
+
 pub(crate) fn editor_for_render(
     ui: &UiState,
     command_key: &CommandPath,
@@ -241,6 +254,7 @@ pub(crate) fn start_selection(state: &mut AppState, arg: &ArgModel, row: u16, co
 }
 
 pub(crate) fn set_cursor_from_click(state: &mut AppState, arg: &ArgModel, row: u16, col: u16) {
+    let (row, col) = click_cursor_position(state, arg, row, col);
     let displayed = displayed_text(state, arg);
     let command_key = arg.owner_path().clone();
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
@@ -440,11 +454,21 @@ fn row_editor_boundary_merge(editor: &TextEditor, key: AppKeyEvent, arg: &ArgMod
     }
 }
 
+fn shows_untouched_default_value(state: &AppState, arg: &ArgModel) -> bool {
+    !state.domain.is_touched(&arg.id)
+        && !arg.default_values.is_empty()
+        && state
+            .domain
+            .current_form()
+            .and_then(|form| form.input_source(&arg.id))
+            == Some(InputSource::Default)
+}
+
 #[cfg(test)]
 mod tests {
     use clap::{Arg, ArgAction, Command};
 
-    use super::{EditResult, apply_key_to_text_field};
+    use super::{EditResult, apply_key_to_text_field, click_cursor_position};
     use crate::input::{AppState, ArgInput, InputSource, InputValueOccurrence};
     use crate::runtime::{AppKeyCode, AppKeyEvent, AppKeyModifiers};
 
@@ -601,5 +625,35 @@ mod tests {
                 "beta!".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn untouched_default_text_click_targets_the_start_of_the_value() {
+        let state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("config").long("config").default_value("prod.toml")),
+        );
+        let arg = state
+            .domain
+            .arg_for_input("config")
+            .expect("config arg")
+            .clone();
+
+        assert_eq!(click_cursor_position(&state, &arg, 0, 5), (0, 0));
+    }
+
+    #[test]
+    fn touched_text_click_keeps_the_clicked_cursor_position() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("config").long("config").default_value("prod.toml")),
+        );
+        state.domain.set_text_value("config", "custom.toml");
+        state.domain.mark_touched("config");
+        let arg = state
+            .domain
+            .arg_for_input("config")
+            .expect("config arg")
+            .clone();
+
+        assert_eq!(click_cursor_position(&state, &arg, 0, 5), (0, 5));
     }
 }

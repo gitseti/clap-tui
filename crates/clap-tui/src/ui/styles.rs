@@ -1,4 +1,4 @@
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 
 use crate::config::TuiConfig;
 
@@ -21,7 +21,6 @@ pub(crate) enum SidebarRowState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MetadataKind {
     Global,
-    Inherited,
     Default,
     Env,
     Implicit,
@@ -48,6 +47,18 @@ pub(crate) fn surface(config: &TuiConfig, surface: Surface) -> Style {
 
 pub(crate) fn panel(config: &TuiConfig) -> Style {
     surface(config, Surface::Panel)
+}
+
+pub(crate) fn panel_fill(config: &TuiConfig, focused: bool) -> Color {
+    if focused {
+        config.theme.panel_bg
+    } else {
+        config.theme.preview_bg
+    }
+}
+
+pub(crate) fn panel_surface(config: &TuiConfig, focused: bool) -> Style {
+    Style::default().bg(panel_fill(config, focused))
 }
 
 pub(crate) fn panel_border(config: &TuiConfig, focused: bool) -> Style {
@@ -331,8 +342,8 @@ mod tests {
     use crate::config::TuiConfig;
 
     use super::{
-        MetadataKind, SidebarRowState, field_border, metadata_badge, panel_border, sidebar_row,
-        success_chip,
+        MetadataKind, SidebarRowState, field_border, metadata_badge, panel_border, panel_surface,
+        sidebar_row, success_chip,
     };
 
     #[test]
@@ -340,6 +351,17 @@ mod tests {
         let config = TuiConfig::default();
 
         assert_eq!(panel_border(&config, true).fg, Some(config.theme.focus));
+    }
+
+    #[test]
+    fn panel_surface_dims_unfocused_panels() {
+        let config = TuiConfig::default();
+
+        assert_eq!(panel_surface(&config, true).bg, Some(config.theme.panel_bg));
+        assert_eq!(
+            panel_surface(&config, false).bg,
+            Some(config.theme.preview_bg)
+        );
     }
 
     #[test]
@@ -356,10 +378,6 @@ mod tests {
     fn metadata_badges_share_one_quiet_metadata_style() {
         let config = TuiConfig::default();
 
-        assert_eq!(
-            metadata_badge(&config, MetadataKind::Inherited).fg,
-            Some(config.theme.metadata)
-        );
         assert_eq!(
             metadata_badge(&config, MetadataKind::Default).fg,
             Some(config.theme.metadata)

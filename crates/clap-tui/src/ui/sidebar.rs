@@ -88,7 +88,7 @@ pub(crate) fn render_sidebar(
         .border_type(BorderType::Rounded)
         .border_style(styles::panel_border(config, panel_focused))
         .title(sidebar_title(config, vm.root, root_selected))
-        .style(styles::panel(config));
+        .style(styles::panel_surface(config, panel_focused));
     frame.render_widget(panel, area);
     let (search_area, divider_area, list_area) = sidebar_sections(area);
     render_search(frame, ui, config, search_area, divider_area, search_focused);
@@ -247,7 +247,8 @@ fn sidebar_row_style(
         } else {
             SidebarRowState::IdleRoot
         },
-    );
+    )
+    .bg(styles::panel_fill(config, sidebar_focused));
     if item.has_children || item.indent == 0 {
         style = style.add_modifier(Modifier::BOLD);
     }

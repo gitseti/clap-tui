@@ -235,6 +235,7 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
                 event.row,
                 false,
             ) {
+                let (row, col) = form_editor::click_cursor_position(state, &arg, row, col);
                 state.ui.set_mouse_selection(Some(MouseSelection {
                     arg_id: hit.arg_id.clone(),
                     anchor_row: row,
@@ -420,6 +421,52 @@ mod tests {
         assert_eq!(effect, Effect::None);
         let argv = crate::pipeline::build_command_line(&state);
         assert_eq!(argv, vec!["tool".to_string()]);
+    }
+
+    #[test]
+    fn clicking_untouched_default_text_input_starts_at_the_beginning() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("config").long("config").default_value("prod.toml")),
+        );
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 40, 6));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 6));
+        snapshot.layout.form_inputs.insert(
+            "config".to_string(),
+            ratatui::layout::Rect::new(0, 0, 20, 3),
+        );
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 6,
+                row: 1,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        let arg = state.domain.arg_for_input("config").expect("config arg");
+        let editor = crate::form_editor::editor_for_render(
+            &state.ui,
+            arg.owner_path(),
+            arg,
+            &crate::form_editor::displayed_text(&state, arg),
+        );
+        assert_eq!(
+            editor.cursor(),
+            crate::editor_state::TextPosition::default()
+        );
+        assert_eq!(
+            state
+                .ui
+                .mouse_select
+                .as_ref()
+                .map(|selection| (selection.anchor_row, selection.anchor_col)),
+            Some((0, 0))
+        );
     }
 
     #[test]

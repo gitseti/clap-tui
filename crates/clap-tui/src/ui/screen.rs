@@ -127,10 +127,10 @@ fn render_main(
         .border_type(BorderType::Rounded)
         .border_style(styles::panel_border(config, workspace_focused))
         .title(workspace_title(config, vm))
-        .style(styles::panel(config));
+        .style(styles::panel_surface(config, workspace_focused));
     frame.render_widget(workspace, area);
     if header_area.height > 0 && header_area.width > 0 {
-        header::render_header(frame, config, header_area, vm);
+        header::render_header(frame, config, header_area, workspace_focused, vm);
     }
     form_ui::render_form(frame, ui, config, vm, frame_snapshot);
 }
@@ -233,6 +233,10 @@ mod tests {
 
     fn cell_fg(backend: &TestBackend, x: u16, y: u16) -> ratatui::style::Color {
         backend.buffer()[(x, y)].fg
+    }
+
+    fn cell_bg(backend: &TestBackend, x: u16, y: u16) -> ratatui::style::Color {
+        backend.buffer()[(x, y)].bg
     }
 
     fn key(code: AppKeyCode) -> AppKeyEvent {
@@ -434,6 +438,80 @@ mod tests {
         assert!(rendered.contains("auto"));
         assert!(preview.contains("$ tool --flag"));
         assert!(!preview.contains("--mode"));
+    }
+
+    #[test]
+    fn sidebar_and_workspace_use_different_panel_fills_based_on_focus() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .about("Run tool")
+                .arg(Arg::new("config").long("config"))
+                .subcommand(Command::new("serve")),
+        );
+        let config = TuiConfig::default();
+
+        state.ui.focus_sidebar();
+        let (sidebar_backend, sidebar_snapshot) = render_app(&mut state);
+        let sidebar_area = sidebar_snapshot.layout.sidebar.expect("sidebar area");
+        let form_area = sidebar_snapshot.layout.form.expect("form area");
+        let sidebar_probe = (sidebar_area.x + 2, sidebar_area.y + sidebar_area.height - 2);
+        let form_probe = (form_area.x + 2, form_area.y + form_area.height - 2);
+        assert_eq!(
+            cell_bg(&sidebar_backend, sidebar_probe.0, sidebar_probe.1),
+            config.theme.panel_bg
+        );
+        assert_eq!(
+            cell_bg(&sidebar_backend, form_probe.0, form_probe.1),
+            config.theme.preview_bg
+        );
+
+        state.ui.focus_form();
+        let (form_backend, form_snapshot) = render_app(&mut state);
+        let sidebar_area = form_snapshot.layout.sidebar.expect("sidebar area");
+        let form_area = form_snapshot.layout.form.expect("form area");
+        let sidebar_probe = (sidebar_area.x + 2, sidebar_area.y + sidebar_area.height - 2);
+        let form_probe = (form_area.x + 2, form_area.y + form_area.height - 2);
+        assert_eq!(
+            cell_bg(&form_backend, sidebar_probe.0, sidebar_probe.1),
+            config.theme.preview_bg
+        );
+        assert_eq!(
+            cell_bg(&form_backend, form_probe.0, form_probe.1),
+            config.theme.panel_bg
+        );
+    }
+
+    #[test]
+    fn grouped_untouched_false_flags_share_muted_idle_label_treatment() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("fast")
+                        .long("fast")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                )
+                .arg(
+                    Arg::new("safe")
+                        .long("safe")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                ),
+        );
+        let config = TuiConfig::default();
+
+        let (backend, snapshot) = render_app(&mut state);
+        let fast = snapshot.layout.form_fields.first().expect("fast field");
+        let safe = snapshot.layout.form_fields.get(1).expect("safe field");
+
+        assert_eq!(
+            cell_fg(&backend, fast.input.x + 6, fast.input.y),
+            config.theme.metadata
+        );
+        assert_eq!(
+            cell_fg(&backend, safe.input.x + 6, safe.input.y),
+            config.theme.metadata
+        );
     }
 
     #[test]
