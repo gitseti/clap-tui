@@ -4,6 +4,8 @@
 
 This crate was heavily inspired by [Trogon](https://github.com/Textualize/trogon). `clap-tui` is a community crate and is not an official `clap` project.
 
+![clap-tui hero screenshot](docs/assets/hero.png)
+
 ## Add `clap-tui` to your project
 
 ```toml
@@ -96,11 +98,13 @@ Internal reducers, projections, render helpers, and other support modules are no
 ## Example guide
 
 - `simple` shows the smallest derive-based setup with `#[clap_tui::main]`.
+- `showcase` is the best starting point for demos and screenshots: it shows nested commands, dropdowns, text input, shared global fields, and a readable preview.
 - `subcommands` shows the `TuiLauncher` flow for a CLI with nested subcommands.
 - `kitchen_sink` demonstrates the untyped `TuiApp::from_command(...)` path and a wider range of `clap` surface area.
 
 ```bash
 cargo run -p clap-tui --example simple -- tui
+cargo run -p clap-tui --example showcase -- tui
 cargo run -p clap-tui --example subcommands -- tui
 cargo run -p clap-tui --example kitchen_sink
 ```

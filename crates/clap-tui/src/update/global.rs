@@ -58,6 +58,12 @@ fn apply_search_input(key: AppKeyEvent, state: &mut AppState, frame_snapshot: &F
         AppKeyCode::Esc | AppKeyCode::Enter | AppKeyCode::BackTab => {
             state.ui.focus_sidebar();
         }
+        AppKeyCode::Up => {
+            navigation::move_sidebar_selection(state, frame_snapshot, -1);
+        }
+        AppKeyCode::Down => {
+            navigation::move_sidebar_selection(state, frame_snapshot, 1);
+        }
         AppKeyCode::Backspace => {
             state.ui.search_query.pop();
             navigation::clamp_sidebar_selection_to_search(state, frame_snapshot);
@@ -235,6 +241,68 @@ mod tests {
     }
 
     #[test]
+    fn search_reducer_moves_sidebar_selection_with_arrow_keys_while_search_stays_focused() {
+        let mut state = crate::input::AppState::new(crate::spec::CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: vec![
+                crate::spec::CommandSpec {
+                    name: "build".to_string(),
+                    version: None,
+                    about: None,
+                    help: String::new(),
+                    args: Vec::new(),
+                    subcommands: Vec::new(),
+                    ..crate::spec::CommandSpec::default()
+                },
+                crate::spec::CommandSpec {
+                    name: "deploy".to_string(),
+                    version: None,
+                    about: None,
+                    help: String::new(),
+                    args: Vec::new(),
+                    subcommands: Vec::new(),
+                    ..crate::spec::CommandSpec::default()
+                },
+            ],
+            ..crate::spec::CommandSpec::default()
+        });
+        state.ui.focus_search();
+        state.ui.search_query = "dep".to_string();
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.sidebar_list = Some(ratatui::layout::Rect::new(0, 0, 20, 4));
+
+        let effect = apply_action(
+            &Action::SearchInput(AppKeyEvent::new(
+                AppKeyCode::Down,
+                AppKeyModifiers::default(),
+            )),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Search));
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["deploy".to_string()]
+        );
+
+        let effect = apply_action(
+            &Action::SearchInput(AppKeyEvent::new(AppKeyCode::Up, AppKeyModifiers::default())),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Search));
+        assert!(state.domain.selected_path().is_empty());
+    }
+
+    #[test]
     fn escape_closes_help_before_anything_else() {
         let mut state = crate::input::AppState::new(command_with_build());
         state.ui.help_open = true;
@@ -342,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_traversal_cycles_sidebar_search_form_in_both_directions() {
+    fn focus_traversal_cycles_only_between_sidebar_and_form() {
         let mut state = crate::input::AppState::new(command_with_build());
         let snapshot = FrameSnapshot::default();
 
@@ -350,15 +418,7 @@ mod tests {
 
         let effect = apply_action(&Action::ToggleFocus, &mut state, &snapshot);
         assert_eq!(effect, Effect::None);
-        assert!(matches!(state.ui.focus, Focus::Search));
-
-        let effect = apply_action(&Action::ToggleFocus, &mut state, &snapshot);
-        assert_eq!(effect, Effect::None);
         assert!(matches!(state.ui.focus, Focus::Form));
-
-        let effect = apply_action(&Action::ReverseFocus, &mut state, &snapshot);
-        assert_eq!(effect, Effect::None);
-        assert!(matches!(state.ui.focus, Focus::Search));
 
         let effect = apply_action(&Action::ReverseFocus, &mut state, &snapshot);
         assert_eq!(effect, Effect::None);

@@ -317,7 +317,7 @@ pub(crate) fn populate_form_layout(
             continue;
         };
         let description = form_description_rect(item, y, area, content_area, show_description);
-        let (section_rail, section_cap) = field_section_decorations(
+        let (section_rail, section_right_rail, section_cap) = field_section_decorations(
             item,
             y,
             metrics.total_height,
@@ -334,6 +334,7 @@ pub(crate) fn populate_form_layout(
             arg_id: item.arg.id.clone(),
             heading,
             section_rail,
+            section_right_rail,
             section_cap,
             label,
             input,
@@ -402,9 +403,9 @@ fn field_section_decorations(
     area: Rect,
     content_area: Rect,
     section_ends: bool,
-) -> (Option<Rect>, Option<Rect>) {
+) -> (Option<Rect>, Option<Rect>, Option<Rect>) {
     if !form::field_is_in_section(item) || area.width == 0 || total_height == 0 {
-        return (None, None);
+        return (None, None, None);
     }
 
     let rail_height = if section_ends {
@@ -414,6 +415,17 @@ fn field_section_decorations(
     };
     let rail = if rail_height > 0 {
         clipped_rect(area.x, 1, y, rail_height, content_area)
+    } else {
+        None
+    };
+    let right_rail = if rail_height > 0 && area.width > 1 {
+        clipped_rect(
+            area.x.saturating_add(area.width.saturating_sub(1)),
+            1,
+            y,
+            rail_height,
+            content_area,
+        )
     } else {
         None
     };
@@ -429,14 +441,16 @@ fn field_section_decorations(
         None
     };
 
-    (rail, cap)
+    (rail, right_rail, cap)
 }
 
 fn field_content_geometry(area: Rect, in_section: bool) -> (u16, u16) {
-    if in_section && area.width > form::SECTION_FIELD_INDENT {
+    if in_section && area.width > form::SECTION_FIELD_INDENT.saturating_add(1) {
         (
             area.x.saturating_add(form::SECTION_FIELD_INDENT),
-            area.width.saturating_sub(form::SECTION_FIELD_INDENT),
+            area.width
+                .saturating_sub(form::SECTION_FIELD_INDENT)
+                .saturating_sub(1),
         )
     } else {
         (area.x, area.width)
@@ -707,6 +721,10 @@ mod tests {
             .expect("inherited config field");
 
         assert_eq!(inherited.section_rail.expect("section rail").x, 0);
+        assert_eq!(
+            inherited.section_right_rail.expect("section right rail").x,
+            49
+        );
         assert_eq!(inherited.description.expect("description rect").x, 1);
     }
 }
@@ -736,6 +754,7 @@ pub struct FormFieldLayout {
     pub arg_id: String,
     pub heading: Option<Rect>,
     pub section_rail: Option<Rect>,
+    pub section_right_rail: Option<Rect>,
     pub section_cap: Option<Rect>,
     pub label: Option<Rect>,
     pub input: Rect,

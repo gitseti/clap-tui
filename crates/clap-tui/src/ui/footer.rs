@@ -109,7 +109,7 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
         build_chip(
             ui,
             HoverTarget::Focus,
-            "Tab/Shift+Tab Focus",
+            "Tab/Shift+Tab Sidebar/Form",
             FooterChipVariant::Subtle,
         ),
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
@@ -347,10 +347,10 @@ mod tests {
         let state = build_test_state();
         let view = build_footer_view(
             &state.ui,
-            Rect::new(0, 0, 60, 1),
+            Rect::new(0, 0, 80, 1),
             &ValidationState::default(),
         );
-        let layouts = layout_footer_buttons(Rect::new(0, 0, 60, 1), &view);
+        let layouts = layout_footer_buttons(Rect::new(0, 0, 80, 1), &view);
 
         let targets = layouts.iter().map(|item| item.target).collect::<Vec<_>>();
         assert_eq!(
@@ -360,6 +360,7 @@ mod tests {
                 HoverTarget::Exit,
                 HoverTarget::Search,
                 HoverTarget::Focus,
+                HoverTarget::Help,
             ]
         );
         assert_eq!(
@@ -369,6 +370,10 @@ mod tests {
         assert_eq!(
             layouts[2].rect.x + layouts[2].rect.width + 1,
             layouts[3].rect.x
+        );
+        assert_eq!(
+            layouts[3].rect.x + layouts[3].rect.width + 1,
+            layouts[4].rect.x
         );
     }
 

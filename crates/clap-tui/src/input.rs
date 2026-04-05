@@ -872,8 +872,7 @@ impl UiState {
     pub fn focus_next(&mut self) {
         self.dismiss_transient_interaction();
         self.focus = match self.focus {
-            Focus::Sidebar => Focus::Search,
-            Focus::Search => Focus::Form,
+            Focus::Sidebar | Focus::Search => Focus::Form,
             Focus::Form => Focus::Sidebar,
         };
     }
@@ -881,9 +880,8 @@ impl UiState {
     pub fn focus_previous(&mut self) {
         self.dismiss_transient_interaction();
         self.focus = match self.focus {
-            Focus::Sidebar => Focus::Form,
-            Focus::Search => Focus::Sidebar,
-            Focus::Form => Focus::Search,
+            Focus::Sidebar | Focus::Search => Focus::Form,
+            Focus::Form => Focus::Sidebar,
         };
     }
 

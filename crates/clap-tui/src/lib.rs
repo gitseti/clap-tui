@@ -87,8 +87,9 @@
 //!
 //! # Examples
 //!
-//! The crate ships with three public examples:
+//! The crate ships with four public examples:
 //! - `simple` for the smallest derive-based setup
+//! - `showcase` for a compact CLI that demonstrates nested commands, dropdowns, and text input
 //! - `subcommands` for `TuiLauncher` with nested command trees
 //! - `kitchen_sink` for the untyped [`TuiApp`] surface and broader `clap` coverage
 

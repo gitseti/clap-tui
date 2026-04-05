@@ -40,7 +40,6 @@ fn scripted_harness_returns_successful_run_outcome_with_raw_event_steps() {
     let run = ScriptedHarness::new(command)
         .script([
             ScriptedStep::key(AppKeyCode::Tab),
-            ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::raw(AppEvent::Paste("/tmp/raw".to_string())),
             ScriptedStep::ctrl(AppKeyCode::Char('r')),
         ])
@@ -101,7 +100,6 @@ fn semantic_dropdown_helper_targets_rendered_popup_layout() {
         .with_size(60, 16)
         .script([
             ScriptedStep::key(AppKeyCode::Tab),
-            ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::key(AppKeyCode::Down),
             ScriptedStep::key(AppKeyCode::Down),
             ScriptedStep::open_dropdown("color"),
@@ -138,7 +136,6 @@ fn happy_path_scripted_flow_mixes_navigation_editing_and_run() {
 
     let run = ScriptedHarness::new(command)
         .script([
-            ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::raw(AppEvent::Key(AppKeyEvent::new(
                 AppKeyCode::Char(' '),

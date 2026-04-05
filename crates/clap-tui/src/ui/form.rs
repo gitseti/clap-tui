@@ -142,6 +142,17 @@ fn render_fields(
                 rail_rect,
             );
         }
+        if let Some(rail_rect) = field.section_right_rail {
+            frame.render_widget(
+                Paragraph::new(
+                    (0..rail_rect.height)
+                        .map(|_| Line::from("│"))
+                        .collect::<Vec<_>>(),
+                )
+                .style(Style::default().fg(config.theme.divider)),
+                rail_rect,
+            );
+        }
         if let Some(cap_rect) = field.section_cap {
             frame.render_widget(
                 Paragraph::new(section_cap_line(cap_rect.width))
@@ -866,8 +877,14 @@ fn section_heading_line(config: &TuiConfig, heading: &str, width: u16) -> Line<'
     let title_width = u16::try_from(title.chars().count()).unwrap_or(width);
     let left = "╭─";
     let left_width = u16::try_from(left.chars().count()).unwrap_or(2);
+    let right = "╮";
+    let right_width = u16::try_from(right.chars().count()).unwrap_or(1);
 
-    if width <= title_width.saturating_add(left_width) {
+    if width
+        <= title_width
+            .saturating_add(left_width)
+            .saturating_add(right_width)
+    {
         return Line::from(Span::styled(
             heading.to_string(),
             Style::default()
@@ -876,7 +893,11 @@ fn section_heading_line(config: &TuiConfig, heading: &str, width: u16) -> Line<'
         ));
     }
 
-    let right_width = width.saturating_sub(left_width.saturating_add(title_width));
+    let line_width = width.saturating_sub(
+        left_width
+            .saturating_add(title_width)
+            .saturating_add(right_width),
+    );
     Line::from(vec![
         Span::styled(left, Style::default().fg(config.theme.divider)),
         Span::styled(
@@ -886,20 +907,21 @@ fn section_heading_line(config: &TuiConfig, heading: &str, width: u16) -> Line<'
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "─".repeat(usize::from(right_width)),
+            "─".repeat(usize::from(line_width)),
             Style::default().fg(config.theme.divider),
         ),
+        Span::styled(right, Style::default().fg(config.theme.divider)),
     ])
 }
 
 fn section_cap_line(width: u16) -> Line<'static> {
     if width <= 1 {
-        return Line::from("╰");
+        return Line::from("╯");
     }
 
     Line::from(format!(
-        "╰{}",
-        "─".repeat(usize::from(width.saturating_sub(1)))
+        "╰{}╯",
+        "─".repeat(usize::from(width.saturating_sub(2)))
     ))
 }
 
@@ -1495,7 +1517,7 @@ mod tests {
     }
 
     #[test]
-    fn section_heading_draws_rail_and_bottom_cap() {
+    fn section_heading_draws_full_section_frame() {
         let mut include = option_arg("include", "--include");
         include.metadata.display.help_heading = Some("Global".to_string());
         let mut config = option_arg("config", "--config");
@@ -1534,15 +1556,18 @@ mod tests {
         let second = &snapshot.layout.form_fields[1];
 
         assert!(first.section_rail.is_some());
+        assert!(first.section_right_rail.is_some());
         assert!(first.section_cap.is_none());
         assert!(second.section_rail.is_some());
+        assert!(second.section_right_rail.is_some());
         assert!(second.section_cap.is_some());
         assert_eq!(first.label.expect("label rect").x, 1);
         assert_eq!(second.input.x, 1);
+        assert_eq!(second.input.width, 38);
     }
 
     #[test]
-    fn section_rendering_shows_left_rail_and_bottom_cap() {
+    fn section_rendering_shows_full_section_frame() {
         let mut include = option_arg("include", "--include");
         include.metadata.display.help_heading = Some("Global".to_string());
         let command = CommandSpec {
@@ -1585,7 +1610,9 @@ mod tests {
 
         let rendered = buffer_text(terminal.backend());
         assert!(rendered.contains('│'));
-        assert!(rendered.contains("╰──"));
+        assert!(rendered.contains('╮'));
+        assert!(rendered.contains("╰"));
+        assert!(rendered.contains('╯'));
     }
 
     #[test]

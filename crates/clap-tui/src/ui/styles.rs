@@ -269,14 +269,13 @@ pub(crate) fn secondary_chip(config: &TuiConfig, hovered: bool) -> Style {
 
 pub(crate) fn primary_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
-        .fg(config.theme.primary_action_fg)
-        .bg(config.theme.primary_action_bg)
+        .fg(config.theme.text)
+        .bg(config.theme.pill_bg)
         .add_modifier(Modifier::BOLD);
     if hovered {
         style
-            .fg(config.theme.primary_action_bg)
-            .bg(config.theme.primary_action_fg)
-            .add_modifier(Modifier::BOLD)
+            .fg(config.theme.primary_action_fg)
+            .bg(config.theme.primary_action_bg)
     } else {
         style
     }
@@ -343,7 +342,7 @@ mod tests {
 
     use super::{
         MetadataKind, SidebarRowState, field_border, metadata_badge, panel_border, panel_surface,
-        sidebar_row, success_chip,
+        primary_chip, sidebar_row, success_chip,
     };
 
     #[test]
@@ -393,6 +392,19 @@ mod tests {
         let config = TuiConfig::default();
 
         assert_eq!(success_chip(&config, false).fg, Some(config.theme.success));
+    }
+
+    #[test]
+    fn primary_footer_chip_only_uses_action_fill_when_hovered() {
+        let config = TuiConfig::default();
+
+        let idle = primary_chip(&config, false);
+        let hovered = primary_chip(&config, true);
+
+        assert_eq!(idle.bg, Some(config.theme.pill_bg));
+        assert_eq!(idle.fg, Some(config.theme.text));
+        assert_eq!(hovered.bg, Some(config.theme.primary_action_bg));
+        assert_eq!(hovered.fg, Some(config.theme.primary_action_fg));
     }
 
     #[test]
