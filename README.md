@@ -85,6 +85,13 @@ cargo run -p clap-tui --example subcommands -- tui
 cargo run -p clap-tui --example kitchen_sink
 ```
 
+## Release verification
+
+Maintainers can run `./scripts/verify-release-readiness.sh` for the same formatting,
+linting, test, and package-surface checks that the GitHub `verify` workflow enforces.
+See `docs/release-readiness.md` for the branch-protection setup, tag dry-run flow,
+the proc-macro publishing prerequisite, and the current manual-publish boundary.
+
 ## Synthetic `tui` scope
 
 The v1 synthetic launcher is intentionally narrow:

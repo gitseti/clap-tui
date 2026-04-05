@@ -5,6 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Proc macros for clap-tui"
+readme = "README.md"
+repository = "https://github.com/gitseti/clap-tui"
+homepage = "https://github.com/gitseti/clap-tui"
+documentation = "https://docs.rs/clap-tui-macros"
+keywords = ["clap", "tui", "proc-macro", "attribute", "terminal"]
+categories = ["command-line-interface", "development-tools"]
 
 [lib]
 proc-macro = true

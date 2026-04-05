@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/clap-tui", "crates/clap-tui-macros"]
+members = ["crates/clap-tui", "crates/clap-tui-macros", "xtask"]
 resolver = "2"
 
 [workspace.package]

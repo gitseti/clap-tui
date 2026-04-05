@@ -22,7 +22,7 @@ clap.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 thiserror.workspace = true
-clap-tui-macros = { path = "../clap-tui-macros" }
+clap-tui-macros = { path = "../clap-tui-macros", version = "0.1.0" }
 tracing = { version = "0.1", optional = true }
 tui-textarea = "0.4"
 arboard = "3.6.1"

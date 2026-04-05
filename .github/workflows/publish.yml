@@ -1,0 +1,76 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    environment: release
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate release tag matches crate version
+        run: cargo run -q -p xtask -- check-tag-version "${GITHUB_REF_NAME}"
+
+      - name: Re-run release-readiness verification
+        run: ./scripts/verify-release-readiness.sh
+
+      - name: Dry-run publish proc-macro crate
+        run: cargo publish -p clap-tui-macros --locked --dry-run
+
+      - name: Run crates.io publish dry-run when publishing is enabled
+        if: ${{ vars.CLAP_TUI_PUBLISH_MODE == 'trusted-publishing' || vars.CLAP_TUI_PUBLISH_MODE == 'token' }}
+        run: ./scripts/verify-release-readiness.sh --publish-dry-run
+
+      - name: Authenticate with crates.io using trusted publishing
+        if: ${{ vars.CLAP_TUI_PUBLISH_MODE == 'trusted-publishing' }}
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish clap-tui with trusted publishing
+        if: ${{ vars.CLAP_TUI_PUBLISH_MODE == 'trusted-publishing' }}
+        run: cargo publish -p clap-tui --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Publish clap-tui with explicit token fallback
+        if: ${{ vars.CLAP_TUI_PUBLISH_MODE == 'token' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN}" ]]; then
+            echo "CRATES_IO_TOKEN is not configured." >&2
+            exit 1
+          fi
+          cargo publish -p clap-tui --locked
+
+      - name: Explain why publishing is still disabled
+        if: ${{ vars.CLAP_TUI_PUBLISH_MODE != 'trusted-publishing' && vars.CLAP_TUI_PUBLISH_MODE != 'token' }}
+        run: |
+          echo "Tag validation and pre-publish verification passed."
+          echo "Publishing is intentionally disabled until the release prerequisites are complete."
+          echo "Publish any required clap-tui-macros version first."
+          echo "Then set CLAP_TUI_PUBLISH_MODE=trusted-publishing for the default OIDC path,"
+          echo "or CLAP_TUI_PUBLISH_MODE=token with CRATES_IO_TOKEN as the explicit fallback."
