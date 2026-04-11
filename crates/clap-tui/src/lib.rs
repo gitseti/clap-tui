@@ -75,7 +75,6 @@
 //! # Feature Flags And Runtime Expectations
 //!
 //! - The default `mouse` feature enables mouse capture and mouse-driven controls.
-//! - The optional `tracing` feature enables internal tracing instrumentation.
 //! - The default [`CrosstermRuntime`] expects an interactive terminal with raw mode and an
 //!   alternate screen.
 //!

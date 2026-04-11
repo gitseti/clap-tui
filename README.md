@@ -86,7 +86,6 @@ Internal reducers, projections, render helpers, and other support modules are no
 ## Feature flags
 
 - `mouse` is enabled by default and turns on mouse capture plus mouse-driven controls.
-- `tracing` enables internal tracing instrumentation for applications that want to hook the crate into an existing tracing setup.
 
 ## Terminal expectations
 
