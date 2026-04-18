@@ -72,7 +72,12 @@ fn missing_required_validation_state(state: &AppState) -> Option<ValidationState
 
 fn adapt_clap_error(state: &AppState, error: &clap::Error) -> ValidationState {
     let summary = summary_from_error_kind_and_context(state, error);
-    let field_errors = infer_field_errors(state, error, summary.as_deref());
+    let mut field_errors = infer_field_errors(state, error, summary.as_deref());
+    for arg in missing_required_arg_models(state) {
+        field_errors
+            .entry(arg.id.clone())
+            .or_insert_with(|| "Required argument".to_string());
+    }
 
     ValidationState {
         is_valid: false,

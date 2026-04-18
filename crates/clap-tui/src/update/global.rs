@@ -111,13 +111,9 @@ fn apply_footer_click(
             Effect::None
         }
         HoverTarget::Preview => {
-            if state
-                .derived_validation()
-                .summary
-                .as_ref()
-                .is_some_and(|_| frame_snapshot.first_invalid_field_id().is_some())
-            {
-                navigation::focus_first_invalid_field(state, frame_snapshot);
+            let validation = state.derived_validation();
+            if validation.summary.is_some() {
+                navigation::focus_first_invalid_field(state, frame_snapshot, &validation);
             }
             Effect::None
         }
@@ -410,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_traversal_cycles_only_between_sidebar_and_form() {
+    fn focus_traversal_cycles_through_sidebar_search_and_form() {
         let mut state = crate::input::AppState::new(command_with_build());
         let snapshot = FrameSnapshot::default();
 
@@ -418,7 +414,20 @@ mod tests {
 
         let effect = apply_action(&Action::ToggleFocus, &mut state, &snapshot);
         assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Search));
+
+        let effect = apply_action(&Action::ToggleFocus, &mut state, &snapshot);
+        assert_eq!(effect, Effect::None);
         assert!(matches!(state.ui.focus, Focus::Form));
+
+        let effect = apply_action(&Action::ToggleFocus, &mut state, &snapshot);
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Sidebar));
+
+        state.ui.focus = Focus::Form;
+        let effect = apply_action(&Action::ReverseFocus, &mut state, &snapshot);
+        assert_eq!(effect, Effect::None);
+        assert!(matches!(state.ui.focus, Focus::Search));
 
         let effect = apply_action(&Action::ReverseFocus, &mut state, &snapshot);
         assert_eq!(effect, Effect::None);
@@ -433,7 +442,6 @@ mod tests {
         state.ui.focus = Focus::Sidebar;
         let mut snapshot = FrameSnapshot::default();
         snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 6));
-        snapshot.layout.invalid_field_ids = vec!["name".to_string()];
 
         let effect = apply_action(
             &Action::ClickFooter(crate::input::HoverTarget::Preview),

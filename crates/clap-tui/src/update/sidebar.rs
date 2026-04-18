@@ -1,7 +1,7 @@
 use crate::controller::navigation;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
-use crate::query::{form, tree};
+use crate::query::selectors;
 
 use super::{Action, Effect};
 
@@ -46,11 +46,13 @@ fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &Fr
     if *state.domain.selected_path() != path && state.select_command_path(path.as_slice()).is_ok() {
         let root = state.domain.root.clone();
         let selected_path = state.domain.selected_path().clone();
-        let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
-        state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
+        let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+        state
+            .ui
+            .focus_first_tab(&selectors::visible_form_arg_pairs(&args));
     }
     if caret_hit && has_children {
-        let items = tree::tree_items(
+        let items = selectors::visible_sidebar_items(
             &state.domain.root,
             &state.domain.expanded,
             &state.ui.search_query,

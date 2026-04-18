@@ -1,10 +1,10 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 
 use crate::config::TuiConfig;
-use crate::frame_snapshot::{self, FrameSnapshot};
+use crate::frame_snapshot::FrameSnapshot;
 use crate::input::UiState;
 
-use super::{footer, screen::ScreenView, sidebar};
+use super::{footer, form, screen::ScreenView, sidebar};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LayoutMode {
@@ -59,10 +59,6 @@ pub(crate) fn build_screen_layout(
     };
     let preview_height = if mode.is_compact() { 1 } else { 3 };
 
-    let inner_size = size.inner(Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -70,10 +66,10 @@ pub(crate) fn build_screen_layout(
             Constraint::Length(preview_height),
             Constraint::Length(1),
         ])
-        .split(inner_size);
+        .split(size);
 
     let body_area = vertical[0];
-    let preview_area = vertical[1];
+    let preview_row_area = vertical[1];
     let footer_area = vertical[2];
     let root = Layout::default()
         .direction(Direction::Horizontal)
@@ -91,10 +87,22 @@ pub(crate) fn build_screen_layout(
     let main_area = root[1];
     let main_inner = main_area.inner(Margin {
         horizontal: 1,
-        vertical: 1,
+        vertical: 0,
     });
-    let header_height =
-        u16::from(!mode.is_compact() && super::header::has_header_content(vm.command));
+    let preview_area = Rect::new(
+        main_inner.x,
+        preview_row_area.y,
+        preview_row_area
+            .x
+            .saturating_add(preview_row_area.width)
+            .saturating_sub(main_inner.x),
+        preview_row_area.height,
+    );
+    let header_height = if super::header::has_header_content(vm.command) {
+        super::header::header_height(vm.command, mode.is_compact())
+    } else {
+        0
+    };
     let main_sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(header_height), Constraint::Min(0)])
@@ -118,14 +126,7 @@ pub(crate) fn build_screen_layout(
     snapshot.layout.preview = Some(preview_area);
     snapshot.layout.footer = Some(footer_area);
     sidebar::populate_layout(sidebar_area, vm, &mut snapshot.layout);
-    frame_snapshot::populate_form_layout(
-        ui,
-        areas.form,
-        &vm.active_args,
-        &vm.command.help,
-        &vm.validation,
-        &mut snapshot,
-    );
+    form::populate_layout(ui, areas.form, vm, &mut snapshot);
     footer::populate_layout(ui, footer_area, &mut snapshot.layout);
 
     ScreenLayout { areas, snapshot }
@@ -207,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_layout_collapses_header_and_preview_first() {
+    fn compact_layout_preserves_header_but_keeps_preview_compact() {
         let command = command(Some("Run the selected tool"));
         let layout = build_screen_layout(
             &ui_state(),
@@ -216,8 +217,10 @@ mod tests {
             &view(&command),
         );
 
-        assert_eq!(layout.areas.header.height, 0);
+        assert_eq!(layout.areas.header.height, 2);
         assert_eq!(layout.areas.preview.height, 1);
+        assert_eq!(layout.areas.preview.x, layout.areas.form.x);
+        assert_eq!(layout.areas.preview.x + layout.areas.preview.width, 70);
         assert_eq!(layout.areas.footer.height, 1);
     }
 
@@ -231,8 +234,10 @@ mod tests {
             &view(&command),
         );
 
-        assert_eq!(layout.areas.header.height, 1);
+        assert_eq!(layout.areas.header.height, 3);
         assert_eq!(layout.areas.preview.height, 3);
+        assert_eq!(layout.areas.preview.x, layout.areas.form.x);
+        assert_eq!(layout.areas.preview.x + layout.areas.preview.width, 100);
         assert_eq!(layout.areas.footer.height, 1);
     }
 }

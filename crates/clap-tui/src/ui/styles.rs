@@ -1,11 +1,13 @@
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 
 use crate::config::TuiConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Surface {
-    Panel,
-    Raised,
+    Shell,
+    Workspace,
+    Control,
+    ControlActive,
     Result,
     Overlay,
 }
@@ -37,35 +39,33 @@ pub(crate) enum FooterChipKind {
 
 pub(crate) fn surface(config: &TuiConfig, surface: Surface) -> Style {
     let bg = match surface {
-        Surface::Panel => config.theme.panel_bg,
-        Surface::Raised => config.theme.surface_raised,
+        Surface::Shell => config.theme.shell_bg,
+        Surface::Workspace => config.theme.workspace_bg,
+        Surface::Control => config.theme.input_bg,
+        Surface::ControlActive => config.theme.surface_raised,
         Surface::Result => config.theme.preview_bg,
         Surface::Overlay => config.theme.overlay_bg,
     };
     Style::default().bg(bg)
 }
 
-pub(crate) fn panel(config: &TuiConfig) -> Style {
-    surface(config, Surface::Panel)
-}
-
-pub(crate) fn panel_fill(config: &TuiConfig, focused: bool) -> Color {
-    if focused {
-        config.theme.panel_bg
-    } else {
-        config.theme.preview_bg
-    }
-}
-
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn panel_surface(config: &TuiConfig, focused: bool) -> Style {
-    Style::default().bg(panel_fill(config, focused))
+    surface(
+        config,
+        if focused {
+            Surface::Workspace
+        } else {
+            Surface::Shell
+        },
+    )
 }
 
 pub(crate) fn panel_border(config: &TuiConfig, focused: bool) -> Style {
     Style::default().fg(if focused {
-        config.theme.focus
+        config.theme.panel_focus_border
     } else {
-        config.theme.border
+        config.theme.shell_border
     })
 }
 
@@ -73,16 +73,11 @@ pub(crate) fn input(config: &TuiConfig, selected: bool) -> Style {
     surface(
         config,
         if selected {
-            Surface::Raised
+            Surface::ControlActive
         } else {
-            Surface::Panel
+            Surface::Control
         },
     )
-    .bg(if selected {
-        config.theme.surface_raised
-    } else {
-        config.theme.input_bg
-    })
 }
 
 pub(crate) fn field_border(config: &TuiConfig, focused: bool, invalid: bool) -> Style {
@@ -100,21 +95,14 @@ pub(crate) fn field_border(config: &TuiConfig, focused: bool, invalid: bool) -> 
 
 pub(crate) fn flag_toggle(config: &TuiConfig, selected: bool) -> Style {
     input(config, selected).fg(if selected {
-        config.theme.selection_fg
-    } else {
         config.theme.text
+    } else {
+        config.theme.metadata
     })
 }
 
 pub(crate) fn compact_control(config: &TuiConfig, selected: bool) -> Style {
-    surface(
-        config,
-        if selected {
-            Surface::Raised
-        } else {
-            Surface::Overlay
-        },
-    )
+    input(config, selected)
 }
 
 pub(crate) fn compact_control_value(config: &TuiConfig, selected: bool, is_default: bool) -> Style {
@@ -136,7 +124,7 @@ pub(crate) fn compact_control_affordance(
 ) -> Style {
     if emphasized {
         Style::default()
-            .fg(config.theme.panel_bg)
+            .fg(config.theme.shell_bg)
             .bg(config.theme.accent)
             .add_modifier(Modifier::BOLD)
     } else if selected {
@@ -147,18 +135,18 @@ pub(crate) fn compact_control_affordance(
     } else {
         Style::default()
             .fg(config.theme.metadata)
-            .bg(config.theme.pill_bg)
+            .bg(config.theme.badge_bg)
             .add_modifier(Modifier::BOLD)
     }
 }
 
 pub(crate) fn checkbox_chip(config: &TuiConfig, selected: bool, enabled: bool) -> Style {
     let (fg, bg) = if enabled {
-        (config.theme.panel_bg, config.theme.accent)
+        (config.theme.shell_bg, config.theme.accent)
     } else if selected {
         (config.theme.text, config.theme.focus_bg)
     } else {
-        (config.theme.metadata, config.theme.pill_bg)
+        (config.theme.metadata, config.theme.badge_bg)
     };
     Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
 }
@@ -184,7 +172,9 @@ pub(crate) fn label(config: &TuiConfig, focused: bool) -> Style {
             .fg(config.theme.text)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(config.theme.metadata)
+        Style::default()
+            .fg(config.theme.dim)
+            .add_modifier(Modifier::BOLD)
     }
 }
 
@@ -206,11 +196,14 @@ pub(crate) fn sidebar_row(config: &TuiConfig, state: SidebarRowState) -> Style {
     match state {
         SidebarRowState::IdleRoot => Style::default()
             .fg(config.theme.text)
-            .bg(config.theme.panel_bg),
+            .bg(config.theme.sidebar_bg),
         SidebarRowState::IdleChild => Style::default()
             .fg(config.theme.metadata)
-            .bg(config.theme.panel_bg),
-        SidebarRowState::ActiveFocused => selection(config),
+            .bg(config.theme.sidebar_bg),
+        SidebarRowState::ActiveFocused => Style::default()
+            .fg(config.theme.selection_fg)
+            .bg(config.theme.selection_bg)
+            .add_modifier(Modifier::BOLD),
         SidebarRowState::ActiveUnfocused => Style::default()
             .fg(config.theme.selected_idle_fg)
             .bg(config.theme.selected_idle_bg)
@@ -221,9 +214,12 @@ pub(crate) fn sidebar_row(config: &TuiConfig, state: SidebarRowState) -> Style {
 pub(crate) fn subtle_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
         .fg(config.theme.metadata)
-        .bg(config.theme.pill_bg);
+        .bg(config.theme.header_bg);
     if hovered {
-        style.fg(config.theme.text).add_modifier(Modifier::BOLD)
+        style
+            .fg(config.theme.text)
+            .bg(config.theme.badge_bg)
+            .add_modifier(Modifier::BOLD)
     } else {
         style
     }
@@ -232,50 +228,48 @@ pub(crate) fn subtle_chip(config: &TuiConfig, hovered: bool) -> Style {
 pub(crate) fn status_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
         .fg(config.theme.error)
-        .bg(config.theme.pill_bg)
+        .bg(config.theme.header_bg)
         .add_modifier(Modifier::BOLD);
     if hovered {
-        style.fg(config.theme.panel_bg).bg(config.theme.error)
+        style.fg(config.theme.shell_bg).bg(config.theme.error)
     } else {
         style
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn success_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
         .fg(config.theme.success)
-        .bg(config.theme.pill_bg)
+        .bg(config.theme.header_bg)
         .add_modifier(Modifier::BOLD);
     if hovered {
-        style.fg(config.theme.panel_bg).bg(config.theme.success)
+        style.fg(config.theme.shell_bg).bg(config.theme.success)
     } else {
         style
     }
 }
 
 pub(crate) fn secondary_chip(config: &TuiConfig, hovered: bool) -> Style {
-    let style = Style::default()
-        .fg(config.theme.text)
-        .bg(config.theme.pill_bg);
     if hovered {
-        style
-            .fg(config.theme.panel_bg)
-            .bg(config.theme.focus)
+        Style::default()
+            .fg(config.theme.secondary_action_fg)
+            .bg(config.theme.secondary_action_bg)
             .add_modifier(Modifier::BOLD)
     } else {
-        style
+        Style::default()
+            .fg(config.theme.metadata)
+            .bg(config.theme.header_bg)
     }
 }
 
 pub(crate) fn primary_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
-        .fg(config.theme.text)
-        .bg(config.theme.pill_bg)
+        .fg(config.theme.primary_action_fg)
+        .bg(config.theme.primary_action_bg)
         .add_modifier(Modifier::BOLD);
     if hovered {
-        style
-            .fg(config.theme.primary_action_fg)
-            .bg(config.theme.primary_action_bg)
+        style.bg(lift_color(config.theme.primary_action_bg, 14))
     } else {
         style
     }
@@ -290,24 +284,44 @@ pub(crate) fn footer_chip(config: &TuiConfig, kind: FooterChipKind, hovered: boo
     }
 }
 
-pub(crate) fn metadata_badge(config: &TuiConfig, _kind: MetadataKind) -> Style {
-    Style::default()
-        .fg(config.theme.metadata)
-        .bg(config.theme.pill_bg)
-}
-
-pub(crate) fn preview_border(config: &TuiConfig, emphasized: bool) -> Style {
-    Style::default().fg(if emphasized {
-        config.theme.focus
-    } else {
-        config.theme.divider
-    })
+pub(crate) fn metadata_badge(config: &TuiConfig, kind: MetadataKind) -> Style {
+    match kind {
+        MetadataKind::Global => Style::default()
+            .fg(config.theme.metadata)
+            .bg(config.theme.badge_bg),
+        MetadataKind::Default => Style::default()
+            .fg(config.theme.info)
+            .bg(config.theme.badge_bg),
+        MetadataKind::Env => Style::default()
+            .fg(config.theme.info)
+            .bg(config.theme.badge_bg)
+            .add_modifier(Modifier::BOLD),
+        MetadataKind::Implicit => Style::default()
+            .fg(config.theme.warning)
+            .bg(config.theme.badge_bg)
+            .add_modifier(Modifier::BOLD),
+        MetadataKind::Conditional => Style::default()
+            .fg(config.theme.warning)
+            .bg(config.theme.badge_bg),
+    }
 }
 
 pub(crate) fn preview_title(config: &TuiConfig) -> Style {
     Style::default()
         .fg(config.theme.text)
+        .bg(config.theme.header_bg)
         .add_modifier(Modifier::BOLD)
+}
+
+fn lift_color(color: ratatui::style::Color, amount: u8) -> ratatui::style::Color {
+    match color {
+        ratatui::style::Color::Rgb(r, g, b) => ratatui::style::Color::Rgb(
+            r.saturating_add(amount),
+            g.saturating_add(amount),
+            b.saturating_add(amount),
+        ),
+        other => other,
+    }
 }
 
 pub(crate) fn overlay_panel(config: &TuiConfig, focused: bool) -> Style {
@@ -323,7 +337,7 @@ pub(crate) fn scrollbar_thumb(config: &TuiConfig, focused: bool) -> Style {
         .fg(if focused {
             config.theme.focus
         } else {
-            config.theme.metadata
+            config.theme.dim
         })
         .add_modifier(Modifier::BOLD)
 }
@@ -333,33 +347,41 @@ pub(crate) fn scrollbar_cap(config: &TuiConfig, focused: bool) -> Style {
 }
 
 pub(crate) fn scrollbar_track(config: &TuiConfig) -> Style {
-    Style::default().fg(config.theme.metadata)
+    Style::default().fg(config.theme.divider)
 }
 
 #[cfg(test)]
 mod tests {
+    use ratatui::style::Modifier;
+
     use crate::config::TuiConfig;
 
     use super::{
         MetadataKind, SidebarRowState, field_border, metadata_badge, panel_border, panel_surface,
-        primary_chip, sidebar_row, success_chip,
+        primary_chip, secondary_chip, sidebar_row, success_chip,
     };
 
     #[test]
     fn panel_border_uses_focus_color_for_focused_panels() {
         let config = TuiConfig::default();
 
-        assert_eq!(panel_border(&config, true).fg, Some(config.theme.focus));
+        assert_eq!(
+            panel_border(&config, true).fg,
+            Some(config.theme.panel_focus_border)
+        );
     }
 
     #[test]
     fn panel_surface_dims_unfocused_panels() {
         let config = TuiConfig::default();
 
-        assert_eq!(panel_surface(&config, true).bg, Some(config.theme.panel_bg));
+        assert_eq!(
+            panel_surface(&config, true).bg,
+            Some(config.theme.workspace_bg)
+        );
         assert_eq!(
             panel_surface(&config, false).bg,
-            Some(config.theme.preview_bg)
+            Some(config.theme.shell_bg)
         );
     }
 
@@ -374,17 +396,34 @@ mod tests {
     }
 
     #[test]
-    fn metadata_badges_share_one_quiet_metadata_style() {
+    fn field_border_uses_focus_color_for_focused_fields() {
         let config = TuiConfig::default();
 
         assert_eq!(
-            metadata_badge(&config, MetadataKind::Default).fg,
-            Some(config.theme.metadata)
+            field_border(&config, true, false).fg,
+            Some(config.theme.focus)
         );
-        assert_eq!(
-            metadata_badge(&config, MetadataKind::Global).fg,
-            Some(config.theme.metadata)
-        );
+    }
+
+    #[test]
+    fn metadata_badges_distinguish_semantic_kinds() {
+        let config = TuiConfig::default();
+
+        let global = metadata_badge(&config, MetadataKind::Global);
+        let default = metadata_badge(&config, MetadataKind::Default);
+        let env = metadata_badge(&config, MetadataKind::Env);
+        let implicit = metadata_badge(&config, MetadataKind::Implicit);
+        let conditional = metadata_badge(&config, MetadataKind::Conditional);
+
+        assert_eq!(global.fg, Some(config.theme.metadata));
+        assert_eq!(default.fg, Some(config.theme.info));
+        assert_eq!(env.fg, Some(config.theme.info));
+        assert_eq!(implicit.fg, Some(config.theme.warning));
+        assert_eq!(conditional.fg, Some(config.theme.warning));
+        assert!(env.add_modifier.contains(Modifier::BOLD));
+        assert!(implicit.add_modifier.contains(Modifier::BOLD));
+        assert!(!default.add_modifier.contains(Modifier::BOLD));
+        assert!(!conditional.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -395,16 +434,30 @@ mod tests {
     }
 
     #[test]
-    fn primary_footer_chip_only_uses_action_fill_when_hovered() {
+    fn footer_action_chips_highlight_without_underlines() {
         let config = TuiConfig::default();
 
         let idle = primary_chip(&config, false);
+        let secondary = secondary_chip(&config, false);
         let hovered = primary_chip(&config, true);
+        let secondary_hovered = secondary_chip(&config, true);
 
-        assert_eq!(idle.bg, Some(config.theme.pill_bg));
-        assert_eq!(idle.fg, Some(config.theme.text));
-        assert_eq!(hovered.bg, Some(config.theme.primary_action_bg));
+        assert_eq!(idle.bg, Some(config.theme.primary_action_bg));
+        assert_eq!(idle.fg, Some(config.theme.primary_action_fg));
+        assert_ne!(idle.bg, secondary.bg);
+        assert_ne!(idle.fg, secondary.fg);
+        assert_eq!(secondary.bg, Some(config.theme.header_bg));
+        assert_eq!(secondary.fg, Some(config.theme.metadata));
+        assert_eq!(secondary_hovered.bg, Some(config.theme.secondary_action_bg));
+        assert_eq!(secondary_hovered.fg, Some(config.theme.secondary_action_fg));
+        assert_ne!(hovered.bg, Some(config.theme.primary_action_bg));
         assert_eq!(hovered.fg, Some(config.theme.primary_action_fg));
+        assert!(!hovered.add_modifier.contains(Modifier::UNDERLINED));
+        assert!(
+            !secondary_hovered
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
     }
 
     #[test]

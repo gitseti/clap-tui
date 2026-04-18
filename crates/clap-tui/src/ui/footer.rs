@@ -3,7 +3,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Paragraph, Widget};
 
 use crate::config::TuiConfig;
 use crate::frame_snapshot::{FooterButtonLayout, FrameLayout};
@@ -56,7 +56,12 @@ struct FooterWidget<'a> {
 
 impl Widget for FooterWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        Widget::render(Line::from(footer_spans(self.config, self.view)), area, buf);
+        Widget::render(
+            Paragraph::new(Line::from(footer_spans(self.config, self.view)))
+                .style(Style::default().bg(self.config.theme.header_bg)),
+            area,
+            buf,
+        );
     }
 }
 
@@ -106,19 +111,11 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
             "/ Search",
             FooterChipVariant::Subtle,
         ),
-        build_chip(
-            ui,
-            HoverTarget::Focus,
-            "Tab/Shift+Tab Sidebar/Form",
-            FooterChipVariant::Subtle,
-        ),
+        build_chip(ui, HoverTarget::Focus, "Focus", FooterChipVariant::Subtle),
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
     ];
     if let Some(summary) = validation.summary.as_ref() {
-        candidates.insert(
-            0,
-            build_chip(ui, HoverTarget::Preview, summary, FooterChipVariant::Status),
-        );
+        candidates.insert(0, build_status_chip(ui, summary));
     }
     let hints = fit_footer_hints(area, &actions, candidates);
     FooterView {
@@ -139,6 +136,15 @@ fn build_chip(
         label: format!(" {chip} "),
         hovered: ui.hover == Some(target),
         variant,
+    }
+}
+
+fn build_status_chip(ui: &UiState, chip: &str) -> FooterChip {
+    FooterChip {
+        target: HoverTarget::Preview,
+        label: format!(" {chip} "),
+        hovered: matches!(ui.hover, Some(HoverTarget::Preview | HoverTarget::Run)),
+        variant: FooterChipVariant::Status,
     }
 }
 
@@ -371,10 +377,6 @@ mod tests {
             layouts[2].rect.x + layouts[2].rect.width + 1,
             layouts[3].rect.x
         );
-        assert_eq!(
-            layouts[3].rect.x + layouts[3].rect.width + 1,
-            layouts[4].rect.x
-        );
     }
 
     #[test]
@@ -390,7 +392,25 @@ mod tests {
 
         assert!(view.actions[0].hovered);
         assert!(!view.actions[1].hovered);
-        assert_eq!(view.hints.len(), 2);
+        assert_eq!(view.hints.len(), 3);
+    }
+
+    #[test]
+    fn footer_view_uses_compact_focus_hint() {
+        let state = build_test_state();
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 80, 1),
+            &ValidationState::default(),
+        );
+
+        let focus_hint = view
+            .hints
+            .iter()
+            .find(|hint| hint.target == HoverTarget::Focus)
+            .expect("focus hint");
+
+        assert_eq!(focus_hint.label, " Focus ");
     }
 
     #[test]
@@ -407,6 +427,26 @@ mod tests {
         );
 
         assert_eq!(view.hints[0].label, " Missing required argument: --name ");
+        assert_eq!(view.hints[0].target, HoverTarget::Preview);
+    }
+
+    #[test]
+    fn footer_status_highlights_when_run_is_hovered() {
+        let mut state = build_test_state();
+        state.ui.hover = Some(HoverTarget::Run);
+
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 80, 1),
+            &ValidationState {
+                is_valid: false,
+                summary: Some("Missing required argument: --name".to_string()),
+                field_errors: std::collections::BTreeMap::new(),
+            },
+        );
+
+        assert!(view.actions[0].hovered);
+        assert!(view.hints[0].hovered);
         assert_eq!(view.hints[0].target, HoverTarget::Preview);
     }
 

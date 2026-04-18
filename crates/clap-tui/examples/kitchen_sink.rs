@@ -303,7 +303,30 @@ fn build_command() -> Command {
                 .arg_required_else_help(true)
                 .subcommand_required(true)
                 .subcommand(Command::new("cache").about("Inspect cache state"))
-                .subcommand(Command::new("users").about("Inspect user state")),
+                .subcommand(
+                    Command::new("users")
+                        .about("Inspect user state")
+                        .arg_required_else_help(true)
+                        .subcommand_required(true)
+                        .subcommand(
+                            Command::new("list").about("List known users").arg(
+                                Arg::new("status")
+                                    .long("status")
+                                    .help("Filter users by account state")
+                                    .value_parser(["active", "disabled", "pending"]),
+                            ),
+                        )
+                        .subcommand(
+                            Command::new("sessions")
+                                .about("Inspect active user sessions")
+                                .arg(
+                                    Arg::new("user")
+                                        .long("user")
+                                        .help("Only show sessions for this user")
+                                        .value_name("USER"),
+                                ),
+                        ),
+                ),
         )
         .subcommand(
             Command::new("inspect")

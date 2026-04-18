@@ -5,7 +5,7 @@ use clap::Command;
 
 use crate::editor_state::EditorState;
 use crate::frame_snapshot::FrameSnapshot;
-use crate::query::form as form_query;
+use crate::query::selectors as selector_query;
 use crate::spec::{ArgSpec, CommandPath, CommandSpec, SelectionError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -872,7 +872,8 @@ impl UiState {
     pub fn focus_next(&mut self) {
         self.dismiss_transient_interaction();
         self.focus = match self.focus {
-            Focus::Sidebar | Focus::Search => Focus::Form,
+            Focus::Sidebar => Focus::Search,
+            Focus::Search => Focus::Form,
             Focus::Form => Focus::Sidebar,
         };
     }
@@ -880,8 +881,9 @@ impl UiState {
     pub fn focus_previous(&mut self) {
         self.dismiss_transient_interaction();
         self.focus = match self.focus {
-            Focus::Sidebar | Focus::Search => Focus::Form,
-            Focus::Form => Focus::Sidebar,
+            Focus::Sidebar => Focus::Form,
+            Focus::Search => Focus::Sidebar,
+            Focus::Form => Focus::Search,
         };
     }
 
@@ -956,13 +958,7 @@ impl UiState {
         self.sidebar_scroll = self.sidebar_scroll(total_rows, visible_rows);
     }
 
-    pub fn adjust_sidebar_scroll(
-        &mut self,
-        delta: i16,
-        total_rows: usize,
-        visible_rows: usize,
-        selected_row: Option<usize>,
-    ) {
+    pub fn adjust_sidebar_scroll(&mut self, delta: i16, total_rows: usize, visible_rows: usize) {
         if delta.is_negative() {
             self.sidebar_scroll = self
                 .sidebar_scroll
@@ -973,19 +969,6 @@ impl UiState {
                 .saturating_add(usize::from(delta.unsigned_abs()));
         }
         self.clamp_sidebar_scroll(total_rows, visible_rows);
-
-        let Some(selected_row) = selected_row else {
-            return;
-        };
-        if visible_rows == 0 || total_rows == 0 {
-            self.sidebar_scroll = 0;
-            return;
-        }
-
-        let max_scroll = total_rows.saturating_sub(visible_rows.min(total_rows));
-        let min_visible = selected_row.saturating_add(1).saturating_sub(visible_rows);
-        let max_visible = selected_row.min(max_scroll);
-        self.sidebar_scroll = self.sidebar_scroll.clamp(min_visible, max_visible);
     }
 
     pub fn adjust_form_scroll(&mut self, delta: i16) {
@@ -1099,12 +1082,12 @@ impl AppState {
     }
 
     pub fn sync_visible_form_selection(&mut self) {
-        let active_args = form_query::visible_args_for_path(
+        let active_args = selector_query::visible_form_args(
             &self.domain.root,
             self.domain.selected_path(),
             self.ui.active_tab,
         );
-        let visible = form_query::visible_arg_pairs(&active_args);
+        let visible = selector_query::visible_form_arg_pairs(&active_args);
         self.ui.ensure_active_tab_visible(&visible);
         self.ui.ensure_selected_arg_visible(&visible);
     }

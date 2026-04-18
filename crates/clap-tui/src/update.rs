@@ -44,6 +44,9 @@ pub(crate) enum Action {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+// Reducers return at most one explicit effect for the app loop to interpret.
+// This change keeps the current single-effect boundary rather than widening it
+// into a broader command or subscription model.
 pub(crate) enum Effect {
     None,
     Exit,

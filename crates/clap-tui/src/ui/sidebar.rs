@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -18,20 +18,17 @@ use super::styles::{self, SidebarRowState};
 
 pub(crate) fn populate_layout(area: Rect, vm: &ScreenView<'_>, frame_layout: &mut FrameLayout) {
     frame_layout.sidebar = Some(area);
-    let inner = area.inner(ratatui::layout::Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
+    let inner = area;
     let sidebar = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(3),
             Constraint::Min(0),
         ])
         .split(inner);
 
-    frame_layout.search = Some(sidebar[0]);
+    frame_layout.search = Some(sidebar[1]);
     frame_layout.sidebar_items.clear();
     let list_area = sidebar[2];
     frame_layout.sidebar_list = Some(list_area);
@@ -53,14 +50,13 @@ pub(crate) fn populate_layout(area: Rect, vm: &ScreenView<'_>, frame_layout: &mu
         };
         let row_y = content_y.saturating_add(u16::try_from(index).unwrap_or(list_area.height));
         let row_rect = Rect::new(content_x, row_y, list_area.width, 1);
-        let caret = if item.has_children {
+        let caret = sidebar_caret_offset(item).map(|offset| {
             let caret_x = content_x
-                .saturating_add(u16::try_from(item.indent).unwrap_or(0))
-                .saturating_add(0);
-            Some(Rect::new(caret_x, row_y, 1, 1))
-        } else {
-            None
-        };
+                .saturating_add(1)
+                .saturating_add(offset)
+                .min(row_rect.x.saturating_add(row_rect.width.saturating_sub(1)));
+            Rect::new(caret_x, row_y, 1, 1)
+        });
         frame_layout.sidebar_items.push(SidebarItemLayout {
             path: item.path.clone(),
             row: row_rect,
@@ -83,15 +79,11 @@ pub(crate) fn render_sidebar(
     let sidebar_focused = matches!(ui.focus, Focus::Sidebar);
     let panel_focused = search_focused || sidebar_focused;
     let root_selected = selected_path.is_empty();
-    let panel = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(styles::panel_border(config, panel_focused))
-        .title(sidebar_title(config, vm.root, root_selected))
-        .style(styles::panel_surface(config, panel_focused));
+    let panel = Block::default().style(styles::surface(config, styles::Surface::Workspace));
     frame.render_widget(panel, area);
-    let (search_area, divider_area, list_area) = sidebar_sections(area);
-    render_search(frame, ui, config, search_area, divider_area, search_focused);
+    let (title_area, search_area, list_area) = sidebar_sections(area);
+    render_title(frame, config, title_area, vm.root, root_selected);
+    render_search(frame, ui, config, search_area, search_focused);
 
     let list_view = SidebarListView::new(ui, vm, list_area);
     render_rows(frame, selected_path, config, vm, list_view, sidebar_focused);
@@ -125,19 +117,31 @@ impl SidebarListView {
 }
 
 fn sidebar_sections(area: Rect) -> (Rect, Rect, Rect) {
-    let inner = area.inner(ratatui::layout::Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
+    let inner = area;
     let sidebar = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(3),
             Constraint::Min(0),
         ])
         .split(inner);
     (sidebar[0], sidebar[1], sidebar[2])
+}
+
+fn render_title(
+    frame: &mut Frame<'_>,
+    config: &TuiConfig,
+    title_area: Rect,
+    root: &crate::spec::CommandSpec,
+    root_selected: bool,
+) {
+    frame.render_widget(
+        Paragraph::new(sidebar_title(config, root, root_selected))
+            .alignment(Alignment::Center)
+            .style(Style::default().bg(config.theme.workspace_bg)),
+        title_area,
+    );
 }
 
 fn render_search(
@@ -145,36 +149,31 @@ fn render_search(
     ui: &UiState,
     config: &TuiConfig,
     search_area: Rect,
-    divider_area: Rect,
     search_focused: bool,
 ) {
-    let mut search_style = if ui.search_query.is_empty() {
+    let mut search_text_style = if ui.search_query.is_empty() {
         styles::placeholder(config)
     } else {
         Style::default().fg(config.theme.text)
     };
     if search_focused {
-        search_style = search_style
+        search_text_style = search_text_style
             .add_modifier(Modifier::BOLD)
             .fg(config.theme.text);
     }
 
-    let search = Paragraph::new(if ui.search_query.is_empty() {
-        "/ search commands".to_string()
+    let search_text = if ui.search_query.is_empty() {
+        " ⌕  Search commands ".to_string()
     } else {
-        ui.search_query.clone()
-    })
-    .style(search_style.bg(if search_focused {
-        config.theme.surface_raised
-    } else {
-        config.theme.input_bg
-    }));
+        format!(" ⌕  {} ", ui.search_query)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(styles::field_border(config, search_focused, false));
+    let search =
+        Paragraph::new(Line::from(Span::styled(search_text, search_text_style))).block(block);
     frame.render_widget(search, search_area);
-    frame.render_widget(
-        Paragraph::new("─".repeat(divider_area.width as usize))
-            .style(Style::default().fg(config.theme.divider)),
-        divider_area,
-    );
 }
 
 fn render_rows(
@@ -219,7 +218,7 @@ fn render_row(
         TreeRow::Heading { title, indent } => {
             frame.render_widget(
                 Paragraph::new(sidebar_heading_line(config, title, *indent))
-                    .style(Style::default().bg(config.theme.panel_bg)),
+                    .style(Style::default().bg(config.theme.workspace_bg)),
                 row_rect,
             );
         }
@@ -248,7 +247,7 @@ fn sidebar_row_style(
             SidebarRowState::IdleRoot
         },
     )
-    .bg(styles::panel_fill(config, sidebar_focused));
+    .bg(config.theme.workspace_bg);
     if item.has_children || item.indent == 0 {
         style = style.add_modifier(Modifier::BOLD);
     }
@@ -301,24 +300,31 @@ fn sidebar_heading_line(config: &TuiConfig, title: &str, indent: usize) -> Line<
     ])
 }
 
+fn sidebar_caret_offset(item: &TreeItem) -> Option<u16> {
+    item.has_children.then(|| {
+        item.prefix()
+            .chars()
+            .position(|ch| matches!(ch, '+' | '-'))
+            .and_then(|offset| u16::try_from(offset).ok())
+            .unwrap_or(0)
+    })
+}
+
 fn sidebar_title(
     config: &TuiConfig,
     root: &crate::spec::CommandSpec,
     root_selected: bool,
 ) -> Line<'static> {
-    let mut spans = vec![
-        Span::raw(" "),
-        Span::styled(
-            root.name.clone(),
-            Style::default()
-                .fg(if root_selected {
-                    config.theme.text
-                } else {
-                    config.theme.dim
-                })
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
+    let mut spans = vec![Span::styled(
+        root.name.clone(),
+        Style::default()
+            .fg(if root_selected {
+                config.theme.result_accent
+            } else {
+                config.theme.info
+            })
+            .add_modifier(Modifier::BOLD),
+    )];
     if let Some(version) = root.version.as_ref() {
         spans.push(Span::raw(" · "));
         spans.push(Span::styled(
@@ -330,7 +336,6 @@ fn sidebar_title(
             }),
         ));
     }
-    spans.push(Span::raw(" "));
     Line::from(spans)
 }
 
@@ -341,10 +346,13 @@ fn sidebar_line(
     selected: bool,
 ) -> Line<'static> {
     let prefix_style = if selected {
-        row_style
+        Style::default()
+            .fg(config.theme.selection_fg)
+            .bg(row_style.bg.unwrap_or(config.theme.selection_bg))
+            .add_modifier(Modifier::BOLD)
     } else if item.has_children {
         Style::default()
-            .fg(config.theme.accent)
+            .fg(config.theme.info)
             .add_modifier(Modifier::BOLD)
     } else if item.indent > 0 {
         Style::default().fg(config.theme.dim)
@@ -353,12 +361,24 @@ fn sidebar_line(
             .fg(config.theme.text)
             .add_modifier(Modifier::BOLD)
     };
-    let mut spans = vec![Span::styled(item.prefix(), prefix_style)];
+    let mut spans = Vec::new();
+    if selected {
+        let label = if item.path.is_empty() {
+            item.display_label.clone()
+        } else {
+            format!("{}{}", item.prefix(), item.display_label)
+        };
+        spans.push(Span::styled(format!(" {label} "), prefix_style));
+        return Line::from(spans);
+    }
+
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(item.prefix(), prefix_style));
     if item.path.is_empty() {
         spans.push(Span::styled(
             item.display_label.clone(),
             Style::default()
-                .fg(config.theme.accent)
+                .fg(config.theme.result_accent)
                 .add_modifier(Modifier::BOLD | Modifier::ITALIC),
         ));
         if let Some(version) = &item.version {
@@ -395,6 +415,25 @@ mod tests {
     use crate::query::tree::{TreeItem, TreeRow};
     use crate::spec::{CommandPath, CommandSpec};
     use crate::ui::screen::ScreenView;
+
+    fn tree_item(
+        name: &str,
+        display_label: &str,
+        path: CommandPath,
+        has_children: bool,
+        indent: usize,
+        expanded: bool,
+    ) -> TreeItem {
+        TreeItem {
+            name: name.to_string(),
+            display_label: display_label.to_string(),
+            version: None,
+            path,
+            has_children,
+            indent,
+            expanded,
+        }
+    }
 
     fn ui_state() -> UiState {
         UiState {
@@ -441,14 +480,12 @@ mod tests {
 
         let line = sidebar_title(&config, &root, false);
 
-        assert_eq!(line.spans[0].content.as_ref(), " ");
-        assert_eq!(line.spans[1].content.as_ref(), "ls");
-        assert_eq!(line.spans[1].style.fg, Some(config.theme.dim));
-        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(line.spans[2].content.as_ref(), " · ");
-        assert_eq!(line.spans[3].content.as_ref(), "1.2.3");
-        assert_eq!(line.spans[3].style.fg, Some(config.theme.dim));
-        assert_eq!(line.spans[4].content.as_ref(), " ");
+        assert_eq!(line.spans[0].content.as_ref(), "ls");
+        assert_eq!(line.spans[0].style.fg, Some(config.theme.info));
+        assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line.spans[1].content.as_ref(), " · ");
+        assert_eq!(line.spans[2].content.as_ref(), "1.2.3");
+        assert_eq!(line.spans[2].style.fg, Some(config.theme.dim));
     }
 
     #[test]
@@ -465,42 +502,74 @@ mod tests {
     #[test]
     fn root_leaf_rows_use_stronger_hierarchy_typography() {
         let config = TuiConfig::default();
-        let item = TreeItem {
-            name: "serve".to_string(),
-            display_label: "serve (srv)".to_string(),
-            version: None,
-            path: CommandPath::from(vec!["serve".to_string()]),
-            has_children: false,
-            indent: 0,
-            expanded: false,
-        };
+        let item = tree_item(
+            "serve",
+            "serve (srv)",
+            CommandPath::from(vec!["serve".to_string()]),
+            false,
+            0,
+            false,
+        );
 
         let row_style = sidebar_row_style(&config, &item, false, true);
         let line = sidebar_line(&config, &item, row_style, false);
+        let label = line
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "serve (srv)")
+            .expect("label span");
 
-        assert_eq!(line.spans[1].content.as_ref(), "serve (srv)");
-        assert_eq!(line.spans[1].style.fg, Some(config.theme.text));
-        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(label.style.fg, Some(config.theme.text));
+        assert!(label.style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
     fn branch_rows_use_prominent_prefixes_for_tree_hierarchy() {
         let config = TuiConfig::default();
-        let item = TreeItem {
-            name: "workflow".to_string(),
-            display_label: "workflow".to_string(),
-            version: None,
-            path: CommandPath::from(vec!["workflow".to_string()]),
-            has_children: true,
-            indent: 0,
-            expanded: false,
-        };
+        let item = tree_item(
+            "workflow",
+            "workflow",
+            CommandPath::from(vec!["workflow".to_string()]),
+            true,
+            0,
+            false,
+        );
 
         let row_style = sidebar_row_style(&config, &item, false, true);
         let line = sidebar_line(&config, &item, row_style, false);
 
-        assert_eq!(line.spans[0].style.fg, Some(config.theme.accent));
-        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line.spans[1].content.as_ref(), "+ ");
+        assert_eq!(line.spans[1].style.fg, Some(config.theme.info));
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.content.as_ref() == "workflow"
+                    && span.style.add_modifier.contains(Modifier::BOLD))
+        );
+    }
+
+    #[test]
+    fn selected_rows_omit_trailing_chevron_and_fill_the_row() {
+        let config = TuiConfig::default();
+        let item = tree_item(
+            "serve",
+            "serve",
+            CommandPath::from(vec!["serve".to_string()]),
+            false,
+            0,
+            false,
+        );
+        let row_style = sidebar_row_style(&config, &item, true, true);
+        let line = sidebar_line(&config, &item, row_style, true);
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+
+        assert_eq!(row_style.bg, Some(config.theme.selection_bg));
+        assert!(!rendered.contains('>'));
+        assert_eq!(rendered, " serve ");
     }
 
     #[test]
@@ -516,20 +585,19 @@ mod tests {
     #[test]
     fn nested_rows_render_visible_depth_guides() {
         let config = TuiConfig::default();
-        let item = TreeItem {
-            name: "release".to_string(),
-            display_label: "release".to_string(),
-            version: None,
-            path: CommandPath::from(vec!["build".to_string(), "release".to_string()]),
-            has_children: false,
-            indent: 2,
-            expanded: false,
-        };
+        let item = tree_item(
+            "release",
+            "release",
+            CommandPath::from(vec!["build".to_string(), "release".to_string()]),
+            false,
+            2,
+            false,
+        );
 
         let line = sidebar_line(&config, &item, ratatui::style::Style::default(), false);
 
-        assert_eq!(line.spans[0].content.as_ref(), "| ");
-        assert_eq!(line.spans[0].style.fg, Some(config.theme.dim));
+        assert_eq!(line.spans[1].content.as_ref(), "| ");
+        assert_eq!(line.spans[1].style.fg, Some(config.theme.dim));
     }
 
     #[test]
@@ -618,6 +686,56 @@ mod tests {
             layout.sidebar_items[2].path.as_slice(),
             &["delta".to_string()]
         );
+    }
+
+    #[test]
+    fn populate_layout_places_caret_hit_target_on_rendered_branch_prefix() {
+        let root = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &root,
+            root: &root,
+            selected_path: CommandPath::default(),
+            tree_rows: vec![
+                TreeRow::Item(TreeItem {
+                    name: "build".to_string(),
+                    display_label: "build".to_string(),
+                    version: None,
+                    path: CommandPath::from(vec!["build".to_string()]),
+                    has_children: true,
+                    indent: 0,
+                    expanded: false,
+                }),
+                TreeRow::Item(TreeItem {
+                    name: "release".to_string(),
+                    display_label: "release".to_string(),
+                    version: None,
+                    path: CommandPath::from(vec!["build".to_string(), "release".to_string()]),
+                    has_children: true,
+                    indent: 2,
+                    expanded: false,
+                }),
+            ],
+            sidebar_scroll: 0,
+            active_args: Vec::new(),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut layout = FrameLayout::default();
+
+        populate_layout(Rect::new(0, 0, 20, 7), &vm, &mut layout);
+
+        assert_eq!(layout.sidebar_items[0].caret.expect("root caret").x, 1);
+        assert_eq!(layout.sidebar_items[1].caret.expect("child caret").x, 3);
     }
 
     #[test]

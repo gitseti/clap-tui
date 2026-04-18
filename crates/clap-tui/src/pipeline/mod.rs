@@ -229,6 +229,37 @@ mod tests {
     }
 
     #[test]
+    fn clap_backed_validation_keeps_missing_fields_when_primary_error_differs() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("name").long("name").required(true))
+                .arg(
+                    Arg::new("debug")
+                        .long("debug")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("quiet"),
+                )
+                .arg(Arg::new("quiet").long("quiet").action(ArgAction::SetTrue)),
+        );
+        state.domain.toggle_flag_touched("debug");
+        state.domain.toggle_flag_touched("quiet");
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert_eq!(
+            derived.validation.summary.as_deref(),
+            Some("Conflicting arguments: --debug, --quiet")
+        );
+        assert_eq!(
+            derived.validation.field_errors.get("name"),
+            Some(&"Required argument".to_string())
+        );
+        assert!(derived.validation.field_errors.contains_key("debug"));
+        assert!(derived.validation.field_errors.contains_key("quiet"));
+    }
+
+    #[test]
     fn derived_state_remains_stable_after_env_source_changes() {
         let path = std::env::var("PATH").expect("PATH should exist for env-backed default tests");
         let mut state = AppState::from_command(

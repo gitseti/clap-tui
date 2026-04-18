@@ -2,7 +2,8 @@ use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, ArgValue, Focus, UiState};
 use crate::query::{
     form::{self, FieldWidget},
-    tree::{self, TreeRow},
+    selectors,
+    tree::TreeRow,
 };
 use crate::spec::{CommandPath, SelectionError};
 
@@ -30,7 +31,7 @@ pub(crate) fn move_sidebar_selection(
     frame_snapshot: &FrameSnapshot,
     delta: isize,
 ) {
-    let items = tree::tree_items(
+    let items = selectors::visible_sidebar_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -82,7 +83,7 @@ pub(crate) fn move_form_selection(
     }
     let root = state.domain.root.clone();
     let selected_path = state.domain.selected_path().clone();
-    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
+    let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
     if args.is_empty() {
         return;
     }
@@ -96,7 +97,7 @@ pub(crate) fn move_form_selection(
 }
 
 pub(crate) fn select_sidebar(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
-    let items = tree::tree_items(
+    let items = selectors::visible_sidebar_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -112,7 +113,7 @@ pub(crate) fn select_sidebar(state: &mut AppState, frame_snapshot: &FrameSnapsho
 }
 
 pub(crate) fn collapse_selected(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
-    let items = tree::tree_items(
+    let items = selectors::visible_sidebar_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -128,7 +129,7 @@ pub(crate) fn collapse_selected(state: &mut AppState, frame_snapshot: &FrameSnap
 }
 
 pub(crate) fn expand_selected(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
-    let items = tree::tree_items(
+    let items = selectors::visible_sidebar_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -149,7 +150,7 @@ pub(crate) fn sidebar_right(state: &mut AppState, frame_snapshot: &FrameSnapshot
         return;
     }
 
-    let items = tree::tree_items(
+    let items = selectors::visible_sidebar_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -193,11 +194,8 @@ pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSn
     }
     let root = state.domain.root.clone();
     let selected_path = state.domain.selected_path().clone();
-    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
-    let Some(item) = args
-        .iter()
-        .find(|item| item.order_index == state.ui.selected_arg_index)
-    else {
+    let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+    let Some(item) = selectors::active_form_field(&args, state.ui.selected_arg_index) else {
         return;
     };
     let arg = item.arg;
@@ -301,7 +299,7 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     };
     let root = state.domain.root.clone();
     let selected_path = state.domain.selected_path().clone();
-    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
+    let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
     let validation = state.derived_validation();
     let Some((input_top, input_bottom)) = form::field_content_bounds_with_errors(
         &args,
@@ -326,14 +324,66 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     state.ui.clamp_form_scroll(frame_snapshot);
 }
 
-pub(crate) fn focus_first_invalid_field(state: &mut AppState, frame_snapshot: &FrameSnapshot) {
-    let Some(arg_id) = frame_snapshot.first_invalid_field_id() else {
+pub(crate) fn ensure_active_repeated_row_visible(
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+    arg_id: &str,
+) {
+    if state.ui.help_open {
+        return;
+    }
+    let Some(form_view) = frame_snapshot.form_view_rect() else {
         return;
     };
+    let Some(field) = frame_snapshot.form_field_layout(arg_id) else {
+        return;
+    };
+    let Some(arg) = state.domain.arg_for_input(arg_id) else {
+        return;
+    };
+    if !matches!(form::widget_for(arg), FieldWidget::RepeatedText) {
+        return;
+    }
+
+    let displayed = crate::form_editor::displayed_text(state, arg);
+    let editor =
+        crate::form_editor::editor_for_render(&state.ui, arg.owner_path(), arg, &displayed);
+    let current_row = editor.current_row();
+    let input_top = field
+        .input
+        .y
+        .saturating_sub(form_view.y)
+        .saturating_add(state.ui.form_scroll(frame_snapshot))
+        .saturating_sub(field.input_clip_top);
+    let visible_input_top = input_top.saturating_add(field.input_clip_top);
+    let visible_input_bottom = visible_input_top.saturating_add(field.input.height);
+    let row_offset = u16::try_from(current_row)
+        .unwrap_or(u16::MAX)
+        .saturating_mul(3);
+    let row_top = input_top.saturating_add(row_offset);
+    let row_bottom = row_top.saturating_add(3);
+
+    if row_top < visible_input_top {
+        state.ui.set_form_scroll(row_top);
+    } else if row_bottom > visible_input_bottom {
+        state.ui.set_form_scroll(
+            state
+                .ui
+                .form_scroll(frame_snapshot)
+                .saturating_add(row_bottom.saturating_sub(visible_input_bottom)),
+        );
+    }
+}
+
+pub(crate) fn focus_first_invalid_field(
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+    validation: &crate::pipeline::ValidationState,
+) {
     let root = state.domain.root.clone();
     let selected_path = state.domain.selected_path().clone();
-    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
-    let Some(item) = args.iter().find(|item| item.arg.id == arg_id) else {
+    let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+    let Some(item) = selectors::first_invalid_visible_field(&args, &validation.field_errors) else {
         return;
     };
     state.ui.set_selected_arg_index(item.order_index);
@@ -366,7 +416,7 @@ pub(crate) fn scroll_enum(state: &mut AppState, frame_snapshot: &FrameSnapshot, 
 }
 
 pub(crate) fn scroll_sidebar(state: &mut AppState, frame_snapshot: &FrameSnapshot, delta: i16) {
-    let rows = tree::tree_rows(
+    let rows = selectors::visible_sidebar_rows(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -377,10 +427,9 @@ pub(crate) fn scroll_sidebar(state: &mut AppState, frame_snapshot: &FrameSnapsho
     if visible_rows == 0 {
         return;
     }
-    let selected_row = selected_sidebar_row(&rows, state.domain.selected_path());
     state
         .ui
-        .adjust_sidebar_scroll(delta, rows.len(), visible_rows, selected_row);
+        .adjust_sidebar_scroll(delta, rows.len(), visible_rows);
 }
 
 pub(crate) fn ensure_enum_visible(
@@ -412,7 +461,7 @@ pub(crate) fn clamp_sidebar_selection_to_search(
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
 ) {
-    let items = tree::tree_items(
+    let items = selectors::visible_sidebar_items(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -439,7 +488,7 @@ pub(crate) fn ensure_selected_sidebar_visible(
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
 ) {
-    let rows = tree::tree_rows(
+    let rows = selectors::visible_sidebar_rows(
         &state.domain.root,
         &state.domain.expanded,
         &state.ui.search_query,
@@ -471,8 +520,10 @@ pub(crate) fn apply_start_command(state: &mut AppState, start: &str) {
         Ok(()) => {
             let root = state.domain.root.clone();
             let selected_path = state.domain.selected_path().clone();
-            let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
-            state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
+            let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+            state
+                .ui
+                .focus_first_tab(&selectors::visible_form_arg_pairs(&args));
         }
         Err(SelectionError::UnknownPath) => {
             state.notifications.show_toast(
@@ -499,8 +550,10 @@ fn select_command(state: &mut AppState, path: &[String]) {
     if state.select_command_path(path).is_ok() {
         let root = state.domain.root.clone();
         let selected_path = state.domain.selected_path().clone();
-        let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
-        state.ui.focus_first_tab(&form::visible_arg_pairs(&args));
+        let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+        state
+            .ui
+            .focus_first_tab(&selectors::visible_form_arg_pairs(&args));
     }
 }
 
@@ -877,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_wheel_scroll_keeps_selected_row_visible() {
+    fn sidebar_wheel_scroll_clamps_to_available_range() {
         let root = command(
             "tool",
             Vec::new(),
@@ -897,8 +950,68 @@ mod tests {
 
         scroll_sidebar(&mut state, &snapshot, 3);
 
-        assert!(state.ui.sidebar_scroll <= 2);
-        assert!(state.ui.sidebar_scroll >= 1);
+        assert_eq!(state.ui.sidebar_scroll, 2);
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["three".to_string()]
+        );
+    }
+
+    #[test]
+    fn sidebar_wheel_scroll_is_not_blocked_by_first_selected_entry() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![
+                command("one", Vec::new(), Vec::new()),
+                command("two", Vec::new(), Vec::new()),
+                command("three", Vec::new(), Vec::new()),
+                command("four", Vec::new(), Vec::new()),
+                command("five", Vec::new(), Vec::new()),
+                command("six", Vec::new(), Vec::new()),
+            ],
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["one".to_string()])
+            .expect("valid path");
+
+        scroll_sidebar(&mut state, &sidebar_snapshot(), 2);
+
+        assert_eq!(state.ui.sidebar_scroll, 2);
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["one".to_string()]
+        );
+    }
+
+    #[test]
+    fn sidebar_wheel_scroll_is_not_blocked_by_last_selected_entry() {
+        let root = command(
+            "tool",
+            Vec::new(),
+            vec![
+                command("one", Vec::new(), Vec::new()),
+                command("two", Vec::new(), Vec::new()),
+                command("three", Vec::new(), Vec::new()),
+                command("four", Vec::new(), Vec::new()),
+                command("five", Vec::new(), Vec::new()),
+                command("six", Vec::new(), Vec::new()),
+            ],
+        );
+        let mut state = AppState::new(root);
+        state
+            .select_command_path(&["six".to_string()])
+            .expect("valid path");
+        state.ui.sidebar_scroll = 2;
+
+        scroll_sidebar(&mut state, &sidebar_snapshot(), -2);
+
+        assert_eq!(state.ui.sidebar_scroll, 0);
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["six".to_string()]
+        );
     }
 
     #[test]
@@ -940,7 +1053,7 @@ mod tests {
         move_form_selection(&mut state, &frame_snapshot, 2);
 
         assert_eq!(state.ui.selected_arg_index, 2);
-        assert_eq!(state.ui.form_scroll, 11);
+        assert_eq!(state.ui.form_scroll, 8);
     }
 
     #[test]

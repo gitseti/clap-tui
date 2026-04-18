@@ -2,16 +2,11 @@ use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, CommandFormState, Focus, UiState};
 use crate::pipeline::{self, EffectiveArgValue, ValidationState};
-use crate::query::{
-    form,
-    tree::{self, TreeRow},
-};
+use crate::query::{form, selectors, tree::TreeRow};
 use crate::spec::{CommandPath, CommandSpec};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders};
+use ratatui::widgets::{Block, Paragraph};
 
 use super::{dropdown, footer, form as form_ui, header, layout, preview, sidebar, styles, toast};
 
@@ -33,14 +28,15 @@ impl<'a> ScreenView<'a> {
     pub(crate) fn from_state(state: &'a AppState, derived: pipeline::DerivedState) -> Self {
         let command = state.domain.current_command();
         let root = &state.domain.root;
-        let tree_rows = tree::tree_rows(root, &state.domain.expanded, &state.ui.search_query);
+        let tree_rows =
+            selectors::visible_sidebar_rows(root, &state.domain.expanded, &state.ui.search_query);
         Self {
             command,
             root,
             selected_path: state.domain.selected_path().clone(),
             sidebar_scroll: 0,
             tree_rows,
-            active_args: form::visible_args_for_path(
+            active_args: selectors::visible_form_args(
                 root,
                 state.domain.selected_path(),
                 state.ui.active_tab,
@@ -60,11 +56,7 @@ pub(crate) fn render(
 ) -> FrameSnapshot {
     let size = frame.area();
 
-    let background = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(styles::panel_border(config, false))
-        .style(styles::panel(config));
+    let background = Block::default().style(styles::surface(config, styles::Surface::Shell));
     frame.render_widget(background, size);
     let derived = state.derived().clone();
     let mut vm = ScreenView::from_state(state, derived);
@@ -89,6 +81,30 @@ pub(crate) fn render(
         &vm,
         &frame_snapshot.layout,
     );
+    render_preview_band_background(frame, config, size, screen_layout.areas.preview);
+    if screen_layout.areas.form.x > 0 {
+        let divider_height = screen_layout
+            .areas
+            .footer
+            .y
+            .saturating_sub(screen_layout.areas.sidebar.y);
+        let divider_area = Rect::new(
+            screen_layout.areas.form.x.saturating_sub(1),
+            screen_layout.areas.sidebar.y,
+            1,
+            divider_height,
+        );
+        frame.render_widget(
+            Paragraph::new(
+                (0..divider_area.height)
+                    .map(|_| "│")
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .style(styles::surface(config, styles::Surface::Workspace).fg(config.theme.divider)),
+            divider_area,
+        );
+    }
     dropdown::render_dropdown(
         frame,
         &state.ui,
@@ -111,6 +127,22 @@ pub(crate) fn render(
     frame_snapshot
 }
 
+fn render_preview_band_background(
+    frame: &mut Frame<'_>,
+    config: &TuiConfig,
+    size: Rect,
+    preview_area: Rect,
+) {
+    if preview_area.height == 0 {
+        return;
+    }
+    let band = Rect::new(0, preview_area.y, size.width, preview_area.height);
+    frame.render_widget(
+        Block::default().style(styles::surface(config, styles::Surface::Workspace)),
+        band,
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_main(
     frame: &mut Frame<'_>,
@@ -122,12 +154,7 @@ fn render_main(
     frame_snapshot: &FrameSnapshot,
 ) {
     let workspace_focused = matches!(ui.focus, Focus::Form);
-    let workspace = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(styles::panel_border(config, workspace_focused))
-        .title(workspace_title(config, vm))
-        .style(styles::panel_surface(config, workspace_focused));
+    let workspace = Block::default().style(styles::surface(config, styles::Surface::Workspace));
     frame.render_widget(workspace, area);
     if header_area.height > 0 && header_area.width > 0 {
         header::render_header(frame, config, header_area, workspace_focused, vm);
@@ -135,45 +162,14 @@ fn render_main(
     form_ui::render_form(frame, ui, config, vm, frame_snapshot);
 }
 
-fn workspace_title(config: &TuiConfig, vm: &ScreenView<'_>) -> Line<'static> {
-    let mut spans = vec![Span::raw(" ")];
-    spans.push(Span::styled(
-        vm.root.name.clone(),
-        Style::default().fg(if vm.selected_path.is_empty() {
-            config.theme.text
-        } else {
-            config.theme.metadata
-        }),
-    ));
-    for (index, segment) in vm.selected_path.as_slice().iter().enumerate() {
-        spans.push(Span::styled(
-            " > ",
-            Style::default().fg(config.theme.metadata),
-        ));
-        let selected = index + 1 == vm.selected_path.as_slice().len();
-        spans.push(Span::styled(
-            segment.clone(),
-            if selected {
-                Style::default()
-                    .fg(config.theme.text)
-                    .add_modifier(ratatui::style::Modifier::BOLD)
-            } else {
-                Style::default().fg(config.theme.metadata)
-            },
-        ));
-    }
-    spans.push(Span::raw(" "));
-    Line::from(spans)
-}
-
 #[cfg(test)]
 mod tests {
-    use clap::{Arg, ArgAction, Command, builder::ArgPredicate};
+    use clap::{Arg, ArgAction, ArgGroup, Command, builder::ArgPredicate};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::{Position, Rect};
 
-    use super::{ScreenView, render, workspace_title};
+    use super::render;
     use crate::TuiConfig;
     use crate::controller;
     use crate::frame_snapshot::FrameSnapshot;
@@ -267,7 +263,6 @@ mod tests {
             .expect("required field layout");
         let config = TuiConfig::default();
 
-        assert!(rendered.contains("Required argument"));
         assert!(rendered.contains("Missing required argument: --name"));
         let label = field.label.expect("label rect");
         assert_eq!(cell_fg(&backend, label.x, label.y), config.theme.error);
@@ -304,6 +299,40 @@ mod tests {
     }
 
     #[test]
+    fn mixed_validation_errors_render_inline_for_all_fields() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .group(ArgGroup::new("mode").args(["debug", "quiet"]))
+                .arg(Arg::new("name").long("name").required(true))
+                .arg(
+                    Arg::new("debug")
+                        .long("debug")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("quiet"),
+                )
+                .arg(Arg::new("quiet").long("quiet").action(ArgAction::SetTrue)),
+        );
+        state.domain.toggle_flag_touched("debug");
+        state.domain.toggle_flag_touched("quiet");
+
+        let (backend, snapshot) = render_app(&mut state);
+        let rendered = buffer_text(&backend);
+        let summary = "Conflicting arguments: --debug, --quiet";
+
+        assert_eq!(count_occurrences(&rendered, summary), 3);
+        assert_eq!(count_occurrences(&rendered, "Required argument"), 1);
+        assert_eq!(
+            snapshot
+                .layout
+                .form_fields
+                .iter()
+                .filter(|field| field.description.is_some())
+                .count(),
+            3
+        );
+    }
+
+    #[test]
     fn invalid_value_error_renders_inline_and_matches_footer_summary() {
         let mut state = AppState::from_command(
             &Command::new("tool").arg(
@@ -324,7 +353,7 @@ mod tests {
             .expect("color field layout");
         let summary = "Invalid value for --color: orange";
 
-        assert_eq!(count_occurrences(&rendered, summary), 3);
+        assert_eq!(count_occurrences(&rendered, summary), 2);
         assert!(field.description.is_some());
     }
 
@@ -353,7 +382,6 @@ mod tests {
                 .expect("preview area should be present"),
         );
 
-        assert!(rendered.contains("Default-missing"));
         assert!(rendered.contains("implicit: always"));
         assert!(preview.contains("$ tool --color"));
         assert!(!preview.contains("always"));
@@ -368,7 +396,6 @@ mod tests {
         let (backend, _) = render_app(&mut state);
         let rendered = buffer_text(&backend);
 
-        assert!(rendered.contains("--upload"));
         assert!(!rendered.contains("Default"));
     }
 
@@ -394,8 +421,6 @@ mod tests {
         let (backend, _) = render_app(&mut state);
         let rendered = buffer_text(&backend);
 
-        assert!(rendered.contains("--fast"));
-        assert!(rendered.contains("--safe"));
         assert!(!rendered.contains("Default"));
     }
 
@@ -434,14 +459,13 @@ mod tests {
                 .expect("preview area should be present"),
         );
 
-        assert!(rendered.contains("Conditional"));
         assert!(rendered.contains("auto"));
         assert!(preview.contains("$ tool --flag"));
         assert!(!preview.contains("--mode"));
     }
 
     #[test]
-    fn sidebar_and_workspace_use_different_panel_fills_based_on_focus() {
+    fn sidebar_and_workspace_share_one_panel_fill_with_a_vertical_divider() {
         let mut state = AppState::from_command(
             &Command::new("tool")
                 .about("Run tool")
@@ -454,30 +478,70 @@ mod tests {
         let (sidebar_backend, sidebar_snapshot) = render_app(&mut state);
         let sidebar_area = sidebar_snapshot.layout.sidebar.expect("sidebar area");
         let form_area = sidebar_snapshot.layout.form.expect("form area");
+        let preview_area = sidebar_snapshot.layout.preview.expect("preview area");
         let sidebar_probe = (sidebar_area.x + 2, sidebar_area.y + sidebar_area.height - 2);
         let form_probe = (form_area.x + 2, form_area.y + form_area.height - 2);
         assert_eq!(
             cell_bg(&sidebar_backend, sidebar_probe.0, sidebar_probe.1),
-            config.theme.panel_bg
+            config.theme.workspace_bg
         );
         assert_eq!(
             cell_bg(&sidebar_backend, form_probe.0, form_probe.1),
-            config.theme.preview_bg
+            config.theme.workspace_bg
+        );
+        assert_eq!(
+            sidebar_backend.buffer()[(form_area.x - 1, sidebar_area.y + 1)].symbol(),
+            "│"
+        );
+        assert_eq!(
+            cell_bg(&sidebar_backend, sidebar_area.x + 1, preview_area.y),
+            config.theme.workspace_bg
+        );
+        assert_eq!(
+            cell_bg(
+                &sidebar_backend,
+                preview_area
+                    .x
+                    .saturating_add(preview_area.width)
+                    .saturating_sub(1),
+                preview_area.y
+            ),
+            config.theme.header_bg
         );
 
         state.ui.focus_form();
         let (form_backend, form_snapshot) = render_app(&mut state);
         let sidebar_area = form_snapshot.layout.sidebar.expect("sidebar area");
         let form_area = form_snapshot.layout.form.expect("form area");
+        let preview_area = form_snapshot.layout.preview.expect("preview area");
         let sidebar_probe = (sidebar_area.x + 2, sidebar_area.y + sidebar_area.height - 2);
         let form_probe = (form_area.x + 2, form_area.y + form_area.height - 2);
         assert_eq!(
             cell_bg(&form_backend, sidebar_probe.0, sidebar_probe.1),
-            config.theme.preview_bg
+            config.theme.workspace_bg
         );
         assert_eq!(
             cell_bg(&form_backend, form_probe.0, form_probe.1),
-            config.theme.panel_bg
+            config.theme.workspace_bg
+        );
+        assert_eq!(
+            form_backend.buffer()[(form_area.x - 1, sidebar_area.y + 1)].symbol(),
+            "│"
+        );
+        assert_eq!(
+            cell_bg(&form_backend, sidebar_area.x + 1, preview_area.y),
+            config.theme.workspace_bg
+        );
+        assert_eq!(
+            cell_bg(
+                &form_backend,
+                preview_area
+                    .x
+                    .saturating_add(preview_area.width)
+                    .saturating_sub(1),
+                preview_area.y
+            ),
+            config.theme.header_bg
         );
     }
 
@@ -708,42 +772,5 @@ mod tests {
             state.domain.selected_path().as_slice(),
             &["cmd-6".to_string()]
         );
-    }
-
-    #[test]
-    fn workspace_title_shows_nested_command_path_context() {
-        let root = crate::spec::CommandSpec {
-            name: "tool".to_string(),
-            version: None,
-            about: None,
-            help: String::new(),
-            args: Vec::new(),
-            subcommands: Vec::new(),
-            ..crate::spec::CommandSpec::default()
-        };
-        let vm = ScreenView {
-            command: &root,
-            root: &root,
-            selected_path: crate::spec::CommandPath::from(vec![
-                "build".to_string(),
-                "release".to_string(),
-            ]),
-            tree_rows: Vec::new(),
-            sidebar_scroll: 0,
-            active_args: Vec::new(),
-            preview_argv: Vec::new(),
-            validation: crate::pipeline::ValidationState::default(),
-            effective_values: std::collections::BTreeMap::new(),
-            inputs: None,
-        };
-
-        let title = workspace_title(&TuiConfig::default(), &vm);
-        let rendered = title
-            .spans
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect::<String>();
-
-        assert_eq!(rendered, " tool > build > release ");
     }
 }

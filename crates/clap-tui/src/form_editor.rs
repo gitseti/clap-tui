@@ -129,6 +129,14 @@ pub(crate) fn apply_key_to_text_field(
     let command_key = arg.owner_path().clone();
     let is_touched = state.domain.is_touched(&arg.id);
     let has_default = arg.default_value().is_some();
+    let repeated_backspace_rows = {
+        let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+        handle_repeated_empty_backspace(textarea, key, arg)
+    };
+    if let Some(rows) = repeated_backspace_rows {
+        sync_row_editor_values(state, arg, &rows);
+        return EditResult::Handled;
+    }
     let textarea = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     if row_editor_boundary_merge(textarea, key, arg) {
         return EditResult::Ignored;
@@ -156,6 +164,54 @@ pub(crate) fn apply_key_to_text_field(
         state.domain.set_text_value(&arg.id, &text);
         state.domain.mark_touched(&arg.id);
     }
+    EditResult::Handled
+}
+
+pub(crate) fn activate_repeated_row(state: &mut AppState, arg: &ArgModel) -> EditResult {
+    let displayed = displayed_text(state, arg);
+    let command_key = arg.owner_path().clone();
+    let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    let current_row = editor.current_row();
+    let current_col = editor.cursor().col;
+    if current_row + 1 < editor.row_count() {
+        let next_col = current_col.min(editor.lines()[current_row + 1].len());
+        editor.move_cursor_to(
+            u16::try_from(current_row + 1).unwrap_or(u16::MAX),
+            u16::try_from(next_col).unwrap_or(u16::MAX),
+        );
+        editor.cancel_selection();
+        return EditResult::Handled;
+    }
+
+    editor.insert_row_below();
+    let rows = editor.lines().to_vec();
+    sync_row_editor_values(state, arg, &rows);
+    EditResult::Handled
+}
+
+pub(crate) fn navigate_repeated_row(
+    state: &mut AppState,
+    arg: &ArgModel,
+    delta: i32,
+) -> EditResult {
+    let displayed = displayed_text(state, arg);
+    let command_key = arg.owner_path().clone();
+    let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
+    let current_row = editor.current_row();
+    let next_row = if delta < 0 {
+        current_row.checked_sub(1)
+    } else {
+        (current_row + 1 < editor.row_count()).then_some(current_row + 1)
+    };
+    let Some(next_row) = next_row else {
+        return EditResult::Ignored;
+    };
+    let next_col = editor.cursor().col.min(editor.lines()[next_row].len());
+    editor.move_cursor_to(
+        u16::try_from(next_row).unwrap_or(u16::MAX),
+        u16::try_from(next_col).unwrap_or(u16::MAX),
+    );
+    editor.cancel_selection();
     EditResult::Handled
 }
 
@@ -310,6 +366,36 @@ pub(crate) fn move_repeated_row_down(state: &mut AppState, arg: &ArgModel) -> Ed
     let rows = editor.lines().to_vec();
     sync_row_editor_values(state, arg, &rows);
     EditResult::Handled
+}
+
+fn handle_repeated_empty_backspace(
+    editor: &mut TextEditor,
+    key: AppKeyEvent,
+    arg: &ArgModel,
+) -> Option<Vec<String>> {
+    if !uses_row_editor(arg)
+        || !matches!(key.code, AppKeyCode::Backspace)
+        || key.modifiers.control
+        || key.modifiers.alt
+        || key.modifiers.shift
+    {
+        return None;
+    }
+
+    let row = editor.current_row();
+    if row == 0 || editor.lines().get(row).is_none_or(|line| !line.is_empty()) {
+        return None;
+    }
+
+    let previous_col = editor.cursor().col;
+    editor.remove_current_row();
+    let target_row = row.saturating_sub(1);
+    let target_col = previous_col.min(editor.lines()[target_row].len());
+    editor.move_cursor_to(
+        u16::try_from(target_row).unwrap_or(u16::MAX),
+        u16::try_from(target_col).unwrap_or(u16::MAX),
+    );
+    Some(editor.lines().to_vec())
 }
 
 fn uses_row_editor(arg: &ArgModel) -> bool {

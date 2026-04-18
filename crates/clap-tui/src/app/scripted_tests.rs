@@ -16,7 +16,8 @@ fn scripted_harness_observes_intermediate_frames_before_cancellation() {
     let run = ScriptedHarness::new(command)
         .script([
             ScriptedStep::expect_text("Ctrl+R Run"),
-            ScriptedStep::click_input("path"),
+            ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::paste("/tmp/demo"),
             ScriptedStep::expect_text("/tmp/demo"),
             ScriptedStep::ctrl(AppKeyCode::Char('c')),
@@ -39,6 +40,7 @@ fn scripted_harness_returns_successful_run_outcome_with_raw_event_steps() {
 
     let run = ScriptedHarness::new(command)
         .script([
+            ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::raw(AppEvent::Paste("/tmp/raw".to_string())),
             ScriptedStep::ctrl(AppKeyCode::Char('r')),
@@ -100,11 +102,12 @@ fn semantic_dropdown_helper_targets_rendered_popup_layout() {
         .with_size(60, 16)
         .script([
             ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::key(AppKeyCode::Down),
             ScriptedStep::key(AppKeyCode::Down),
             ScriptedStep::open_dropdown("color"),
             ScriptedStep::select_dropdown_option("red"),
-            ScriptedStep::click_footer(HoverTarget::Run),
+            ScriptedStep::ctrl(AppKeyCode::Char('r')),
         ])
         .run()
         .expect("scripted run should succeed");
@@ -137,6 +140,7 @@ fn happy_path_scripted_flow_mixes_navigation_editing_and_run() {
     let run = ScriptedHarness::new(command)
         .script([
             ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::key(AppKeyCode::Tab),
             ScriptedStep::raw(AppEvent::Key(AppKeyEvent::new(
                 AppKeyCode::Char(' '),
                 AppKeyModifiers::default(),
@@ -147,7 +151,7 @@ fn happy_path_scripted_flow_mixes_navigation_editing_and_run() {
             ScriptedStep::key(AppKeyCode::Enter),
             ScriptedStep::key(AppKeyCode::Down),
             ScriptedStep::type_text("demo"),
-            ScriptedStep::click_footer(HoverTarget::Run),
+            ScriptedStep::ctrl(AppKeyCode::Char('r')),
         ])
         .run()
         .expect("scripted run should succeed");
@@ -184,6 +188,80 @@ fn invalid_scripted_flow_blocks_run_and_keeps_feedback_visible() {
             .contains("Missing required argument: --name")
     );
     assert!(run.frames.len() >= 2);
+}
+
+#[test]
+fn keyboard_scripted_flow_keeps_preview_and_run_alignment_after_resize() {
+    let command = Command::new("tool")
+        .arg(
+            Arg::new("mode")
+                .long("mode")
+                .value_parser(["debug", "release"]),
+        )
+        .arg(Arg::new("name").long("name").required(true));
+
+    let run = ScriptedHarness::new(command)
+        .script([
+            ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::key(AppKeyCode::Enter),
+            ScriptedStep::select_dropdown_option("release"),
+            ScriptedStep::key(AppKeyCode::Down),
+            ScriptedStep::type_text("demo"),
+            ScriptedStep::expect_text("tool --mode release --name demo"),
+            ScriptedStep::resize(100, 32),
+            ScriptedStep::expect_text("tool --mode release --name demo"),
+            ScriptedStep::ctrl(AppKeyCode::Char('r')),
+        ])
+        .run()
+        .expect("scripted run should succeed");
+
+    assert_eq!(
+        run.outcome,
+        ScriptedOutcome::Run(vec![
+            "tool".to_string(),
+            "--mode".to_string(),
+            "release".to_string(),
+            "--name".to_string(),
+            "demo".to_string(),
+        ])
+    );
+    assert!(
+        last_frame(&run)
+            .text
+            .contains("tool --mode release --name demo")
+    );
+}
+
+#[test]
+fn invalid_scripted_flow_keeps_validation_alignment_after_resize() {
+    let command = Command::new("tool")
+        .arg(Arg::new("a").long("a").required(true))
+        .arg(Arg::new("b").long("b").required(true));
+
+    let run = ScriptedHarness::new(command)
+        .with_size(120, 24)
+        .script([
+            ScriptedStep::click_footer(HoverTarget::Run),
+            ScriptedStep::expect_text("Missing required arguments"),
+            ScriptedStep::click_input("a"),
+            ScriptedStep::type_text("alpha"),
+            ScriptedStep::expect_text("tool --a alpha"),
+            ScriptedStep::resize(100, 30),
+            ScriptedStep::click_footer(HoverTarget::Run),
+            ScriptedStep::expect_text("Missing required argument: --b"),
+            ScriptedStep::ctrl(AppKeyCode::Char('c')),
+        ])
+        .run()
+        .expect("scripted run should succeed");
+
+    assert_eq!(run.outcome, ScriptedOutcome::Cancelled);
+    assert!(
+        last_frame(&run)
+            .text
+            .contains("Missing required argument: --b")
+    );
+    assert!(last_frame(&run).text.contains("tool --a alpha"));
 }
 
 #[test]

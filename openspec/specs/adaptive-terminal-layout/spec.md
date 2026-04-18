@@ -4,7 +4,7 @@
 TBD - created by archiving change improve-tui-usability. Update Purpose after archive.
 ## Requirements
 ### Requirement: Screen chrome adapts to constrained terminal sizes
-The TUI SHALL reduce the space consumed by non-form chrome when terminal height or width is constrained so the form remains the primary visible workspace.
+The TUI SHALL reduce the space consumed by non-form chrome when terminal height or width is constrained so the form remains the primary visible workspace, while preserving recognizable navigation, context, result, and action surfaces from the redesigned visual language.
 
 #### Scenario: Terminal height is limited
 - **WHEN** the app renders below a compact-layout budget of 20 terminal rows
@@ -21,6 +21,16 @@ The TUI SHALL reduce the space consumed by non-form chrome when terminal height 
 #### Scenario: Command description is absent
 - **WHEN** the selected command has no `about` text or other header content
 - **THEN** the layout does not reserve empty header rows for that missing content
+
+#### Scenario: Compact mode preserves redesigned identity
+- **WHEN** the app renders in compact mode
+- **THEN** the sidebar, workspace header, preview, and footer still read as distinct product surfaces
+- **AND** compact mode removes decorative weight before removing the cues that identify those surfaces
+
+#### Scenario: Compact mode preserves dense row scanability
+- **WHEN** the app renders a redesigned dense form in compact mode
+- **THEN** the layout preserves enough label and control alignment for rows to remain scannable
+- **AND** compact mode does not fall back to a looser multi-line resting layout for ordinary controls unless content overflow requires it
 
 ### Requirement: Critical status remains visible in narrow layouts
 The TUI SHALL preserve primary actions and critical validation or status feedback in narrow layouts through priority-aware placement or truncation.

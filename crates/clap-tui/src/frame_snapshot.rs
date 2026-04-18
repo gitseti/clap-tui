@@ -84,6 +84,30 @@ impl FrameSnapshot {
         self.layout.form_inputs.get(arg_id).copied()
     }
 
+    pub fn form_field_layout(&self, arg_id: &str) -> Option<&FormFieldLayout> {
+        self.layout
+            .form_fields
+            .iter()
+            .find(|field| field.arg_id == arg_id)
+    }
+
+    pub fn form_field_at(&self, x: u16, y: u16) -> Option<FormFieldHitLayout> {
+        self.layout.form_fields.iter().find_map(|field| {
+            let in_input = contains(field.input, x, y);
+            let in_label = field.label.is_some_and(|label| contains(label, x, y));
+            let in_description = field
+                .description
+                .is_some_and(|description| contains(description, x, y));
+
+            (in_input || in_label || in_description).then(|| FormFieldHitLayout {
+                arg_id: field.arg_id.clone(),
+                in_input,
+                in_label,
+                in_description,
+            })
+        })
+    }
+
     pub fn form_view_rect(&self) -> Option<Rect> {
         self.layout.form_view
     }
@@ -239,17 +263,22 @@ pub(crate) fn dropdown_geometry(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn populate_form_layout(
     ui: &UiState,
     area: Rect,
     active_args: &[OrderedArg<'_>],
     help: &str,
     validation: &ValidationState,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
     frame_snapshot: &mut FrameSnapshot,
 ) {
     let content_area = area;
-    let content_height =
-        form::measure_fields_height_with_errors(active_args, &validation.field_errors);
+    let content_height = form::measure_fields_height_with_overrides(
+        active_args,
+        &validation.field_errors,
+        input_height_overrides,
+    );
     let help_height = form::measure_help_height(help);
     let viewport_height = content_area.height;
     let help_viewport_height = help_overlay_content_rect(content_area).height;
@@ -264,6 +293,7 @@ pub(crate) fn populate_form_layout(
     frame_layout.form_tabs.clear();
     frame_layout.invalid_field_ids.clear();
     frame_layout.form_view = Some(content_area);
+    let preferred_label_width = form::preferred_label_column_width(active_args);
 
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
     let mut previous_heading = None;
@@ -278,7 +308,11 @@ pub(crate) fn populate_form_layout(
                 .get(&item.arg.id)
                 .map(String::as_str),
         );
-        let metrics = form::field_metrics_with_description(item.arg, show_description);
+        let metrics = form::field_metrics_with_description_and_input_height(
+            item.arg,
+            show_description,
+            input_height_overrides.get(&item.arg.id).copied(),
+        );
         let item_bottom =
             y + i32::from(u16::from(heading.is_some())) + i32::from(metrics.total_height);
         if y >= i32::from(content_area.y) + i32::from(content_area.height) {
@@ -296,9 +330,10 @@ pub(crate) fn populate_form_layout(
         } else {
             None
         };
-        let (field_x, field_width) = field_content_geometry(area, form::field_is_in_section(item));
+        let (label_x, label_width, input_x, input_width) =
+            field_content_geometry(area, form::field_is_in_section(item), preferred_label_width);
         let label = if metrics.label_height > 0 {
-            clipped_rect(field_x, field_width, y, metrics.label_height, content_area)
+            clipped_rect(label_x, label_width, y, metrics.label_height, content_area)
         } else {
             None
         };
@@ -307,8 +342,8 @@ pub(crate) fn populate_form_layout(
             show_description,
         ));
         let Some(input) = clipped_rect(
-            field_x,
-            field_width,
+            input_x,
+            input_width,
             input_y,
             metrics.input_height,
             content_area,
@@ -316,7 +351,15 @@ pub(crate) fn populate_form_layout(
             y += i32::from(metrics.total_height);
             continue;
         };
-        let description = form_description_rect(item, y, area, content_area, show_description);
+        let description = form_description_rect(
+            item,
+            y,
+            area,
+            content_area,
+            show_description,
+            preferred_label_width,
+            input_height_overrides.get(&item.arg.id).copied(),
+        );
         let (section_rail, section_right_rail, section_cap) = field_section_decorations(
             item,
             y,
@@ -330,6 +373,8 @@ pub(crate) fn populate_form_layout(
         if validation.field_errors.contains_key(&item.arg.id) {
             frame_layout.invalid_field_ids.push(item.arg.id.clone());
         }
+        let input_clip_top =
+            u16::try_from((i32::from(input.y) - input_y).max(0)).unwrap_or(u16::MAX);
         frame_layout.form_fields.push(FormFieldLayout {
             arg_id: item.arg.id.clone(),
             heading,
@@ -338,6 +383,7 @@ pub(crate) fn populate_form_layout(
             section_cap,
             label,
             input,
+            input_clip_top,
             description,
         });
 
@@ -378,16 +424,22 @@ fn form_description_rect(
     area: Rect,
     content_area: Rect,
     show_description: bool,
+    preferred_label_width: u16,
+    input_height_override: Option<u16>,
 ) -> Option<Rect> {
     show_description.then_some(())?;
-    let description_y = y + i32::from(form::field_description_offset_with_description(
-        item.arg,
-        show_description,
-    )?);
-    let (field_x, field_width) = field_content_geometry(area, form::field_is_in_section(item));
+    let description_y = y + i32::from(
+        form::field_description_offset_with_description_and_input_height(
+            item.arg,
+            show_description,
+            input_height_override,
+        )?,
+    );
+    let (_, _, input_x, input_width) =
+        field_content_geometry(area, form::field_is_in_section(item), preferred_label_width);
     clipped_rect(
-        field_x,
-        field_width,
+        input_x,
+        input_width,
         description_y,
         form::field_metrics_with_description(item.arg, show_description)
             .description_height
@@ -444,17 +496,32 @@ fn field_section_decorations(
     (rail, right_rail, cap)
 }
 
-fn field_content_geometry(area: Rect, in_section: bool) -> (u16, u16) {
-    if in_section && area.width > form::SECTION_FIELD_INDENT.saturating_add(1) {
-        (
-            area.x.saturating_add(form::SECTION_FIELD_INDENT),
-            area.width
-                .saturating_sub(form::SECTION_FIELD_INDENT)
-                .saturating_sub(1),
-        )
+fn field_content_geometry(
+    area: Rect,
+    in_section: bool,
+    preferred_label_width: u16,
+) -> (u16, u16, u16, u16) {
+    let content_x = if in_section && area.width > form::SECTION_FIELD_INDENT.saturating_add(1) {
+        area.x.saturating_add(form::SECTION_FIELD_INDENT)
     } else {
-        (area.x, area.width)
-    }
+        area.x
+    };
+    let content_width = if in_section && area.width > form::SECTION_FIELD_INDENT.saturating_add(1) {
+        area.width
+            .saturating_sub(form::SECTION_FIELD_INDENT)
+            .saturating_sub(1)
+    } else {
+        area.width
+    };
+    let gap = form::COLUMN_GAP_WIDTH.min(content_width.saturating_sub(1));
+    let label_width = preferred_label_width
+        .min(content_width.saturating_sub(gap).saturating_sub(8))
+        .max(form::LABEL_COLUMN_MIN_WIDTH);
+    let input_x = content_x.saturating_add(label_width).saturating_add(gap);
+    let input_width = content_width
+        .saturating_sub(label_width)
+        .saturating_sub(gap);
+    (content_x, label_width, input_x, input_width)
 }
 
 fn intersect_rects(rect: Rect, bounds: Rect) -> Option<Rect> {
@@ -569,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn populate_form_layout_records_invalid_fields_in_form_order() {
+    fn populate_form_layout_preserves_form_field_order_when_errors_are_present() {
         use crate::input::{ActiveTab, Focus, UiState};
         use crate::pipeline::ValidationState;
         use crate::query::form::visible_args;
@@ -656,14 +723,19 @@ mod tests {
             &vm.active_args,
             &vm.command.help,
             &vm.validation,
+            &std::collections::HashMap::new(),
             &mut snapshot,
         );
 
         assert_eq!(
-            snapshot.layout.invalid_field_ids,
-            vec!["alpha".to_string(), "beta".to_string()]
+            snapshot
+                .layout
+                .form_fields
+                .iter()
+                .map(|field| field.arg_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta"]
         );
-        assert_eq!(snapshot.first_invalid_field_id(), Some("alpha"));
         assert!(matches!(ui.focus, Focus::Sidebar));
     }
 
@@ -710,6 +782,7 @@ mod tests {
             &active_args,
             &root.help,
             &ValidationState::default(),
+            &std::collections::HashMap::new(),
             &mut snapshot,
         );
 
@@ -725,7 +798,10 @@ mod tests {
             inherited.section_right_rail.expect("section right rail").x,
             49
         );
-        assert_eq!(inherited.description.expect("description rect").x, 1);
+        assert_eq!(
+            inherited.description.expect("description rect").x,
+            inherited.input.x
+        );
     }
 }
 
@@ -758,5 +834,14 @@ pub struct FormFieldLayout {
     pub section_cap: Option<Rect>,
     pub label: Option<Rect>,
     pub input: Rect,
+    pub input_clip_top: u16,
     pub description: Option<Rect>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormFieldHitLayout {
+    pub arg_id: String,
+    pub in_input: bool,
+    pub in_label: bool,
+    pub in_description: bool,
 }

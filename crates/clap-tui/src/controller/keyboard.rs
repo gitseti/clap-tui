@@ -1,7 +1,10 @@
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, ArgValue, Focus};
-use crate::query::form::{self, FieldWidget};
+use crate::query::{
+    form::FieldWidget,
+    selectors::{self, active_form_field},
+};
 use crate::runtime::{AppKeyCode, AppKeyEvent};
 use crate::update::Action;
 
@@ -66,10 +69,8 @@ fn handle_form_widget_key_event(
 ) -> Option<Action> {
     let root = state.domain.root.clone();
     let selected_path = state.domain.selected_path().clone();
-    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
-    let item = args
-        .iter()
-        .find(|item| item.order_index == state.ui.selected_arg_index)?;
+    let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+    let item = active_form_field(&args, state.ui.selected_arg_index)?;
 
     match item.widget {
         FieldWidget::Counter => match key.code {
@@ -79,11 +80,13 @@ fn handle_form_widget_key_event(
             | AppKeyCode::Backspace => Some(Action::FormWidgetInput(key)),
             _ => None,
         },
-        FieldWidget::RepeatedText
-            if key.code == AppKeyCode::Enter || repeated_row_shortcut(key) =>
-        {
-            Some(Action::FormWidgetInput(key))
-        }
+        FieldWidget::RepeatedText => match key.code {
+            AppKeyCode::Enter | AppKeyCode::Up | AppKeyCode::Down => {
+                Some(Action::FormWidgetInput(key))
+            }
+            _ if repeated_row_shortcut(key) => Some(Action::FormWidgetInput(key)),
+            _ => None,
+        },
         FieldWidget::OptionalValue => match key.code {
             AppKeyCode::Left | AppKeyCode::Delete | AppKeyCode::Backspace | AppKeyCode::Right => {
                 Some(Action::FormWidgetInput(key))
@@ -97,7 +100,8 @@ fn handle_form_widget_key_event(
 
 fn repeated_row_shortcut(key: AppKeyEvent) -> bool {
     matches!(key.code, AppKeyCode::Up | AppKeyCode::Down) && key.modifiers.alt
-        || matches!(key.code, AppKeyCode::Delete | AppKeyCode::Backspace) && key.modifiers.control
+        || matches!(key.code, AppKeyCode::Delete) && key.modifiers.control
+        || matches!(key.code, AppKeyCode::Backspace) && key.modifiers.control
 }
 
 fn handle_help_key_event(key: AppKeyEvent, config: &TuiConfig) -> Option<Action> {
@@ -175,11 +179,8 @@ fn handle_focused_key_event(
 fn is_form_text_input(key: AppKeyEvent, state: &AppState) -> bool {
     let root = state.domain.root.clone();
     let selected_path = state.domain.selected_path().clone();
-    let args = form::visible_args_for_path(&root, &selected_path, state.ui.active_tab);
-    let Some(item) = args
-        .iter()
-        .find(|item| item.order_index == state.ui.selected_arg_index)
-    else {
+    let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+    let Some(item) = active_form_field(&args, state.ui.selected_arg_index) else {
         return false;
     };
     if !item.widget.accepts_text_input() {

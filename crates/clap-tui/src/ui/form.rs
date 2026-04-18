@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -16,6 +18,11 @@ use crate::spec::{ArgSpec, choice_value_matches_default, format_command_path};
 
 use super::{screen::ScreenView, styles};
 
+const REPEATED_CONTROL_REMOVE: &str = " - ";
+const REPEATED_CONTROL_ADD: &str = " + ";
+const REPEATED_CONTROL_WIDTH: u16 = 7;
+const REPEATED_ROW_HEIGHT: u16 = 3;
+
 #[allow(dead_code)]
 pub(crate) fn populate_layout(
     ui: &UiState,
@@ -23,12 +30,14 @@ pub(crate) fn populate_layout(
     vm: &ScreenView<'_>,
     frame_snapshot: &mut FrameSnapshot,
 ) {
+    let input_height_overrides = repeated_input_height_overrides(ui, vm);
     crate::frame_snapshot::populate_form_layout(
         ui,
         area,
         &vm.active_args,
         &vm.command.help,
         &vm.validation,
+        &input_height_overrides,
         frame_snapshot,
     );
 }
@@ -45,8 +54,12 @@ pub(crate) fn render_form(
     };
     let frame_layout = &frame_snapshot.layout;
     let content_area = frame_layout.form_view.unwrap_or(area);
-    let content_height =
-        form::measure_fields_height_with_errors(&vm.active_args, &vm.validation.field_errors);
+    let input_height_overrides = repeated_input_height_overrides(ui, vm);
+    let content_height = form::measure_fields_height_with_overrides(
+        &vm.active_args,
+        &vm.validation.field_errors,
+        &input_height_overrides,
+    );
     let viewport_height = content_area.height;
     let form_scroll = ui.form_scroll(frame_snapshot);
 
@@ -94,6 +107,31 @@ pub(crate) fn render_form(
     }
 }
 
+fn repeated_input_height_overrides(ui: &UiState, vm: &ScreenView<'_>) -> HashMap<String, u16> {
+    vm.active_args
+        .iter()
+        .filter(|item| matches!(item.widget, FieldWidget::RepeatedText))
+        .map(|item| {
+            let current_value = effective_compatibility_value(vm, item.arg);
+            let selected_values = effective_selected_values(vm, item.arg);
+            let value = display_value(item.widget, current_value.as_ref(), &selected_values);
+            let editor =
+                form_editor::editor_for_render(ui, item.arg.owner_path(), item.arg, &value);
+            let rows = editor.row_count().max(1);
+            let input_height = if rows <= 1 {
+                field_metrics(item.arg)
+                    .input_height
+                    .min(REPEATED_ROW_HEIGHT)
+            } else {
+                u16::try_from(rows)
+                    .unwrap_or(u16::MAX)
+                    .saturating_mul(REPEATED_ROW_HEIGHT)
+            };
+            (item.arg.id.clone(), input_height)
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_lines)]
 fn render_fields(
     frame: &mut Frame<'_>,
@@ -111,9 +149,7 @@ fn render_fields(
             continue;
         };
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
-        let input_is_truncated = text_input_is_truncated(item.arg, field.input);
         let field_error = vm.validation.field_errors.get(&item.arg.id);
-        let validation_summary = vm.validation.summary.as_deref();
         let is_primary_invalid =
             frame_snapshot.first_invalid_field_id() == Some(item.arg.id.as_str());
         let input_state = vm
@@ -187,6 +223,8 @@ fn render_fields(
         let current_value = effective_compatibility_value(vm, item.arg);
         let selected_values = effective_selected_values(vm, item.arg);
         let value = display_value(item.widget, current_value.as_ref(), &selected_values);
+        let expected_input_height = expected_input_height(ui, item.arg, item.widget, &value);
+        let input_is_truncated = field.input.height < expected_input_height;
         let shows_choice_placeholder = matches!(
             item.widget,
             FieldWidget::SingleChoice | FieldWidget::MultiChoice
@@ -202,6 +240,11 @@ fn render_fields(
             && matches!(
                 item.widget,
                 FieldWidget::SingleText | FieldWidget::RepeatedText
+            );
+        let has_textarea_content = !value.is_empty()
+            && matches!(
+                item.widget,
+                FieldWidget::SingleText | FieldWidget::RepeatedText | FieldWidget::OptionalValue
             );
         let shows_passive_toggle = matches!(item.widget, FieldWidget::Toggle)
             && value == "[ ]"
@@ -221,6 +264,8 @@ fn render_fields(
         let fill_style = styles::input(config, selected);
         let text_style = if shows_choice_placeholder && item.arg.required {
             styles::required_prompt(config)
+        } else if has_textarea_content {
+            Style::default().fg(config.theme.text)
         } else if is_default
             || shows_choice_placeholder
             || shows_text_placeholder
@@ -232,16 +277,7 @@ fn render_fields(
         };
 
         if matches!(item.widget, FieldWidget::Toggle) {
-            render_flag_toggle(
-                frame,
-                config,
-                field.input,
-                selected,
-                item.arg.display_label(),
-                &value,
-                &badges,
-                text_style,
-            );
+            render_flag_toggle(frame, config, field.input, selected, value == "[x]");
         } else if matches!(
             item.widget,
             FieldWidget::SingleChoice | FieldWidget::MultiChoice | FieldWidget::Counter
@@ -283,6 +319,20 @@ fn render_fields(
                 block,
                 text_style,
             );
+        } else if matches!(item.widget, FieldWidget::RepeatedText) {
+            render_repeated_text_field(
+                frame,
+                ui,
+                item.arg,
+                &value,
+                field.input,
+                field.input_clip_top,
+                config,
+                block,
+                text_style,
+                selected,
+                field_error.is_none(),
+            );
         } else if input_is_truncated {
             frame.render_widget(
                 Paragraph::new(repeated_display_lines(item.arg, item.widget, &value))
@@ -307,7 +357,6 @@ fn render_fields(
             textarea.set_selection_style(
                 Style::default()
                     .fg(config.theme.text)
-                    .bg(config.theme.surface_raised)
                     .add_modifier(Modifier::REVERSED),
             );
             if value.is_empty()
@@ -327,7 +376,6 @@ fn render_fields(
                 field.input,
             );
         }
-
         if let (Some(help), Some(help_rect)) = (
             field_help_text(
                 vm.root,
@@ -336,9 +384,7 @@ fn render_fields(
                 &vm.selected_path,
                 FieldHelpContext {
                     selected,
-                    validation_summary,
                     field_error: field_error.map(String::as_str),
-                    is_primary_invalid,
                     effective_value: vm.effective_values.get(&item.arg.id),
                 },
             ),
@@ -354,10 +400,6 @@ fn render_fields(
             );
         }
     }
-}
-
-fn text_input_is_truncated(arg: &ArgSpec, input: Rect) -> bool {
-    form::widget_for(arg).accepts_text_input() && input.height < field_metrics(arg).input_height
 }
 
 fn display_value(
@@ -402,27 +444,279 @@ fn compact_placeholder(arg: &ArgSpec, widget: FieldWidget) -> &'static str {
     }
 }
 
-fn repeated_display_lines(arg: &ArgSpec, widget: FieldWidget, value: &str) -> Vec<Line<'static>> {
-    if !matches!(widget, FieldWidget::RepeatedText) {
-        if value.is_empty()
-            && let Some(prompt) = required_empty_prompt(arg, widget)
-        {
-            return vec![Line::from(prompt)];
+fn expected_input_height(ui: &UiState, arg: &ArgSpec, widget: FieldWidget, value: &str) -> u16 {
+    match widget {
+        FieldWidget::RepeatedText => {
+            let editor = form_editor::editor_for_render(ui, arg.owner_path(), arg, value);
+            let rows = editor.row_count().max(1);
+            if rows <= 1 {
+                field_metrics(arg).input_height.min(REPEATED_ROW_HEIGHT)
+            } else {
+                u16::try_from(rows)
+                    .unwrap_or(u16::MAX)
+                    .saturating_mul(REPEATED_ROW_HEIGHT)
+            }
         }
-        return vec![Line::from(value.to_string())];
+        _ if widget.accepts_text_input() => field_metrics(arg).input_height,
+        _ => 1,
     }
+}
 
+fn repeated_display_lines(arg: &ArgSpec, widget: FieldWidget, value: &str) -> Vec<Line<'static>> {
     if value.is_empty() {
-        return vec![Line::from(
-            required_empty_prompt(arg, widget).unwrap_or_else(|| "No values added".to_string()),
-        )];
+        return required_empty_prompt(arg, widget)
+            .map_or_else(Vec::new, |placeholder| vec![Line::from(placeholder)]);
     }
 
     value
         .lines()
-        .enumerate()
-        .map(|(index, line)| Line::from(format!("{:>2}. {}", index + 1, line)))
+        .map(|line| Line::from(line.to_string()))
         .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_repeated_text_field(
+    frame: &mut Frame<'_>,
+    ui: &UiState,
+    arg: &ArgSpec,
+    value: &str,
+    area: Rect,
+    input_clip_top: u16,
+    config: &TuiConfig,
+    _block: Block<'_>,
+    text_style: Style,
+    selected: bool,
+    show_placeholder: bool,
+) {
+    let editor = form_editor::editor_for_render(ui, arg.owner_path(), arg, value);
+    let total_rows = editor.row_count().max(1);
+    let current_row = editor.current_row();
+    if total_rows <= 1 {
+        let textarea_rect = repeated_row_textarea_rect(area, true, true);
+        let placeholder = (show_placeholder && value.is_empty())
+            .then(|| required_empty_prompt(arg, FieldWidget::RepeatedText))
+            .flatten();
+        let cursor_col =
+            (current_row == 0).then_some(u16::try_from(editor.cursor().col).unwrap_or(u16::MAX));
+        render_repeated_row_textarea(
+            frame,
+            config,
+            textarea_rect,
+            value,
+            placeholder,
+            text_style,
+            selected,
+            selected,
+            cursor_col,
+        );
+        render_repeated_row_controls(config, frame, area, selected, false, true, true);
+        return;
+    }
+    let visible_rows = usize::from(area.height / REPEATED_ROW_HEIGHT).min(total_rows);
+    if visible_rows == 0 {
+        return;
+    }
+    let start_row = repeated_visible_start_row(visible_rows, total_rows, input_clip_top);
+
+    for visible_index in 0..visible_rows {
+        let row_index = start_row + visible_index;
+        let Some(row_rect) = repeated_row_rect(area, row_index - start_row) else {
+            continue;
+        };
+        let is_last_row = row_index + 1 == total_rows;
+        let textarea_rect = repeated_row_textarea_rect(row_rect, true, is_last_row);
+        let active_row = selected && row_index == current_row;
+        let line = editor.lines().get(row_index).cloned().unwrap_or_default();
+        let placeholder = (show_placeholder && row_index == 0 && line.is_empty())
+            .then(|| required_empty_prompt(arg, FieldWidget::RepeatedText))
+            .flatten();
+
+        render_repeated_row_textarea(
+            frame,
+            config,
+            textarea_rect,
+            line.as_str(),
+            placeholder,
+            text_style,
+            active_row,
+            active_row && selected,
+            active_row.then_some(u16::try_from(editor.cursor().col).unwrap_or(u16::MAX)),
+        );
+
+        render_repeated_row_controls(
+            config,
+            frame,
+            row_rect,
+            active_row,
+            total_rows > 1,
+            true,
+            is_last_row,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_repeated_row_textarea(
+    frame: &mut Frame<'_>,
+    config: &TuiConfig,
+    area: Rect,
+    value: &str,
+    placeholder: Option<String>,
+    text_style: Style,
+    selected_row: bool,
+    place_cursor: bool,
+    cursor_col: Option<u16>,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(styles::field_border(config, selected_row, false));
+    if selected_row {
+        let mut textarea = tui_textarea::TextArea::new(vec![value.to_string()]);
+        textarea.set_block(block.style(styles::input(config, true)));
+        let base_style = Style::default()
+            .fg(text_style.fg.unwrap_or(config.theme.text))
+            .bg(config.theme.surface_raised);
+        textarea.set_style(base_style);
+        textarea.set_cursor_line_style(base_style);
+        textarea.set_cursor_style(
+            Style::default()
+                .bg(config.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+        textarea.set_selection_style(
+            Style::default()
+                .fg(config.theme.text)
+                .add_modifier(Modifier::REVERSED),
+        );
+        if let Some(placeholder) = placeholder {
+            textarea.set_placeholder_text(placeholder);
+            textarea.set_placeholder_style(styles::placeholder(config));
+        }
+        if let Some(cursor_col) = cursor_col {
+            textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_col));
+        }
+        frame.render_widget(textarea.widget(), area);
+        if place_cursor {
+            place_textarea_cursor(frame, &textarea, area);
+        }
+    } else {
+        frame.render_widget(
+            Paragraph::new(if value.is_empty() {
+                placeholder.unwrap_or_default()
+            } else {
+                value.to_string()
+            })
+            .block(block.style(styles::input(config, false)))
+            .style(if value.is_empty() {
+                styles::placeholder(config)
+            } else {
+                text_style
+            }),
+            area,
+        );
+    }
+}
+
+#[allow(clippy::fn_params_excessive_bools)]
+fn render_repeated_row_controls(
+    config: &TuiConfig,
+    frame: &mut Frame<'_>,
+    row_rect: Rect,
+    active: bool,
+    can_remove: bool,
+    show_remove: bool,
+    show_add: bool,
+) {
+    if show_remove && let Some(remove_rect) = repeated_remove_rect(row_rect, show_remove, show_add)
+    {
+        frame.render_widget(
+            Paragraph::new(REPEATED_CONTROL_REMOVE).style(styles::compact_control_affordance(
+                config, active, can_remove,
+            )),
+            remove_rect,
+        );
+    }
+    if show_add && let Some(add_rect) = repeated_add_rect(row_rect) {
+        frame.render_widget(
+            Paragraph::new(REPEATED_CONTROL_ADD)
+                .style(styles::compact_control_affordance(config, active, true)),
+            add_rect,
+        );
+    }
+}
+
+fn repeated_visible_start_row(
+    visible_rows: usize,
+    total_rows: usize,
+    input_clip_top: u16,
+) -> usize {
+    let clipped_rows = usize::from(
+        input_clip_top.saturating_add(REPEATED_ROW_HEIGHT.saturating_sub(1)) / REPEATED_ROW_HEIGHT,
+    );
+    clipped_rows.min(total_rows.saturating_sub(visible_rows.min(total_rows)))
+}
+
+fn repeated_row_rect(area: Rect, visible_index: usize) -> Option<Rect> {
+    let y = area.y.saturating_add(
+        u16::try_from(visible_index)
+            .ok()?
+            .saturating_mul(REPEATED_ROW_HEIGHT),
+    );
+    if y >= area.y.saturating_add(area.height) {
+        return None;
+    }
+    Some(Rect::new(area.x, y, area.width, REPEATED_ROW_HEIGHT))
+}
+
+fn repeated_row_textarea_rect(row_rect: Rect, show_remove: bool, show_add: bool) -> Rect {
+    let with_controls = show_remove || show_add;
+    let width = if with_controls && row_rect.width > REPEATED_CONTROL_WIDTH {
+        row_rect
+            .width
+            .saturating_sub(REPEATED_CONTROL_WIDTH)
+            .saturating_sub(1)
+    } else {
+        row_rect.width
+    };
+    Rect::new(row_rect.x, row_rect.y, width, row_rect.height)
+}
+
+fn repeated_remove_rect(row_rect: Rect, show_remove: bool, show_add: bool) -> Option<Rect> {
+    if !show_remove || row_rect.height < 2 {
+        return None;
+    }
+    let strip_start = row_rect
+        .x
+        .saturating_add(row_rect.width.saturating_sub(REPEATED_CONTROL_WIDTH));
+    let x = if show_add {
+        strip_start
+    } else {
+        strip_start.saturating_add(2)
+    };
+    Some(Rect::new(
+        x,
+        row_rect
+            .y
+            .saturating_add(row_rect.height.saturating_sub(1).min(1)),
+        3,
+        1,
+    ))
+}
+
+fn repeated_add_rect(row_rect: Rect) -> Option<Rect> {
+    if row_rect.height < 2 {
+        return None;
+    }
+    let x = row_rect.x.saturating_add(row_rect.width.saturating_sub(3));
+    Some(Rect::new(
+        x,
+        row_rect
+            .y
+            .saturating_add(row_rect.height.saturating_sub(1).min(1)),
+        3,
+        1,
+    ))
 }
 
 fn field_border_style(
@@ -467,7 +761,7 @@ fn render_optional_value(
             frame.render_widget(
                 Paragraph::new(value.to_string())
                     .block(block)
-                    .style(styles::input(config, selected).patch(text_style)),
+                    .style(text_style),
                 area,
             );
         }
@@ -492,7 +786,7 @@ fn render_optional_value(
                     Span::styled(detail, styles::placeholder(config)),
                 ]))
                 .block(block)
-                .style(styles::input(config, selected)),
+                .style(Style::default()),
                 area,
             );
         }
@@ -517,7 +811,7 @@ fn render_optional_value(
                     Span::styled(detail, styles::placeholder(config)),
                 ]))
                 .block(block)
-                .style(styles::input(config, selected)),
+                .style(Style::default()),
                 area,
             );
         }
@@ -538,7 +832,7 @@ fn render_textarea_field(
 ) {
     let editor = form_editor::editor_for_render(ui, arg.owner_path(), arg, value);
     let mut textarea = editor.to_textarea(editor.selection_anchor());
-    textarea.set_block(block);
+    textarea.set_block(block.style(styles::input(config, true)));
     let base_style = Style::default()
         .fg(text_style.fg.unwrap_or(config.theme.text))
         .bg(config.theme.surface_raised);
@@ -552,7 +846,6 @@ fn render_textarea_field(
     textarea.set_selection_style(
         Style::default()
             .fg(config.theme.text)
-            .bg(config.theme.surface_raised)
             .add_modifier(Modifier::REVERSED),
     );
     if let Some(placeholder) = placeholder {
@@ -670,30 +963,19 @@ fn render_flag_toggle(
     config: &TuiConfig,
     area: Rect,
     selected: bool,
-    label: &str,
-    value: &str,
-    badges: &[Span<'static>],
-    text_style: Style,
+    enabled: bool,
 ) {
-    let enabled = value == "[x]";
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(
-            if enabled { " [x] " } else { " [ ] " },
+            if enabled { " [✓] " } else { " [ ] " },
             styles::checkbox_chip(config, selected, enabled),
         ),
         Span::raw(" "),
         Span::styled(
-            label.to_string(),
-            if selected {
-                Style::default()
-                    .fg(config.theme.text)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                text_style.add_modifier(Modifier::BOLD)
-            },
+            if enabled { "Enabled" } else { "Disabled" },
+            styles::compact_control_value(config, selected, !enabled),
         ),
     ];
-    spans.extend(badges.iter().cloned());
     let line = Line::from(spans);
     frame.render_widget(
         Paragraph::new(line).style(styles::flag_toggle(config, selected)),
@@ -711,25 +993,39 @@ fn compact_control_line(
     open: bool,
 ) -> Line<'static> {
     let value_style = styles::compact_control_value(config, selected, is_default);
-    let affordance_style = styles::compact_control_affordance(
-        config,
-        selected,
-        open || matches!(widget, FieldWidget::Counter),
-    );
     let affordance = match widget {
-        FieldWidget::Counter => " +/- ",
+        FieldWidget::Counter => " -  + ",
         _ if open => " ^ ",
         _ => " v ",
     };
-    let affordance_width = u16::try_from(affordance.chars().count()).unwrap_or(3);
+    let affordance_width = u16::try_from(affordance.chars().count()).unwrap_or(6);
     let available_value = inner_width.saturating_sub(affordance_width + 1);
     let value_width = u16::try_from(value.chars().count()).unwrap_or(available_value);
     let padding = available_value.saturating_sub(value_width.saturating_add(1));
+    if matches!(widget, FieldWidget::Counter) {
+        return Line::from(vec![
+            Span::raw(" "),
+            Span::styled(value.to_string(), value_style),
+            Span::raw(" ".repeat(usize::from(padding))),
+            Span::styled(
+                " - ",
+                styles::compact_control_affordance(config, selected, true),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                " + ",
+                styles::compact_control_affordance(config, selected, true),
+            ),
+        ]);
+    }
     Line::from(vec![
         Span::raw(" "),
         Span::styled(value.to_string(), value_style),
         Span::raw(" ".repeat(usize::from(padding))),
-        Span::styled(affordance, affordance_style),
+        Span::styled(
+            affordance,
+            styles::compact_control_affordance(config, selected, open),
+        ),
     ])
 }
 
@@ -765,7 +1061,7 @@ fn render_help_overlay(
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw(" "),
-            Span::raw("Help"),
+            Span::styled("Help", styles::preview_title(config)),
             Span::raw(" "),
         ]))
         .borders(Borders::ALL)
@@ -806,9 +1102,7 @@ fn render_help_overlay(
 #[derive(Debug, Clone, Copy)]
 struct FieldHelpContext<'a> {
     selected: bool,
-    validation_summary: Option<&'a str>,
     field_error: Option<&'a str>,
-    is_primary_invalid: bool,
     effective_value: Option<&'a EffectiveArgValue>,
 }
 
@@ -820,11 +1114,6 @@ fn field_help_text(
     help: FieldHelpContext<'_>,
 ) -> Option<String> {
     if let Some(field_error) = help.field_error {
-        if help.is_primary_invalid
-            && let Some(summary) = help.validation_summary
-        {
-            return Some(format!("{summary}  {field_error}"));
-        }
         return Some(field_error.to_string());
     }
 
@@ -840,9 +1129,6 @@ fn field_help_text(
     };
     if let Some(help) = primary_help {
         parts.push(help);
-    }
-    if !arg.value_names().is_empty() {
-        parts.push(format!("Expects: {}", arg.value_names().join(" ")));
     }
     if let Some(effective_value) = help.effective_value {
         match effective_value.source {
@@ -875,42 +1161,27 @@ fn field_help_text(
 fn section_heading_line(config: &TuiConfig, heading: &str, width: u16) -> Line<'static> {
     let title = format!(" {heading} ");
     let title_width = u16::try_from(title.chars().count()).unwrap_or(width);
-    let left = "╭─";
-    let left_width = u16::try_from(left.chars().count()).unwrap_or(2);
-    let right = "╮";
-    let right_width = u16::try_from(right.chars().count()).unwrap_or(1);
-
-    if width
-        <= title_width
-            .saturating_add(left_width)
-            .saturating_add(right_width)
-    {
+    if width <= title_width.saturating_add(2) {
         return Line::from(Span::styled(
             heading.to_string(),
             Style::default()
-                .fg(config.theme.dim)
+                .fg(config.theme.result_accent)
                 .add_modifier(Modifier::BOLD),
         ));
     }
 
-    let line_width = width.saturating_sub(
-        left_width
-            .saturating_add(title_width)
-            .saturating_add(right_width),
-    );
+    let line_width = width.saturating_sub(title_width);
     Line::from(vec![
-        Span::styled(left, Style::default().fg(config.theme.divider)),
         Span::styled(
             title,
             Style::default()
-                .fg(config.theme.dim)
+                .fg(config.theme.result_accent)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "─".repeat(usize::from(line_width)),
             Style::default().fg(config.theme.divider),
         ),
-        Span::styled(right, Style::default().fg(config.theme.divider)),
     ])
 }
 
@@ -927,9 +1198,9 @@ fn section_cap_line(width: u16) -> Line<'static> {
 
 fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
     match widget {
-        FieldWidget::RepeatedText => {
-            Some("Enter adds rows. Alt+Up/Down reorders. Ctrl+Delete removes.")
-        }
+        FieldWidget::RepeatedText => Some(
+            "Enter moves or adds a line. Up/Down switches lines. Backspace removes an empty line. Alt+Up/Down reorders.",
+        ),
         FieldWidget::MultiChoice => Some("Space toggles choices. Enter finishes selection."),
         FieldWidget::Counter => Some("Right/+ increments. Left/- decrements."),
         FieldWidget::OptionalValue => Some("Right enables. Left/Delete disables."),
@@ -983,8 +1254,9 @@ fn required_empty_prompt(arg: &ArgSpec, widget: FieldWidget) -> Option<String> {
     }
 
     Some(match widget {
-        FieldWidget::RepeatedText => "Press Enter to add the first value".to_string(),
-        FieldWidget::SingleText => "Enter a value to continue".to_string(),
+        FieldWidget::RepeatedText | FieldWidget::SingleText => {
+            "Enter a value to continue".to_string()
+        }
         FieldWidget::SingleChoice => "Press Enter to choose a value".to_string(),
         FieldWidget::MultiChoice => "Press Space to choose at least one value".to_string(),
         _ => return None,
@@ -1084,16 +1356,17 @@ mod tests {
 
     use super::{
         FieldHelpContext, FieldWidget, compact_control_line, field_badges, field_help_text,
-        populate_layout, text_input_is_truncated,
+        populate_layout, repeated_add_rect, repeated_remove_rect, repeated_row_textarea_rect,
     };
     use crate::TuiConfig;
-    use crate::frame_snapshot::FrameSnapshot;
+    use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot};
     use crate::input::{ActiveTab, AppState, Focus, UiState};
     use crate::pipeline::EffectiveValueSource;
     use crate::query::form::{visible_args, visible_args_for_path, widget_for};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
     use crate::ui::screen::ScreenView;
+    use ratatui::layout::Rect;
 
     fn command() -> CommandSpec {
         CommandSpec {
@@ -1157,6 +1430,14 @@ mod tests {
             .iter()
             .map(ratatui::buffer::Cell::symbol)
             .collect::<String>()
+    }
+
+    fn cell_bg(backend: &TestBackend, x: u16, y: u16) -> ratatui::style::Color {
+        backend.buffer()[(x, y)].bg
+    }
+
+    fn cell_fg(backend: &TestBackend, x: u16, y: u16) -> ratatui::style::Color {
+        backend.buffer()[(x, y)].fg
     }
 
     #[test]
@@ -1300,7 +1581,7 @@ mod tests {
     }
 
     #[test]
-    fn first_invalid_field_uses_summary_link_in_help_text() {
+    fn invalid_field_uses_local_error_text() {
         let mut arg = option_arg("name", "--name");
         arg.required = true;
         let root = command();
@@ -1312,16 +1593,13 @@ mod tests {
             &crate::spec::CommandPath::default(),
             FieldHelpContext {
                 selected: false,
-                validation_summary: Some("Missing required argument: --name"),
                 field_error: Some("Required argument"),
-                is_primary_invalid: true,
                 effective_value: None,
             },
         )
         .expect("help text");
 
-        assert!(help.contains("Missing required argument: --name"));
-        assert!(help.contains("Required argument"));
+        assert_eq!(help, "Required argument");
     }
 
     #[test]
@@ -1337,9 +1615,7 @@ mod tests {
             &crate::spec::CommandPath::default(),
             FieldHelpContext {
                 selected: false,
-                validation_summary: Some("Missing required argument: --name"),
                 field_error: Some("Required argument"),
-                is_primary_invalid: false,
                 effective_value: None,
             },
         )
@@ -1370,23 +1646,41 @@ mod tests {
     }
 
     #[test]
-    fn metadata_badges_use_one_muted_label_style() {
+    fn metadata_badges_render_distinct_semantic_styles() {
         let config = TuiConfig::default();
         let selected_path = crate::spec::CommandPath::default();
-        let badges = field_badges(
+        let conditional_badges = field_badges(
             &config,
             &option_arg("name", "--name"),
             &selected_path,
             Some(EffectiveValueSource::ConditionalDefault),
         );
-        let rendered = badges
+        let implicit_badges = field_badges(
+            &config,
+            &option_arg("name", "--name"),
+            &selected_path,
+            Some(EffectiveValueSource::DefaultMissing),
+        );
+        let rendered = conditional_badges
             .iter()
             .map(|span| span.content.to_string())
             .collect::<String>();
 
         assert!(rendered.contains("Conditional"));
-        assert_eq!(badges[1].style.fg, Some(config.theme.metadata));
-        assert!(!badges[1].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(conditional_badges[1].style.fg, Some(config.theme.warning));
+        assert!(
+            !conditional_badges[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(implicit_badges[1].style.fg, Some(config.theme.warning));
+        assert!(
+            implicit_badges[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
     }
 
     #[test]
@@ -1427,7 +1721,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_places_option_description_between_label_and_input() {
+    fn layout_places_option_label_and_input_on_the_same_row() {
         let mut config = option_arg("config", "--config");
         config.help = Some("Path to the main config file".to_string());
         let command = CommandSpec {
@@ -1462,10 +1756,8 @@ mod tests {
 
         let field = snapshot.layout.form_fields.first().expect("field layout");
         let label = field.label.expect("label rect");
-        let description = field.description.expect("description rect");
-
-        assert_eq!(description.y, label.y + label.height);
-        assert_eq!(field.input.y, description.y + description.height);
+        assert_eq!(field.input.y, label.y);
+        assert!(field.input.x > label.x);
     }
 
     #[test]
@@ -1512,8 +1804,55 @@ mod tests {
             .expect("draw");
 
         let rendered = buffer_text(terminal.backend());
-        assert!(rendered.contains("╭─ Inputs"));
+        assert!(rendered.contains(" Inputs "));
         assert!(rendered.contains("-I, --include"));
+    }
+
+    #[test]
+    fn unselected_single_text_field_renders_required_placeholder() {
+        let mut arg = option_arg("input", "--input");
+        arg.required = true;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![arg],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.focus = Focus::Sidebar;
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("Enter a value to continue"));
     }
 
     #[test]
@@ -1562,8 +1901,8 @@ mod tests {
         assert!(second.section_right_rail.is_some());
         assert!(second.section_cap.is_some());
         assert_eq!(first.label.expect("label rect").x, 1);
-        assert_eq!(second.input.x, 1);
-        assert_eq!(second.input.width, 38);
+        assert_eq!(second.input.x, first.input.x);
+        assert_eq!(second.input.width, first.input.width);
     }
 
     #[test]
@@ -1609,10 +1948,8 @@ mod tests {
             .expect("draw");
 
         let rendered = buffer_text(terminal.backend());
-        assert!(rendered.contains('│'));
-        assert!(rendered.contains('╮'));
-        assert!(rendered.contains("╰"));
-        assert!(rendered.contains('╯'));
+        assert!(rendered.contains(" Global "));
+        assert!(rendered.contains('─'));
     }
 
     #[test]
@@ -1630,16 +1967,14 @@ mod tests {
             &crate::spec::CommandPath::default(),
             FieldHelpContext {
                 selected: true,
-                validation_summary: None,
                 field_error: None,
-                is_primary_invalid: false,
                 effective_value: None,
             },
         )
         .expect("selected help text");
 
         assert!(help.contains("Include one or more paths"));
-        assert!(help.contains("Expects: PATH"));
+        assert!(!help.contains("Expects: PATH"));
     }
 
     #[test]
@@ -1693,23 +2028,216 @@ mod tests {
     }
 
     #[test]
-    fn truncated_text_inputs_do_not_render_as_bordered_blocks() {
-        let single = option_arg("target", "--target");
-        let mut multi = option_arg("paths", "--paths");
-        multi.value_cardinality = ValueCardinality::Many;
+    fn clipped_text_inputs_keep_their_bordered_rendering() {
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![option_arg("path", "--path")],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
 
-        assert!(text_input_is_truncated(
-            &single,
-            ratatui::layout::Rect::new(0, 0, 20, 1)
-        ));
-        assert!(!text_input_is_truncated(
-            &single,
-            ratatui::layout::Rect::new(0, 0, 20, 3)
-        ));
-        assert!(text_input_is_truncated(
-            &multi,
-            ratatui::layout::Rect::new(0, 0, 20, 4)
-        ));
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 2),
+            &vm,
+            &mut snapshot,
+        );
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("clipped field layout");
+        assert!(
+            field.input.height
+                < crate::query::form::field_metrics(vm.active_args[0].arg).input_height
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 2)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
+            " "
+        );
+    }
+
+    #[test]
+    fn top_clipped_text_inputs_render_their_closing_edge_instead_of_reopening() {
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![option_arg("path", "--path")],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.form_scroll = 2;
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 3),
+            &vm,
+            &mut snapshot,
+        );
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("clipped field layout");
+        assert_eq!(field.input.y, 0);
+        let mut terminal = Terminal::new(TestBackend::new(40, 3)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        assert_ne!(
+            terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
+            "╭"
+        );
+    }
+
+    #[test]
+    fn repeated_text_fields_do_not_reserve_extra_height_by_default() {
+        let mut multi = option_arg("include", "--include");
+        multi.value_cardinality = ValueCardinality::Many;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+
+        populate_layout(
+            &ui_state(),
+            ratatui::layout::Rect::new(0, 0, 50, 6),
+            &vm,
+            &mut snapshot,
+        );
+
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("repeated field layout");
+        assert_eq!(field.input.height, 3);
+    }
+
+    #[test]
+    fn empty_repeated_text_field_renders_as_a_normal_textarea() {
+        let mut multi = option_arg("tag", "--tag");
+        multi.value_cardinality = ValueCardinality::Many;
+        multi.help = Some("Repeatable tag list".to_string());
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 50, 8),
+            &vm,
+            &mut snapshot,
+        );
+
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("repeated field layout");
+        assert_eq!(field.input.height, 3);
+        assert_eq!(
+            field.description.expect("description rect").y,
+            field.input.y.saturating_add(field.input.height)
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(50, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains(" - "));
+        assert!(rendered.contains(" + "));
+        assert!(rendered.contains("Repeatable tag list"));
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
+            "╭"
+        );
     }
 
     #[test]
@@ -1801,6 +2329,338 @@ mod tests {
     }
 
     #[test]
+    fn filled_default_backed_choice_renders_with_placeholder_tone() {
+        let config = TuiConfig::default();
+        let line = compact_control_line(
+            &config,
+            FieldWidget::SingleChoice,
+            "fast",
+            20,
+            false,
+            true,
+            false,
+        );
+
+        assert_eq!(line.spans[1].style.fg, Some(config.theme.metadata));
+        assert!(!line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn repeated_text_fields_render_clear_add_and_remove_controls() {
+        let mut multi = option_arg("include", "--include");
+        multi.value_cardinality = ValueCardinality::Many;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let mut state = AppState::new(command.clone());
+        state.domain.set_text_value("include", "alpha\nbeta");
+        state.domain.mark_touched("include");
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.selected_arg_index = 1;
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 50, 10),
+            &vm,
+            &mut snapshot,
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(50, 10)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(!rendered.contains("Add value"));
+        assert!(!rendered.contains("Remove"));
+        assert!(rendered.contains(" - "));
+        assert!(rendered.contains(" + "));
+    }
+
+    #[test]
+    fn repeated_text_rows_use_an_external_remove_gutter() {
+        let row_rect = Rect::new(10, 1, 30, 3);
+
+        assert_eq!(
+            repeated_row_textarea_rect(row_rect, true, false),
+            Rect::new(10, 1, 22, 3)
+        );
+        assert_eq!(
+            repeated_remove_rect(row_rect, true, false),
+            Some(Rect::new(35, 2, 3, 1))
+        );
+        assert_eq!(
+            repeated_row_textarea_rect(row_rect, true, true),
+            Rect::new(10, 1, 22, 3)
+        );
+        assert_eq!(
+            repeated_remove_rect(row_rect, true, true),
+            Some(Rect::new(33, 2, 3, 1))
+        );
+    }
+
+    #[test]
+    fn clipped_single_row_repeated_controls_do_not_render_below_the_visible_row() {
+        let row_rect = Rect::new(10, 1, 30, 1);
+
+        assert_eq!(repeated_remove_rect(row_rect, true, true), None);
+        assert_eq!(repeated_add_rect(row_rect), None);
+    }
+
+    #[test]
+    fn clipped_repeated_text_fields_still_render_as_row_editors() {
+        let mut multi = option_arg("include", "--include");
+        multi.value_cardinality = ValueCardinality::Many;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let mut state = AppState::new(command.clone());
+        state.domain.set_text_value("include", "alpha\nbeta\ngamma");
+        state.domain.mark_touched("include");
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "include")
+            .cloned()
+            .expect("include arg");
+        crate::form_editor::set_cursor_from_click(&mut state, &arg, 2, 0);
+        let mut ui = ui_state();
+        ui.editors = std::mem::take(&mut state.ui.editors);
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(&ui, Rect::new(0, 0, 60, 4), &vm, &mut snapshot);
+        let field = snapshot.layout.form_fields.first().expect("field layout");
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 4)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
+            "╭"
+        );
+    }
+
+    #[test]
+    fn clipped_repeated_text_fields_follow_outer_scroll_order_instead_of_cursor() {
+        let mut multi = option_arg("include", "--include");
+        multi.value_cardinality = ValueCardinality::Many;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let mut state = AppState::new(command.clone());
+        state.domain.set_text_value("include", "alpha\nbeta\ngamma");
+        state.domain.mark_touched("include");
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "include")
+            .cloned()
+            .expect("include arg");
+        crate::form_editor::set_cursor_from_click(&mut state, &arg, 2, 0);
+        let mut ui = ui_state();
+        ui.editors = std::mem::take(&mut state.ui.editors);
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(Rect::new(0, 0, 60, 5));
+        snapshot.layout.form_view = Some(Rect::new(0, 0, 60, 5));
+        snapshot
+            .layout
+            .form_inputs
+            .insert("include".to_string(), Rect::new(10, 1, 30, 3));
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "include".to_string(),
+            heading: None,
+            section_rail: None,
+            section_right_rail: None,
+            section_cap: None,
+            label: Some(Rect::new(0, 1, 9, 1)),
+            input: Rect::new(10, 1, 30, 3),
+            input_clip_top: 3,
+            description: None,
+        });
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 5)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("beta"));
+        assert!(!rendered.contains("gamma"));
+    }
+
+    #[test]
+    fn selected_text_input_fills_the_entire_input_surface() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("host").long("host").action(ArgAction::Set)),
+        );
+        state.domain.set_text_value("host", "127.0.0.1");
+        state.domain.mark_touched("host");
+
+        let current = state.domain.current_command().clone();
+        let root = state.domain.root.clone();
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &current,
+            root: &root,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&current, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
+        let field = snapshot.layout.form_fields.first().expect("field layout");
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        assert_eq!(
+            cell_bg(
+                terminal.backend(),
+                field.input.x + field.input.width - 2,
+                field.input.y + 1,
+            ),
+            TuiConfig::default().theme.surface_raised
+        );
+    }
+
+    #[test]
+    fn selected_default_backed_text_input_keeps_value_in_primary_text_color() {
+        let state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("host")
+                    .long("host")
+                    .action(ArgAction::Set)
+                    .default_value("127.0.0.1"),
+            ),
+        );
+
+        let current = state.domain.current_command().clone();
+        let root = state.domain.root.clone();
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &current,
+            root: &root,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&current, ActiveTab::Inputs),
+            preview_argv: derived.argv,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 8),
+            &vm,
+            &mut snapshot,
+        );
+        let field = snapshot.layout.form_fields.first().expect("field layout");
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        assert_eq!(
+            cell_fg(terminal.backend(), field.input.x + 1, field.input.y + 1),
+            TuiConfig::default().theme.text
+        );
+    }
+
+    #[test]
     fn counter_fields_render_stepper_affordance_instead_of_dropdown_chevron() {
         let command = AppState::from_command(
             &Command::new("tool").arg(Arg::new("verbose").short('v').action(ArgAction::Count)),
@@ -1838,8 +2698,9 @@ mod tests {
             .expect("draw");
 
         let rendered = buffer_text(terminal.backend());
-        assert!(rendered.contains("+/-"));
-        assert!(!rendered.contains(" v "));
+        assert!(rendered.contains(" - "));
+        assert!(rendered.contains(" + "));
+        assert!(!rendered.contains(" ^ "));
     }
 
     #[test]
@@ -1896,7 +2757,6 @@ mod tests {
             .expect("draw");
 
         let rendered = buffer_text(terminal.backend());
-        assert!(rendered.contains("--verbose"));
         assert!(rendered.contains("Inherited"));
     }
 
@@ -2014,9 +2874,7 @@ mod tests {
             &selected_path,
             FieldHelpContext {
                 selected: true,
-                validation_summary: None,
                 field_error: None,
-                is_primary_invalid: false,
                 effective_value: None,
             },
         )

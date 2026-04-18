@@ -1,13 +1,11 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::text::Line;
+use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::config::TuiConfig;
 use crate::input::AppState;
-
-use super::styles;
 
 pub(crate) fn render_toast(
     frame: &mut Frame<'_>,
@@ -23,76 +21,44 @@ pub(crate) fn render_toast(
     }
 
     let height = area.height.min(3);
-    let label = toast_label(toast.is_error);
-    let text = if height >= 3 {
-        format!(" {} ", toast.message)
-    } else {
-        format!(" {label} · {} ", toast.message)
-    };
-    let width = (u16::try_from(text.chars().count()).unwrap_or(area.width) + 2)
-        .min(area.width.saturating_sub(2));
-    let x = area
-        .x
-        .saturating_add(area.width.saturating_sub(width.saturating_add(1)));
+    let icon = toast_icon(toast.is_error);
+    let text = format!(" {icon} {} ", toast.message);
+    let width = u16::try_from(text.chars().count())
+        .unwrap_or(area.width)
+        .min(area.width);
+    let x = area.x.saturating_add(area.width.saturating_sub(width));
     let y = area
         .y
         .saturating_add(area.height.saturating_sub(height))
         .max(area.y);
     let toast_area = Rect::new(x, y, width, height);
 
-    let border = if toast.is_error {
+    let background = if toast.is_error {
         config.theme.error
     } else {
         config.theme.success
     };
-    let text_style = if toast.is_error {
-        Style::default()
-            .fg(config.theme.error)
-            .add_modifier(Modifier::BOLD)
+    let toast_style = Style::default()
+        .fg(config.theme.shell_bg)
+        .bg(background)
+        .add_modifier(Modifier::BOLD);
+    let text_y = if height >= 3 {
+        toast_area.y.saturating_add(1)
     } else {
-        Style::default()
-            .fg(config.theme.success)
-            .add_modifier(Modifier::BOLD)
+        toast_area.y
     };
+    let text_area = Rect::new(toast_area.x, text_y, toast_area.width, 1);
 
     frame.render_widget(Clear, toast_area);
-    if height >= 3 {
-        frame.render_widget(
-            Paragraph::new(Line::from(text))
-                .style(text_style.bg(config.theme.overlay_bg))
-                .block(
-                    Block::default()
-                        .title(toast_title(config, toast.is_error))
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .border_style(Style::default().fg(border)),
-                ),
-            toast_area,
-        );
-    } else {
-        frame.render_widget(
-            Paragraph::new(Line::from(text)).style(text_style.bg(config.theme.overlay_bg)),
-            toast_area,
-        );
-    }
+    frame.render_widget(Block::default().style(toast_style), toast_area);
+    frame.render_widget(
+        Paragraph::new(Line::from(text)).style(toast_style),
+        text_area,
+    );
 }
 
-fn toast_label(is_error: bool) -> &'static str {
-    if is_error { "Error" } else { "Success" }
-}
-
-fn toast_title(config: &TuiConfig, is_error: bool) -> Line<'static> {
-    let label = toast_label(is_error);
-    let label_style = if is_error {
-        styles::status_chip(config, false)
-    } else {
-        styles::success_chip(config, false)
-    };
-    Line::from(vec![
-        Span::styled(format!(" {label} "), label_style),
-        Span::raw(" "),
-        Span::styled("feedback", styles::help(config)),
-    ])
+fn toast_icon(is_error: bool) -> &'static str {
+    if is_error { "✕" } else { "✓" }
 }
 
 #[cfg(test)]
@@ -101,12 +67,11 @@ mod tests {
 
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::style::Modifier;
 
     use crate::input::{AppState, Toast};
     use crate::spec::CommandSpec;
 
-    use super::{render_toast, toast_title};
+    use super::render_toast;
     use crate::config::TuiConfig;
 
     fn state_with_toast(message: &str, is_error: bool) -> AppState {
@@ -128,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn error_toast_uses_error_border_and_bold_error_text() {
+    fn error_toast_uses_solid_error_background() {
         let mut state = state_with_toast("Clipboard unavailable", true);
         let config = TuiConfig::default();
         let mut terminal = Terminal::new(TestBackend::new(50, 6)).expect("terminal");
@@ -138,16 +103,16 @@ mod tests {
             .expect("draw");
 
         let buffer = terminal.backend().buffer();
-        let border_cell = &buffer[(27, 3)];
+        let fill_cell = &buffer[(27, 4)];
         let text_cell = &buffer[(29, 4)];
 
-        assert_eq!(border_cell.fg, config.theme.error);
-        assert_eq!(text_cell.fg, config.theme.error);
-        assert!(text_cell.modifier.contains(Modifier::BOLD));
+        assert_eq!(fill_cell.bg, config.theme.error);
+        assert_eq!(text_cell.bg, config.theme.error);
+        assert_eq!(text_cell.fg, config.theme.shell_bg);
     }
 
     #[test]
-    fn success_toast_uses_success_border_and_bold_success_text() {
+    fn success_toast_uses_solid_success_background() {
         let mut state = state_with_toast("Copied command to clipboard", false);
         let config = TuiConfig::default();
         let mut terminal = Terminal::new(TestBackend::new(60, 6)).expect("terminal");
@@ -157,22 +122,37 @@ mod tests {
             .expect("draw");
 
         let buffer = terminal.backend().buffer();
-        let border_cell = &buffer[(30, 3)];
+        let fill_cell = &buffer[(30, 4)];
         let text_cell = &buffer[(32, 4)];
 
-        assert_eq!(border_cell.fg, config.theme.success);
-        assert_eq!(text_cell.fg, config.theme.success);
-        assert!(text_cell.modifier.contains(Modifier::BOLD));
+        assert_eq!(fill_cell.bg, config.theme.success);
+        assert_eq!(text_cell.bg, config.theme.success);
+        assert_eq!(text_cell.fg, config.theme.shell_bg);
     }
 
     #[test]
-    fn toast_title_explains_success_and_error_feedback() {
+    fn toast_copy_uses_status_icon_without_text_label() {
         let config = TuiConfig::default();
+        let mut state = state_with_toast("Copied command to clipboard", false);
+        let mut terminal = Terminal::new(TestBackend::new(60, 6)).expect("terminal");
 
-        let error_title = toast_title(&config, true);
-        let success_title = toast_title(&config, false);
+        terminal
+            .draw(|frame| render_toast(frame, &mut state, &config, frame.area()))
+            .expect("draw");
+        let rendered = buffer_text(terminal.backend());
 
-        assert!(error_title.spans[0].content.as_ref().contains("Error"));
-        assert!(success_title.spans[0].content.as_ref().contains("Success"));
+        assert!(rendered.contains("✓"));
+        assert!(!rendered.contains("Success"));
+        assert!(!rendered.contains("Error"));
+        assert!(!rendered.contains("feedback"));
+    }
+
+    fn buffer_text(backend: &TestBackend) -> String {
+        backend
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>()
     }
 }

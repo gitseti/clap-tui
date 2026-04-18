@@ -4,6 +4,9 @@ use crate::input::ActiveTab;
 use crate::spec::{ArgActionKind, ArgSpec, CommandPath, CommandSpec, format_command_path};
 
 pub(crate) const SECTION_FIELD_INDENT: u16 = 1;
+pub(crate) const LABEL_COLUMN_MIN_WIDTH: u16 = 12;
+pub(crate) const LABEL_COLUMN_MAX_WIDTH: u16 = 24;
+pub(crate) const COLUMN_GAP_WIDTH: u16 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldWidget {
@@ -177,6 +180,22 @@ pub(crate) fn visible_arg_pairs<'a>(args: &[OrderedArg<'a>]) -> Vec<(usize, &'a 
         .collect()
 }
 
+pub(crate) fn preferred_label_column_width(args: &[OrderedArg<'_>]) -> u16 {
+    let widest_label = args
+        .iter()
+        .map(|item| {
+            let required_marker = u16::from(item.arg.required) * 2;
+            let label_width =
+                u16::try_from(item.arg.display_label().chars().count()).unwrap_or(u16::MAX);
+            label_width.saturating_add(required_marker)
+        })
+        .max()
+        .unwrap_or(LABEL_COLUMN_MIN_WIDTH);
+
+    widest_label.clamp(LABEL_COLUMN_MIN_WIDTH, LABEL_COLUMN_MAX_WIDTH)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
     field_metrics_with_description(arg, field_has_description(arg, None))
 }
@@ -185,27 +204,33 @@ pub(crate) fn field_metrics_with_description(
     arg: &ArgSpec,
     show_description: bool,
 ) -> FieldMetrics {
+    field_metrics_with_description_and_input_height(arg, show_description, None)
+}
+
+pub(crate) fn field_metrics_with_description_and_input_height(
+    arg: &ArgSpec,
+    show_description: bool,
+    input_height_override: Option<u16>,
+) -> FieldMetrics {
     let widget = widget_for(arg);
-    let label_height = u16::from(!matches!(
-        widget,
-        FieldWidget::Toggle | FieldWidget::Counter
-    ));
+    let label_height = 1;
     let description_height = u16::from(show_description);
-    let input_height = match widget {
+    let input_height = input_height_override.unwrap_or(match widget {
         FieldWidget::Toggle
         | FieldWidget::SingleChoice
         | FieldWidget::MultiChoice
         | FieldWidget::Counter => 1,
         FieldWidget::SingleText | FieldWidget::OptionalValue => 3,
         FieldWidget::RepeatedText => 5,
-    };
+    });
     let gap_height = 1;
+    let content_height = label_height.max(input_height);
     FieldMetrics {
         label_height,
         description_height,
         input_height,
         gap_height,
-        total_height: label_height + description_height + input_height + gap_height,
+        total_height: content_height + description_height + gap_height,
     }
 }
 
@@ -215,14 +240,8 @@ pub(crate) fn field_input_offset(arg: &ArgSpec) -> u16 {
 }
 
 pub(crate) fn field_input_offset_with_description(arg: &ArgSpec, show_description: bool) -> u16 {
-    let metrics = field_metrics_with_description(arg, show_description);
-    if metrics.label_height > 0 {
-        metrics
-            .label_height
-            .saturating_add(metrics.description_height)
-    } else {
-        0
-    }
+    let _ = (arg, show_description);
+    0
 }
 
 #[cfg(test)]
@@ -234,13 +253,23 @@ pub(crate) fn field_description_offset_with_description(
     arg: &ArgSpec,
     show_description: bool,
 ) -> Option<u16> {
-    let metrics = field_metrics_with_description(arg, show_description);
+    field_description_offset_with_description_and_input_height(arg, show_description, None)
+}
+
+pub(crate) fn field_description_offset_with_description_and_input_height(
+    arg: &ArgSpec,
+    show_description: bool,
+    input_height_override: Option<u16>,
+) -> Option<u16> {
+    let metrics = field_metrics_with_description_and_input_height(
+        arg,
+        show_description,
+        input_height_override,
+    );
     if metrics.description_height == 0 {
         None
-    } else if metrics.label_height > 0 {
-        Some(metrics.label_height)
     } else {
-        Some(metrics.input_height)
+        Some(metrics.label_height.max(metrics.input_height))
     }
 }
 
@@ -249,9 +278,18 @@ pub(crate) fn measure_fields_height(args: &[OrderedArg<'_>]) -> u16 {
     measure_fields_height_with_errors(args, &BTreeMap::new())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn measure_fields_height_with_errors(
     args: &[OrderedArg<'_>],
     field_errors: &BTreeMap<String, String>,
+) -> u16 {
+    measure_fields_height_with_overrides(args, field_errors, &std::collections::HashMap::new())
+}
+
+pub(crate) fn measure_fields_height_with_overrides(
+    args: &[OrderedArg<'_>],
+    field_errors: &BTreeMap<String, String>,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
 ) -> u16 {
     let mut total = 0;
     let mut previous_heading = None;
@@ -259,9 +297,10 @@ pub(crate) fn measure_fields_height_with_errors(
         if field_heading(previous_heading, item).is_some() {
             total += 1;
         }
-        total += field_metrics_with_description(
+        total += field_metrics_with_description_and_input_height(
             item.arg,
             field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str)),
+            input_height_overrides.get(&item.arg.id).copied(),
         )
         .total_height;
         previous_heading = item.section_heading.as_deref();
@@ -540,8 +579,8 @@ mod tests {
         let mut flag = arg("verbose", "--verbose", ArgKind::Flag);
         flag.help = Some("toggle".to_string());
 
-        assert_eq!(field_metrics(&single).total_height, 5);
-        assert_eq!(field_metrics(&multi).total_height, 8);
+        assert_eq!(field_metrics(&single).total_height, 4);
+        assert_eq!(field_metrics(&multi).total_height, 7);
         assert_eq!(field_metrics(&flag).total_height, 3);
     }
 
@@ -568,13 +607,13 @@ mod tests {
     }
 
     #[test]
-    fn described_options_place_help_before_input() {
+    fn described_options_place_help_below_inline_input_content() {
         let mut option = arg("config", "--config", ArgKind::Option);
         option.help = Some("Path to config".to_string());
         let flag = arg("quiet", "--quiet", ArgKind::Flag);
 
-        assert_eq!(field_description_offset(&option), Some(1));
-        assert_eq!(field_input_offset(&option), 2);
+        assert_eq!(field_description_offset(&option), Some(3));
+        assert_eq!(field_input_offset(&option), 0);
         assert_eq!(field_description_offset(&flag), None);
         assert_eq!(field_input_offset(&flag), 0);
     }
@@ -587,26 +626,24 @@ mod tests {
         let command = command(vec![positional]);
         let visible = visible_args(&command, ActiveTab::Inputs);
 
-        assert_eq!(measure_fields_height(&visible), 6);
-        assert_eq!(field_content_bounds(&visible, 0), Some((2, 5)));
+        assert_eq!(measure_fields_height(&visible), 5);
+        assert_eq!(field_content_bounds(&visible, 0), Some((0, 3)));
 
         let label_hit = hit_test_form_content(&visible, 0).expect("label hit");
         assert!(label_hit.in_label);
-        assert!(!label_hit.in_input);
+        assert!(label_hit.in_input);
         assert!(!label_hit.in_description);
 
-        let description_hit = hit_test_form_content(&visible, 1).expect("description hit");
-        assert!(description_hit.in_description);
-        assert!(!description_hit.in_label);
-        assert!(!description_hit.in_input);
-
-        let input_hit = hit_test_form_content(&visible, 2).expect("input hit");
+        let input_hit = hit_test_form_content(&visible, 1).expect("input hit");
         assert!(matches!(input_hit.widget, FieldWidget::SingleText));
         assert!(input_hit.in_input);
-        assert!(!input_hit.in_label);
         assert!(!input_hit.in_description);
 
-        assert!(hit_test_form_content(&visible, 5).is_none());
+        let description_hit = hit_test_form_content(&visible, 3).expect("description hit");
+        assert!(description_hit.in_description);
+        assert!(!description_hit.in_input);
+
+        assert!(hit_test_form_content(&visible, 4).is_none());
     }
 
     #[test]
@@ -622,7 +659,7 @@ mod tests {
         let input_hit = hit_test_form_content(&visible, 0).expect("input hit");
         assert!(matches!(input_hit.widget, FieldWidget::Toggle));
         assert!(input_hit.in_input);
-        assert!(!input_hit.in_label);
+        assert!(input_hit.in_label);
 
         let description_hit = hit_test_form_content(&visible, 1).expect("description hit");
         assert!(description_hit.in_description);
@@ -639,9 +676,9 @@ mod tests {
         let command = command(vec![multi, flag]);
         let visible = visible_args(&command, ActiveTab::Inputs);
 
-        assert_eq!(field_content_bounds(&visible, 1), Some((8, 9)));
+        assert_eq!(field_content_bounds(&visible, 1), Some((7, 8)));
 
-        let second_input = hit_test_form_content(&visible, 8).expect("second field input");
+        let second_input = hit_test_form_content(&visible, 7).expect("second field input");
         assert_eq!(second_input.arg_id, "verbose");
         assert!(second_input.in_input);
         assert!(matches!(second_input.widget, FieldWidget::Toggle));
@@ -661,8 +698,8 @@ mod tests {
         assert_eq!(field_heading(None, &visible[0]), Some("Inputs"));
         assert_eq!(field_heading(Some("Inputs"), &visible[1]), None);
         assert_eq!(field_heading(Some("Inputs"), &visible[2]), Some("Outputs"));
-        assert_eq!(measure_fields_height(&visible), 17);
-        assert_eq!(field_content_bounds(&visible, 0), Some((2, 5)));
-        assert_eq!(field_content_bounds(&visible, 2), Some((13, 16)));
+        assert_eq!(measure_fields_height(&visible), 14);
+        assert_eq!(field_content_bounds(&visible, 0), Some((1, 4)));
+        assert_eq!(field_content_bounds(&visible, 2), Some((10, 13)));
     }
 }

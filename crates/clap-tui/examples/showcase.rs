@@ -1,4 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::str::FromStr;
+use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -82,9 +84,8 @@ struct LogOptions {
     #[arg(long, value_enum, default_value_t = Region::EuCentral1)]
     region: Region,
 
-    /// Time window such as 15m or 1h
     #[arg(long, default_value = "15m")]
-    since: String,
+    since: Since,
 
     /// Keep streaming new log lines
     #[arg(long)]
@@ -110,6 +111,35 @@ enum Region {
     UsEast1,
     EuCentral1,
     ApSouth1,
+}
+
+#[derive(Debug, Clone)]
+pub struct Since(pub Duration);
+
+impl FromStr for Since {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() < 2 {
+            return Err("must be like 15m or 1h".into());
+        }
+
+        let (num_part, unit_part) = s.split_at(s.len() - 1);
+
+        let value: u64 = num_part
+            .parse()
+            .map_err(|_| "must start with a number (e.g. 15m)")?;
+
+        let duration = match unit_part {
+            "s" => Duration::from_secs(value),
+            "m" => Duration::from_secs(value * 60),
+            "h" => Duration::from_secs(value * 60 * 60),
+            "d" => Duration::from_secs(value * 60 * 60 * 24),
+            _ => return Err("unit must be one of: s, m, h, d".into()),
+        };
+
+        Ok(Since(duration))
+    }
 }
 
 #[clap_tui::main]
