@@ -54,7 +54,7 @@ pub(crate) fn reset_validation_call_count() {
 
 #[cfg(test)]
 mod tests {
-    use clap::{Arg, ArgAction, Command, builder::ArgPredicate};
+    use clap::{Arg, ArgAction, ArgGroup, Command, builder::ArgPredicate};
 
     use super::{EffectiveValueSource, derive};
     use crate::input::{AppState, InputSource, InputValueOccurrence};
@@ -626,6 +626,83 @@ mod tests {
         );
         assert!(derived.validation.field_errors.contains_key("name"));
         assert!(derived.validation.field_errors.contains_key("path"));
+    }
+
+    #[test]
+    fn missing_required_group_uses_actionable_summary_and_member_field_errors() {
+        let state = AppState::from_command(
+            &Command::new("tool")
+                .group(ArgGroup::new("mode").args(["fast", "safe"]).required(true))
+                .arg(
+                    Arg::new("fast")
+                        .long("fast")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                )
+                .arg(
+                    Arg::new("safe")
+                        .long("safe")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                ),
+        );
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert_eq!(
+            derived.validation.summary.as_deref(),
+            Some("Choose one of: --fast, --safe")
+        );
+        assert_eq!(
+            derived.validation.field_errors.get("fast"),
+            Some(&"Choose one of: --fast, --safe".to_string())
+        );
+        assert_eq!(
+            derived.validation.field_errors.get("safe"),
+            Some(&"Choose one of: --fast, --safe".to_string())
+        );
+    }
+
+    #[test]
+    fn mixed_missing_required_args_and_groups_surface_both_feedback_paths() {
+        let state = AppState::from_command(
+            &Command::new("tool")
+                .group(ArgGroup::new("mode").args(["fast", "safe"]).required(true))
+                .arg(Arg::new("name").long("name").required(true))
+                .arg(
+                    Arg::new("fast")
+                        .long("fast")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                )
+                .arg(
+                    Arg::new("safe")
+                        .long("safe")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                ),
+        );
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert_eq!(
+            derived.validation.summary.as_deref(),
+            Some("Missing required argument: --name; Choose one of: --fast, --safe")
+        );
+        assert_eq!(
+            derived.validation.field_errors.get("name"),
+            Some(&"Required argument".to_string())
+        );
+        assert_eq!(
+            derived.validation.field_errors.get("fast"),
+            Some(&"Choose one of: --fast, --safe".to_string())
+        );
+        assert_eq!(
+            derived.validation.field_errors.get("safe"),
+            Some(&"Choose one of: --fast, --safe".to_string())
+        );
     }
 
     #[test]

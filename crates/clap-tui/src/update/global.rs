@@ -453,4 +453,41 @@ mod tests {
         assert_eq!(state.ui.focus, Focus::Form);
         assert_eq!(state.ui.selected_arg_index, 0);
     }
+
+    #[test]
+    fn footer_status_click_focuses_first_required_group_member_when_available() {
+        let mut state = crate::input::AppState::from_command(
+            &clap::Command::new("tool")
+                .group(
+                    clap::ArgGroup::new("mode")
+                        .args(["fast", "safe"])
+                        .required(true),
+                )
+                .arg(
+                    clap::Arg::new("fast")
+                        .long("fast")
+                        .action(clap::ArgAction::SetTrue)
+                        .group("mode"),
+                )
+                .arg(
+                    clap::Arg::new("safe")
+                        .long("safe")
+                        .action(clap::ArgAction::SetTrue)
+                        .group("mode"),
+                ),
+        );
+        state.ui.focus = Focus::Sidebar;
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 6));
+
+        let effect = apply_action(
+            &Action::ClickFooter(crate::input::HoverTarget::Preview),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.focus, Focus::Form);
+        assert_eq!(state.ui.selected_arg_index, 0);
+    }
 }

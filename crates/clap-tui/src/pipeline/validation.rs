@@ -88,7 +88,7 @@ fn adapt_clap_error(state: &AppState, error: &clap::Error) -> ValidationState {
 
 fn summary_from_error_kind_and_context(state: &AppState, error: &clap::Error) -> Option<String> {
     match error.kind() {
-        ErrorKind::MissingRequiredArgument => summary_for_missing_required(state),
+        ErrorKind::MissingRequiredArgument => summary_for_missing_required_error(state, error),
         ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
             summary_for_help_style_missing(state)
                 .or_else(|| clean_diagnostic_line(&error.to_string(), current_about(state)))
@@ -109,6 +109,24 @@ fn summary_from_error_kind_and_context(state: &AppState, error: &clap::Error) ->
             clean_diagnostic_line(&error.to_string(), current_about(state))
         }
         _ => clean_diagnostic_line(&error.to_string(), current_about(state)),
+    }
+}
+
+fn summary_for_missing_required_error(state: &AppState, error: &clap::Error) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(summary) = summary_for_missing_required(state) {
+        parts.push(summary);
+    }
+    parts.extend(
+        missing_required_group_feedback(state, error)
+            .into_iter()
+            .map(|group| group.message),
+    );
+
+    match parts.as_slice() {
+        [] => clean_diagnostic_line(&error.to_string(), current_about(state)),
+        [single] => Some(single.clone()),
+        many => Some(many.join("; ")),
     }
 }
 
@@ -211,6 +229,11 @@ fn infer_field_errors(
             for arg in missing_required_arg_models(state) {
                 field_errors.insert(arg.id.clone(), "Required argument".to_string());
             }
+            for group in missing_required_group_feedback(state, error) {
+                for arg_id in group.arg_ids {
+                    field_errors.insert(arg_id, group.message.clone());
+                }
+            }
         }
         ErrorKind::ArgumentConflict => {
             for arg_id in referenced_arg_ids(state, error, Some(&summary)) {
@@ -242,16 +265,7 @@ fn missing_required_args(state: &AppState) -> Vec<String> {
 
 fn missing_required_arg_models(state: &AppState) -> Vec<&ArgModel> {
     let current_form = state.domain.current_form().unwrap_or_default();
-    state
-        .domain
-        .root
-        .effective_args_for_path(state.domain.selected_path())
-        .into_iter()
-        .flatten()
-        .map(|(_, arg)| arg)
-        .filter(|arg| {
-            !arg.is_external_subcommand_field() || arg.owner_path() == state.domain.selected_path()
-        })
+    visible_arg_models(state)
         .filter(|arg| arg.required && !arg.is_help_action())
         .filter(|arg| arg_is_missing(arg, &current_form))
         .collect()
@@ -259,24 +273,13 @@ fn missing_required_arg_models(state: &AppState) -> Vec<&ArgModel> {
 
 fn referenced_arg_ids(state: &AppState, error: &clap::Error, summary: Option<&str>) -> Vec<String> {
     let tokens = referenced_tokens(error, summary);
-    state
-        .domain
-        .root
-        .effective_args_for_path(state.domain.selected_path())
-        .into_iter()
-        .flatten()
-        .map(|(_, arg)| arg)
-        .filter(|arg| {
-            !arg.is_external_subcommand_field() || arg.owner_path() == state.domain.selected_path()
-        })
+    visible_arg_models(state)
         .filter(|arg| {
             arg_reference_candidates(arg)
                 .iter()
                 .any(|candidate| tokens.contains(candidate))
         })
         .map(|arg| arg.id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
         .collect()
 }
 
@@ -310,6 +313,28 @@ fn arg_reference_candidates(arg: &ArgModel) -> Vec<String> {
 fn referenced_tokens(error: &clap::Error, summary: Option<&str>) -> BTreeSet<String> {
     let mut tokens = BTreeSet::new();
 
+    for value in context_reference_values(error) {
+        tokens.extend(reference_tokens(&value));
+    }
+
+    if let Some(diagnostic) = diagnostic_text(error) {
+        for token in diagnostic.split_whitespace().filter_map(extract_arg_token) {
+            tokens.extend(reference_tokens(&token));
+        }
+    }
+
+    if let Some(summary) = summary {
+        for token in summary.split_whitespace().filter_map(extract_arg_token) {
+            tokens.extend(reference_tokens(&token));
+        }
+    }
+
+    tokens
+}
+
+fn context_reference_values(error: &clap::Error) -> Vec<String> {
+    let mut values = Vec::new();
+
     for key in [
         ContextKind::InvalidArg,
         ContextKind::PriorArg,
@@ -317,32 +342,52 @@ fn referenced_tokens(error: &clap::Error, summary: Option<&str>) -> BTreeSet<Str
     ] {
         if let Some(value) = error.get(key) {
             match value {
-                ContextValue::String(value) => {
-                    tokens.insert(compact_arg_reference(value));
-                }
-                ContextValue::Strings(values) => {
-                    tokens.extend(values.iter().map(|value| compact_arg_reference(value)));
-                }
-                ContextValue::StyledStr(value) => {
-                    tokens.insert(compact_arg_reference(&value.to_string()));
-                }
-                ContextValue::StyledStrs(values) => {
-                    tokens.extend(
-                        values
-                            .iter()
-                            .map(|value| compact_arg_reference(&value.to_string())),
-                    );
+                ContextValue::String(value) => values.push(value.clone()),
+                ContextValue::Strings(items) => values.extend(items.iter().cloned()),
+                ContextValue::StyledStr(value) => values.push(value.to_string()),
+                ContextValue::StyledStrs(items) => {
+                    values.extend(items.iter().map(ToString::to_string));
                 }
                 _ => {}
             }
         }
     }
 
-    if let Some(summary) = summary {
-        tokens.extend(summary.split_whitespace().filter_map(extract_arg_token));
+    values
+}
+
+fn reference_tokens(value: &str) -> BTreeSet<String> {
+    let compact = compact_arg_reference(value);
+    let mut tokens = BTreeSet::new();
+    if !compact.is_empty() {
+        tokens.insert(compact.clone());
+    }
+    if let Some(members) = composite_reference_members(&compact) {
+        tokens.extend(members);
+    }
+    tokens
+}
+
+fn composite_reference_members(value: &str) -> Option<Vec<String>> {
+    let trimmed = value.trim();
+    let inner = trimmed
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+        .or_else(|| {
+            trimmed
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+        })?;
+    if !inner.contains('|') {
+        return None;
     }
 
-    tokens
+    let members = inner
+        .split('|')
+        .map(compact_arg_reference)
+        .filter(|member| !member.is_empty())
+        .collect::<Vec<_>>();
+    (!members.is_empty()).then_some(members)
 }
 
 fn context_string(error: &clap::Error, key: ContextKind) -> Option<String> {
@@ -369,10 +414,105 @@ fn compact_arg_reference(value: &str) -> String {
 
 fn extract_arg_token(token: &str) -> Option<String> {
     let trimmed = token.trim_matches(|ch: char| {
-        ch == ',' || ch == ':' || ch == ';' || ch == ')' || ch == '(' || ch == '.'
+        ch == ','
+            || ch == ':'
+            || ch == ';'
+            || ch == ')'
+            || ch == '('
+            || ch == '.'
+            || ch == '>'
+            || ch == ']'
     });
     (trimmed.starts_with('-') || trimmed.starts_with('<') || trimmed.starts_with('['))
         .then(|| trimmed.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MissingRequiredGroupFeedback {
+    message: String,
+    arg_ids: Vec<String>,
+}
+
+fn missing_required_group_feedback(
+    state: &AppState,
+    error: &clap::Error,
+) -> Vec<MissingRequiredGroupFeedback> {
+    composite_references(error)
+        .into_iter()
+        .filter_map(|reference| {
+            let tokens = composite_reference_members(&reference)?;
+            let args = resolve_reference_args(state, &tokens);
+            if args.is_empty() {
+                return None;
+            }
+
+            Some(MissingRequiredGroupFeedback {
+                message: format!(
+                    "Choose one of: {}",
+                    args.iter()
+                        .map(|arg| arg.display_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                arg_ids: args.into_iter().map(|arg| arg.id.clone()).collect(),
+            })
+        })
+        .collect()
+}
+
+fn composite_references(error: &clap::Error) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut references = Vec::new();
+
+    for value in context_reference_values(error) {
+        for token in reference_tokens(&value) {
+            if composite_reference_members(&token).is_some() && seen.insert(token.clone()) {
+                references.push(token);
+            }
+        }
+    }
+
+    if let Some(diagnostic) = diagnostic_text(error) {
+        for token in diagnostic.split_whitespace().filter_map(extract_arg_token) {
+            for reference in reference_tokens(&token) {
+                if composite_reference_members(&reference).is_some()
+                    && seen.insert(reference.clone())
+                {
+                    references.push(reference);
+                }
+            }
+        }
+    }
+
+    references
+}
+
+fn diagnostic_text(error: &clap::Error) -> Option<String> {
+    clean_diagnostic_line(&error.to_string(), None)
+}
+
+fn resolve_reference_args<'a>(state: &'a AppState, tokens: &[String]) -> Vec<&'a ArgModel> {
+    let token_set = tokens.iter().cloned().collect::<BTreeSet<_>>();
+    visible_arg_models(state)
+        .filter(|arg| {
+            arg_reference_candidates(arg)
+                .iter()
+                .any(|candidate| token_set.contains(candidate))
+        })
+        .collect()
+}
+
+fn visible_arg_models(state: &AppState) -> impl Iterator<Item = &ArgModel> {
+    state
+        .domain
+        .root
+        .effective_args_for_path(state.domain.selected_path())
+        .into_iter()
+        .flatten()
+        .map(|(_, arg)| arg)
+        .filter(|arg| {
+            !arg.is_external_subcommand_field() || arg.owner_path() == state.domain.selected_path()
+        })
 }
 
 fn current_about(state: &AppState) -> Option<&str> {

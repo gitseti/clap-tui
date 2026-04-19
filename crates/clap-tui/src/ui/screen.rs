@@ -333,6 +333,43 @@ mod tests {
     }
 
     #[test]
+    fn required_group_error_renders_inline_and_matches_footer_summary() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .group(ArgGroup::new("mode").args(["fast", "safe"]).required(true))
+                .arg(
+                    Arg::new("fast")
+                        .long("fast")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                )
+                .arg(
+                    Arg::new("safe")
+                        .long("safe")
+                        .action(ArgAction::SetTrue)
+                        .group("mode"),
+                ),
+        );
+
+        let (backend, snapshot) = render_app(&mut state);
+        let rendered = buffer_text(&backend);
+        let summary = "Choose one of: --fast, --safe";
+        let config = TuiConfig::default();
+
+        assert_eq!(count_occurrences(&rendered, summary), 3);
+        assert_eq!(snapshot.layout.form_fields.len(), 2);
+        for field in &snapshot.layout.form_fields {
+            assert!(field.description.is_some());
+            let label = field.label.expect("label rect");
+            assert_eq!(cell_fg(&backend, label.x, label.y), config.theme.error);
+            assert_eq!(
+                cell_fg(&backend, field.input.x, field.input.y),
+                config.theme.error
+            );
+        }
+    }
+
+    #[test]
     fn invalid_value_error_renders_inline_and_matches_footer_summary() {
         let mut state = AppState::from_command(
             &Command::new("tool").arg(
