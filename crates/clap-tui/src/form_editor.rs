@@ -444,10 +444,10 @@ fn fixed_occurrence_group_size(arg: &ArgModel) -> Option<usize> {
 }
 
 fn split_row_occurrence_values(arg: &ArgModel, text: &str) -> Vec<String> {
-    if arg.accepts_multiple_values_per_occurrence()
-        && arg.allows_multiple_occurrences()
-        && arg.metadata.syntax.value_delimiter.is_none()
-    {
+    if arg.accepts_multiple_values_per_occurrence() && arg.allows_multiple_occurrences() {
+        if arg.metadata.syntax.value_delimiter.is_some() {
+            return vec![text.to_string()];
+        }
         return text.split_whitespace().map(str::to_string).collect();
     }
 
@@ -455,10 +455,10 @@ fn split_row_occurrence_values(arg: &ArgModel, text: &str) -> Vec<String> {
 }
 
 fn render_occurrence_row_text(arg: &ArgModel, values: &[String]) -> String {
-    if arg.accepts_multiple_values_per_occurrence()
-        && arg.allows_multiple_occurrences()
-        && arg.metadata.syntax.value_delimiter.is_none()
-    {
+    if arg.accepts_multiple_values_per_occurrence() && arg.allows_multiple_occurrences() {
+        if arg.metadata.syntax.value_delimiter.is_some() {
+            return values.first().cloned().unwrap_or_default();
+        }
         return values.join(" ");
     }
 
@@ -741,5 +741,47 @@ mod tests {
             .clone();
 
         assert_eq!(click_cursor_position(&state, &arg, 0, 5), (0, 5));
+    }
+
+    #[test]
+    fn delimited_repeated_rows_keep_comma_text_in_a_single_occurrence() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("tag")
+                    .long("tag")
+                    .action(ArgAction::Append)
+                    .num_args(1..)
+                    .value_delimiter(','),
+            ),
+        );
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "tag")
+            .cloned()
+            .expect("tag arg");
+
+        let result = super::apply_paste_to_text_field(&mut state, &arg, "alpha,beta");
+
+        assert_eq!(result, EditResult::Handled);
+        let form = state.domain.current_form().expect("form");
+        let input = form.input("tag").expect("tag input");
+        match &input.value {
+            ArgInput::Values { occurrences } => {
+                assert_eq!(occurrences.len(), 1);
+                assert_eq!(occurrences[0].values, vec!["alpha,beta".to_string()]);
+            }
+            other => panic!("expected value occurrences, got {other:?}"),
+        }
+        assert_eq!(
+            crate::pipeline::build_command_line(&state),
+            vec![
+                "tool".to_string(),
+                "--tag".to_string(),
+                "alpha,beta".to_string(),
+            ]
+        );
     }
 }

@@ -11,7 +11,7 @@ use ratatui::layout::Rect;
 
 use super::{Action, Effect};
 
-const REPEATED_CONTROL_ROW_WIDTH: u16 = 7;
+const REPEATED_CONTROL_ROW_WIDTH: u16 = 8;
 const REPEATED_ROW_HEIGHT: u16 = 3;
 
 pub(crate) fn apply(
@@ -535,7 +535,7 @@ fn repeated_add_rect(row_rect: Rect) -> Option<Rect> {
     if row_rect.height < 2 {
         return None;
     }
-    let x = row_rect.x.saturating_add(row_rect.width.saturating_sub(3));
+    let x = row_rect.x.saturating_add(row_rect.width.saturating_sub(4));
     Some(Rect::new(
         x,
         row_rect
@@ -1074,6 +1074,42 @@ mod tests {
         assert_eq!(repeated_add_rect(row_rect), None);
         assert_eq!(
             repeated_control_click_target(34, 2, row_rect, true, true),
+            None
+        );
+    }
+
+    #[test]
+    fn repeated_text_add_chip_leaves_the_far_right_column_inactive() {
+        let row_rect = ratatui::layout::Rect::new(10, 1, 30, 3);
+
+        assert_eq!(
+            repeated_add_rect(row_rect),
+            Some(ratatui::layout::Rect::new(36, 2, 3, 1))
+        );
+        assert_eq!(
+            repeated_control_click_target(39, 2, row_rect, true, true),
+            None
+        );
+        assert_eq!(
+            repeated_control_click_target(38, 2, row_rect, true, true),
+            Some(RepeatedControlClickTarget::Add)
+        );
+    }
+
+    #[test]
+    fn repeated_text_buttons_keep_a_gap_between_remove_and_add() {
+        let row_rect = ratatui::layout::Rect::new(10, 1, 30, 3);
+
+        assert_eq!(
+            repeated_remove_rect(row_rect, true, true),
+            Some(ratatui::layout::Rect::new(32, 2, 3, 1))
+        );
+        assert_eq!(
+            repeated_add_rect(row_rect),
+            Some(ratatui::layout::Rect::new(36, 2, 3, 1))
+        );
+        assert_eq!(
+            repeated_control_click_target(35, 2, row_rect, true, true),
             None
         );
     }

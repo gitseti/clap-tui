@@ -20,7 +20,7 @@ use super::{screen::ScreenView, styles};
 
 const REPEATED_CONTROL_REMOVE: &str = " - ";
 const REPEATED_CONTROL_ADD: &str = " + ";
-const REPEATED_CONTROL_WIDTH: u16 = 7;
+const REPEATED_CONTROL_WIDTH: u16 = 8;
 const REPEATED_ROW_HEIGHT: u16 = 3;
 
 #[allow(dead_code)]
@@ -31,6 +31,7 @@ pub(crate) fn populate_layout(
     frame_snapshot: &mut FrameSnapshot,
 ) {
     let input_height_overrides = repeated_input_height_overrides(ui, vm);
+    let label_height_overrides = label_height_overrides(vm);
     crate::frame_snapshot::populate_form_layout(
         ui,
         area,
@@ -38,6 +39,7 @@ pub(crate) fn populate_layout(
         &vm.command.help,
         &vm.validation,
         &input_height_overrides,
+        &label_height_overrides,
         frame_snapshot,
     );
 }
@@ -55,10 +57,12 @@ pub(crate) fn render_form(
     let frame_layout = &frame_snapshot.layout;
     let content_area = frame_layout.form_view.unwrap_or(area);
     let input_height_overrides = repeated_input_height_overrides(ui, vm);
-    let content_height = form::measure_fields_height_with_overrides(
+    let label_height_overrides = label_height_overrides(vm);
+    let content_height = form::measure_fields_height_with_layout_overrides(
         &vm.active_args,
         &vm.validation.field_errors,
         &input_height_overrides,
+        &label_height_overrides,
     );
     let viewport_height = content_area.height;
     let form_scroll = ui.form_scroll(frame_snapshot);
@@ -132,6 +136,10 @@ fn repeated_input_height_overrides(ui: &UiState, vm: &ScreenView<'_>) -> HashMap
         .collect()
 }
 
+fn label_height_overrides(_: &ScreenView<'_>) -> HashMap<String, u16> {
+    HashMap::new()
+}
+
 #[allow(clippy::too_many_lines)]
 fn render_fields(
     frame: &mut Frame<'_>,
@@ -152,71 +160,37 @@ fn render_fields(
         let field_error = vm.validation.field_errors.get(&item.arg.id);
         let is_primary_invalid =
             frame_snapshot.first_invalid_field_id() == Some(item.arg.id.as_str());
-        let input_state = vm
-            .inputs
-            .as_ref()
-            .and_then(|inputs| inputs.input(&item.arg.id));
         let source_badge = effective_source_badge(vm, item.arg);
-        let badges = field_badges(config, item.arg, &vm.selected_path, source_badge);
 
-        if let Some(heading_rect) = field.heading {
-            if let Some(heading) = item.section_heading.as_deref() {
-                frame.render_widget(
-                    Paragraph::new(section_heading_line(config, heading, heading_rect.width)),
-                    heading_rect,
-                );
-            }
-        }
-        if let Some(rail_rect) = field.section_rail {
+        if let Some(heading_rect) = field.heading
+            && let Some(heading) = item.section_heading.as_deref()
+        {
             frame.render_widget(
-                Paragraph::new(
-                    (0..rail_rect.height)
-                        .map(|_| Line::from("│"))
-                        .collect::<Vec<_>>(),
-                )
-                .style(Style::default().fg(config.theme.divider)),
-                rail_rect,
-            );
-        }
-        if let Some(rail_rect) = field.section_right_rail {
-            frame.render_widget(
-                Paragraph::new(
-                    (0..rail_rect.height)
-                        .map(|_| Line::from("│"))
-                        .collect::<Vec<_>>(),
-                )
-                .style(Style::default().fg(config.theme.divider)),
-                rail_rect,
-            );
-        }
-        if let Some(cap_rect) = field.section_cap {
-            frame.render_widget(
-                Paragraph::new(section_cap_line(cap_rect.width))
-                    .style(Style::default().fg(config.theme.divider)),
-                cap_rect,
+                Paragraph::new(section_heading_line(config, heading, heading_rect.width)),
+                heading_rect,
             );
         }
 
         if let Some(label_rect) = field.label {
+            let label_style = if field_error.is_some() {
+                if is_primary_invalid {
+                    styles::label(config, selected)
+                        .fg(config.theme.error)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    styles::label(config, selected).fg(config.theme.error)
+                }
+            } else {
+                styles::label(config, selected)
+            };
             let mut spans = vec![Span::styled(
                 item.arg.display_label().to_string(),
-                if field_error.is_some() {
-                    if is_primary_invalid {
-                        styles::label(config, selected)
-                            .fg(config.theme.error)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        styles::label(config, selected).fg(config.theme.error)
-                    }
-                } else {
-                    styles::label(config, selected)
-                },
+                label_style,
             )];
             if item.arg.required {
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled("*", styles::required_prompt(config)));
             }
-            spans.extend(badges.clone());
             frame.render_widget(Paragraph::new(Line::from(spans)), label_rect);
         }
 
@@ -229,28 +203,21 @@ fn render_fields(
             item.widget,
             FieldWidget::SingleChoice | FieldWidget::MultiChoice
         ) && value.is_empty();
-        let is_default = value_matches_default(
-            item.arg,
-            current_value.as_ref(),
-            vm.inputs
-                .as_ref()
-                .is_some_and(|inputs| inputs.is_touched(&item.arg.id)),
-        );
+        let is_touched = vm
+            .inputs
+            .as_ref()
+            .is_some_and(|inputs| inputs.is_touched(&item.arg.id));
+        let is_default = value_matches_default(item.arg, current_value.as_ref(), is_touched);
+        let uses_muted_non_user_value = !value.is_empty()
+            && !is_touched
+            && source_badge.is_some_and(|source| source != EffectiveValueSource::User);
         let shows_text_placeholder = value.is_empty()
             && matches!(
                 item.widget,
                 FieldWidget::SingleText | FieldWidget::RepeatedText
             );
-        let has_textarea_content = !value.is_empty()
-            && matches!(
-                item.widget,
-                FieldWidget::SingleText | FieldWidget::RepeatedText | FieldWidget::OptionalValue
-            );
-        let shows_passive_toggle = matches!(item.widget, FieldWidget::Toggle)
-            && value == "[ ]"
-            && !input_state.is_some_and(|input| {
-                input.touched || matches!(input.input_source(), Some(InputSource::User))
-            });
+        let shows_passive_toggle =
+            matches!(item.widget, FieldWidget::Toggle) && !is_touched && value == "[ ]";
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -264,9 +231,8 @@ fn render_fields(
         let fill_style = styles::input(config, selected);
         let text_style = if shows_choice_placeholder && item.arg.required {
             styles::required_prompt(config)
-        } else if has_textarea_content {
-            Style::default().fg(config.theme.text)
-        } else if is_default
+        } else if uses_muted_non_user_value
+            || is_default
             || shows_choice_placeholder
             || shows_text_placeholder
             || shows_passive_toggle
@@ -277,7 +243,7 @@ fn render_fields(
         };
 
         if matches!(item.widget, FieldWidget::Toggle) {
-            render_flag_toggle(frame, config, field.input, selected, value == "[x]");
+            render_flag_toggle(frame, config, field.input, selected, value == "[x]", block);
         } else if matches!(
             item.widget,
             FieldWidget::SingleChoice | FieldWidget::MultiChoice | FieldWidget::Counter
@@ -287,20 +253,20 @@ fn render_fields(
             } else {
                 value.as_str()
             };
-            let input = Paragraph::new(compact_control_line(
+            render_compact_control(
+                frame,
                 config,
+                field.input,
                 item.widget,
                 display,
-                field.input.width,
                 selected,
-                is_default || shows_choice_placeholder,
+                uses_muted_non_user_value || is_default || shows_choice_placeholder,
                 matches!(
                     item.widget,
                     FieldWidget::SingleChoice | FieldWidget::MultiChoice
                 ) && ui.dropdown_open.as_deref() == Some(&item.arg.id),
-            ))
-            .style(styles::compact_control(config, selected));
-            frame.render_widget(input, field.input);
+                block,
+            );
         } else if matches!(item.widget, FieldWidget::OptionalValue) {
             render_optional_value(
                 frame,
@@ -343,7 +309,7 @@ fn render_fields(
             let editor =
                 form_editor::editor_for_render(ui, item.arg.owner_path(), item.arg, &value);
             let mut textarea = editor.to_textarea(editor.selection_anchor());
-            textarea.set_block(block);
+            textarea.set_block(block.style(styles::input(config, true)));
             let base_style = Style::default()
                 .fg(text_style.fg.unwrap_or(config.theme.text))
                 .bg(config.theme.surface_raised);
@@ -457,8 +423,7 @@ fn expected_input_height(ui: &UiState, arg: &ArgSpec, widget: FieldWidget, value
                     .saturating_mul(REPEATED_ROW_HEIGHT)
             }
         }
-        _ if widget.accepts_text_input() => field_metrics(arg).input_height,
-        _ => 1,
+        _ => field_metrics(arg).input_height,
     }
 }
 
@@ -708,7 +673,7 @@ fn repeated_add_rect(row_rect: Rect) -> Option<Rect> {
     if row_rect.height < 2 {
         return None;
     }
-    let x = row_rect.x.saturating_add(row_rect.width.saturating_sub(3));
+    let x = row_rect.x.saturating_add(row_rect.width.saturating_sub(4));
     Some(Rect::new(
         x,
         row_rect
@@ -760,7 +725,7 @@ fn render_optional_value(
         OptionalValueVisualState::Explicit => {
             frame.render_widget(
                 Paragraph::new(value.to_string())
-                    .block(block)
+                    .block(block.style(styles::input(config, selected)))
                     .style(text_style),
                 area,
             );
@@ -785,7 +750,7 @@ fn render_optional_value(
                     Span::raw(" "),
                     Span::styled(detail, styles::placeholder(config)),
                 ]))
-                .block(block)
+                .block(block.style(styles::input(config, selected)))
                 .style(Style::default()),
                 area,
             );
@@ -810,7 +775,7 @@ fn render_optional_value(
                     Span::raw(" "),
                     Span::styled(detail, styles::placeholder(config)),
                 ]))
-                .block(block)
+                .block(block.style(styles::input(config, selected)))
                 .style(Style::default()),
                 area,
             );
@@ -964,6 +929,7 @@ fn render_flag_toggle(
     area: Rect,
     selected: bool,
     enabled: bool,
+    block: Block<'_>,
 ) {
     let spans = vec![
         Span::styled(
@@ -978,9 +944,37 @@ fn render_flag_toggle(
     ];
     let line = Line::from(spans);
     frame.render_widget(
-        Paragraph::new(line).style(styles::flag_toggle(config, selected)),
+        Paragraph::new(line)
+            .block(block.style(styles::input(config, selected)))
+            .style(styles::flag_toggle(config, selected)),
         area,
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_compact_control(
+    frame: &mut Frame<'_>,
+    config: &TuiConfig,
+    area: Rect,
+    widget: FieldWidget,
+    value: &str,
+    selected: bool,
+    is_default: bool,
+    open: bool,
+    block: Block<'_>,
+) {
+    let input = Paragraph::new(compact_control_line(
+        config,
+        widget,
+        value,
+        area.width.saturating_sub(2),
+        selected,
+        is_default,
+        open,
+    ))
+    .block(block.style(styles::input(config, selected)))
+    .style(styles::compact_control(config, selected));
+    frame.render_widget(input, area);
 }
 
 fn compact_control_line(
@@ -1185,17 +1179,6 @@ fn section_heading_line(config: &TuiConfig, heading: &str, width: u16) -> Line<'
     ])
 }
 
-fn section_cap_line(width: u16) -> Line<'static> {
-    if width <= 1 {
-        return Line::from("╯");
-    }
-
-    Line::from(format!(
-        "╰{}╯",
-        "─".repeat(usize::from(width.saturating_sub(2)))
-    ))
-}
-
 fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
     match widget {
         FieldWidget::RepeatedText => Some(
@@ -1206,46 +1189,6 @@ fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
         FieldWidget::OptionalValue => Some("Right enables. Left/Delete disables."),
         _ => None,
     }
-}
-
-fn field_badges(
-    config: &TuiConfig,
-    arg: &ArgSpec,
-    selected_path: &crate::spec::CommandPath,
-    source: Option<EffectiveValueSource>,
-) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
-
-    if !arg.is_inherited_for(selected_path)
-        && arg.is_global()
-        && arg.help_heading() != Some("Global")
-    {
-        spans.extend(chip_spans(
-            "Global",
-            styles::metadata_badge(config, styles::MetadataKind::Global),
-        ));
-    }
-
-    if let Some(source) = source {
-        let label = match source {
-            EffectiveValueSource::User | EffectiveValueSource::Default => None,
-            EffectiveValueSource::Env => Some("Env"),
-            EffectiveValueSource::DefaultMissing => Some("Default-missing"),
-            EffectiveValueSource::ConditionalDefault => Some("Conditional"),
-        };
-        if let Some(label) = label {
-            let kind = match source {
-                EffectiveValueSource::Default => styles::MetadataKind::Default,
-                EffectiveValueSource::Env => styles::MetadataKind::Env,
-                EffectiveValueSource::DefaultMissing => styles::MetadataKind::Implicit,
-                EffectiveValueSource::ConditionalDefault => styles::MetadataKind::Conditional,
-                EffectiveValueSource::User => unreachable!("user source has no badge label"),
-            };
-            spans.extend(chip_spans(label, styles::metadata_badge(config, kind)));
-        }
-    }
-
-    spans
 }
 
 fn required_empty_prompt(arg: &ArgSpec, widget: FieldWidget) -> Option<String> {
@@ -1343,10 +1286,6 @@ fn render_effective_value(arg: &ArgSpec, values: &[String]) -> String {
     }
 }
 
-fn chip_spans(label: &str, style: Style) -> Vec<Span<'static>> {
-    vec![Span::raw(" "), Span::styled(format!(" {label} "), style)]
-}
-
 #[cfg(test)]
 mod tests {
     use clap::{Arg, ArgAction, Command};
@@ -1355,13 +1294,12 @@ mod tests {
     use ratatui::style::Modifier;
 
     use super::{
-        FieldHelpContext, FieldWidget, compact_control_line, field_badges, field_help_text,
-        populate_layout, repeated_add_rect, repeated_remove_rect, repeated_row_textarea_rect,
+        FieldHelpContext, FieldWidget, compact_control_line, field_help_text, populate_layout,
+        repeated_add_rect, repeated_remove_rect, repeated_row_textarea_rect,
     };
     use crate::TuiConfig;
     use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot};
     use crate::input::{ActiveTab, AppState, Focus, UiState};
-    use crate::pipeline::EffectiveValueSource;
     use crate::query::form::{visible_args, visible_args_for_path, widget_for};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
@@ -1646,81 +1584,6 @@ mod tests {
     }
 
     #[test]
-    fn metadata_badges_render_distinct_semantic_styles() {
-        let config = TuiConfig::default();
-        let selected_path = crate::spec::CommandPath::default();
-        let conditional_badges = field_badges(
-            &config,
-            &option_arg("name", "--name"),
-            &selected_path,
-            Some(EffectiveValueSource::ConditionalDefault),
-        );
-        let implicit_badges = field_badges(
-            &config,
-            &option_arg("name", "--name"),
-            &selected_path,
-            Some(EffectiveValueSource::DefaultMissing),
-        );
-        let rendered = conditional_badges
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect::<String>();
-
-        assert!(rendered.contains("Conditional"));
-        assert_eq!(conditional_badges[1].style.fg, Some(config.theme.warning));
-        assert!(
-            !conditional_badges[1]
-                .style
-                .add_modifier
-                .contains(Modifier::BOLD)
-        );
-        assert_eq!(implicit_badges[1].style.fg, Some(config.theme.warning));
-        assert!(
-            implicit_badges[1]
-                .style
-                .add_modifier
-                .contains(Modifier::BOLD)
-        );
-    }
-
-    #[test]
-    fn global_badge_is_omitted_inside_global_section() {
-        let config = TuiConfig::default();
-        let mut arg = option_arg("profile", "--profile");
-        arg.metadata.placement.global = true;
-        arg.metadata.display.help_heading = Some("Global".to_string());
-        let selected_path = crate::spec::CommandPath::default();
-
-        let badges = field_badges(&config, &arg, &selected_path, None);
-        let rendered = badges
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect::<String>();
-
-        assert!(!rendered.contains("Global"));
-    }
-
-    #[test]
-    fn inherited_fields_do_not_render_redundant_row_badges_inside_grouped_sections() {
-        let config = TuiConfig::default();
-        let mut arg = option_arg("profile", "--profile");
-        arg.metadata.placement.global = true;
-        arg.metadata.ownership.inherited_global = true;
-        arg.metadata.ownership.owner_path = crate::spec::CommandPath::default();
-        arg.metadata.display.help_heading = Some("Global".to_string());
-        let selected_path = crate::spec::CommandPath::from(vec!["build".to_string()]);
-
-        let badges = field_badges(&config, &arg, &selected_path, None);
-        let rendered = badges
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect::<String>();
-
-        assert!(!rendered.contains("Inherited"));
-        assert!(!rendered.contains("Global"));
-    }
-
-    #[test]
     fn layout_places_option_label_and_input_on_the_same_row() {
         let mut config = option_arg("config", "--config");
         config.help = Some("Path to the main config file".to_string());
@@ -1856,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn section_heading_draws_full_section_frame() {
+    fn section_heading_uses_lightweight_section_layout() {
         let mut include = option_arg("include", "--include");
         include.metadata.display.help_heading = Some("Global".to_string());
         let mut config = option_arg("config", "--config");
@@ -1894,19 +1757,19 @@ mod tests {
         let first = &snapshot.layout.form_fields[0];
         let second = &snapshot.layout.form_fields[1];
 
-        assert!(first.section_rail.is_some());
-        assert!(first.section_right_rail.is_some());
+        assert!(first.section_rail.is_none());
+        assert!(first.section_right_rail.is_none());
         assert!(first.section_cap.is_none());
-        assert!(second.section_rail.is_some());
-        assert!(second.section_right_rail.is_some());
-        assert!(second.section_cap.is_some());
+        assert!(second.section_rail.is_none());
+        assert!(second.section_right_rail.is_none());
+        assert!(second.section_cap.is_none());
         assert_eq!(first.label.expect("label rect").x, 1);
         assert_eq!(second.input.x, first.input.x);
         assert_eq!(second.input.width, first.input.width);
     }
 
     #[test]
-    fn section_rendering_shows_full_section_frame() {
+    fn section_rendering_shows_heading_rule_without_box_frame() {
         let mut include = option_arg("include", "--include");
         include.metadata.display.help_heading = Some("Global".to_string());
         let command = CommandSpec {
@@ -2405,20 +2268,21 @@ mod tests {
 
         assert_eq!(
             repeated_row_textarea_rect(row_rect, true, false),
-            Rect::new(10, 1, 22, 3)
+            Rect::new(10, 1, 21, 3)
         );
         assert_eq!(
             repeated_remove_rect(row_rect, true, false),
-            Some(Rect::new(35, 2, 3, 1))
+            Some(Rect::new(34, 2, 3, 1))
         );
         assert_eq!(
             repeated_row_textarea_rect(row_rect, true, true),
-            Rect::new(10, 1, 22, 3)
+            Rect::new(10, 1, 21, 3)
         );
         assert_eq!(
             repeated_remove_rect(row_rect, true, true),
-            Some(Rect::new(33, 2, 3, 1))
+            Some(Rect::new(32, 2, 3, 1))
         );
+        assert_eq!(repeated_add_rect(row_rect), Some(Rect::new(36, 2, 3, 1)));
     }
 
     #[test]
@@ -2656,7 +2520,7 @@ mod tests {
 
         assert_eq!(
             cell_fg(terminal.backend(), field.input.x + 1, field.input.y + 1),
-            TuiConfig::default().theme.text
+            TuiConfig::default().theme.metadata
         );
     }
 

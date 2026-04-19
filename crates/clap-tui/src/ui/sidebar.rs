@@ -162,10 +162,12 @@ fn render_search(
             .fg(config.theme.text);
     }
 
-    let search_text = if ui.search_query.is_empty() {
+    let search_text = if search_focused && ui.search_query.is_empty() {
+        String::new()
+    } else if ui.search_query.is_empty() {
         " ⌕  Search commands ".to_string()
     } else {
-        format!(" ⌕  {} ", ui.search_query)
+        ui.search_query.clone()
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -174,6 +176,24 @@ fn render_search(
     let search =
         Paragraph::new(Line::from(Span::styled(search_text, search_text_style))).block(block);
     frame.render_widget(search, search_area);
+    if search_focused {
+        place_search_cursor(frame, search_area, &ui.search_query);
+    }
+}
+
+fn place_search_cursor(frame: &mut Frame<'_>, area: Rect, query: &str) {
+    if area.width < 3 || area.height < 3 {
+        return;
+    }
+    let inner_x = area.x.saturating_add(1);
+    let inner_y = area.y.saturating_add(1);
+    let inner_w = area.width.saturating_sub(2);
+    if inner_w == 0 {
+        return;
+    }
+    let col = u16::try_from(query.chars().count()).unwrap_or(inner_w.saturating_sub(1));
+    let x = inner_x.saturating_add(col).min(inner_x + inner_w - 1);
+    frame.set_cursor_position((x, inner_y));
 }
 
 fn render_rows(
@@ -402,7 +422,7 @@ fn sidebar_line(
 mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::layout::Rect;
+    use ratatui::layout::{Position, Rect};
     use ratatui::style::Modifier;
 
     use super::{
@@ -463,6 +483,33 @@ mod tests {
             .iter()
             .map(ratatui::buffer::Cell::symbol)
             .collect::<String>()
+    }
+
+    fn root_spec() -> CommandSpec {
+        CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        }
+    }
+
+    fn empty_sidebar_view(root: &CommandSpec) -> ScreenView<'_> {
+        ScreenView {
+            command: root,
+            root,
+            selected_path: CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: Vec::new(),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        }
     }
 
     #[test]
@@ -601,16 +648,68 @@ mod tests {
     }
 
     #[test]
+    fn focused_empty_search_clears_placeholder_and_places_cursor_at_field_start() {
+        let root = root_spec();
+        let vm = empty_sidebar_view(&root);
+        let mut ui = ui_state();
+        ui.focus = Focus::Search;
+        let mut terminal = Terminal::new(TestBackend::new(24, 8)).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_sidebar(
+                    frame,
+                    &ui,
+                    &CommandPath::default(),
+                    &TuiConfig::default(),
+                    Rect::new(0, 0, 24, 8),
+                    &vm,
+                    &FrameLayout::default(),
+                );
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(!rendered.contains("Search commands"));
+        terminal
+            .backend_mut()
+            .assert_cursor_position(Position::new(1, 2));
+    }
+
+    #[test]
+    fn focused_search_keeps_query_visible_and_places_cursor_at_query_end() {
+        let root = root_spec();
+        let vm = empty_sidebar_view(&root);
+        let mut ui = ui_state();
+        ui.focus = Focus::Search;
+        ui.search_query = "abc".to_string();
+        let mut terminal = Terminal::new(TestBackend::new(24, 8)).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_sidebar(
+                    frame,
+                    &ui,
+                    &CommandPath::default(),
+                    &TuiConfig::default(),
+                    Rect::new(0, 0, 24, 8),
+                    &vm,
+                    &FrameLayout::default(),
+                );
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("abc"));
+        assert!(!rendered.contains("Search commands"));
+        terminal
+            .backend_mut()
+            .assert_cursor_position(Position::new(4, 2));
+    }
+
+    #[test]
     fn populate_layout_uses_sidebar_scroll_for_visible_hit_targets() {
-        let root = CommandSpec {
-            name: "tool".to_string(),
-            version: None,
-            about: None,
-            help: String::new(),
-            args: Vec::new(),
-            subcommands: Vec::new(),
-            ..CommandSpec::default()
-        };
+        let root = root_spec();
         let vm = ScreenView {
             command: &root,
             root: &root,
@@ -690,15 +789,7 @@ mod tests {
 
     #[test]
     fn populate_layout_places_caret_hit_target_on_rendered_branch_prefix() {
-        let root = CommandSpec {
-            name: "tool".to_string(),
-            version: None,
-            about: None,
-            help: String::new(),
-            args: Vec::new(),
-            subcommands: Vec::new(),
-            ..CommandSpec::default()
-        };
+        let root = root_spec();
         let vm = ScreenView {
             command: &root,
             root: &root,
@@ -740,15 +831,7 @@ mod tests {
 
     #[test]
     fn sidebar_renders_scrollbar_when_tree_overflows_visible_rows() {
-        let root = CommandSpec {
-            name: "tool".to_string(),
-            version: None,
-            about: None,
-            help: String::new(),
-            args: Vec::new(),
-            subcommands: Vec::new(),
-            ..CommandSpec::default()
-        };
+        let root = root_spec();
         let vm = ScreenView {
             command: &root,
             root: &root,
@@ -795,15 +878,7 @@ mod tests {
 
     #[test]
     fn sidebar_scrollbar_thumb_dims_when_sidebar_is_unfocused() {
-        let root = CommandSpec {
-            name: "tool".to_string(),
-            version: None,
-            about: None,
-            help: String::new(),
-            args: Vec::new(),
-            subcommands: Vec::new(),
-            ..CommandSpec::default()
-        };
+        let root = root_spec();
         let vm = ScreenView {
             command: &root,
             root: &root,

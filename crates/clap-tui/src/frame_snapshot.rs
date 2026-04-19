@@ -264,6 +264,7 @@ pub(crate) fn dropdown_geometry(
 }
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn populate_form_layout(
     ui: &UiState,
     area: Rect,
@@ -271,13 +272,15 @@ pub(crate) fn populate_form_layout(
     help: &str,
     validation: &ValidationState,
     input_height_overrides: &std::collections::HashMap<String, u16>,
+    label_height_overrides: &std::collections::HashMap<String, u16>,
     frame_snapshot: &mut FrameSnapshot,
 ) {
     let content_area = area;
-    let content_height = form::measure_fields_height_with_overrides(
+    let content_height = form::measure_fields_height_with_layout_overrides(
         active_args,
         &validation.field_errors,
         input_height_overrides,
+        label_height_overrides,
     );
     let help_height = form::measure_help_height(help);
     let viewport_height = content_area.height;
@@ -297,10 +300,8 @@ pub(crate) fn populate_form_layout(
 
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
     let mut previous_heading = None;
-    for (index, item) in active_args.iter().enumerate() {
+    for item in active_args {
         let heading = form::field_heading(previous_heading, item);
-        let next_arg = active_args.get(index + 1);
-        let section_ends = form::field_section_ends(item, next_arg);
         let show_description = form::field_has_description(
             item.arg,
             validation
@@ -308,10 +309,11 @@ pub(crate) fn populate_form_layout(
                 .get(&item.arg.id)
                 .map(String::as_str),
         );
-        let metrics = form::field_metrics_with_description_and_input_height(
+        let metrics = form::field_metrics_with_description_and_layout_overrides(
             item.arg,
             show_description,
             input_height_overrides.get(&item.arg.id).copied(),
+            label_height_overrides.get(&item.arg.id).copied(),
         );
         let item_bottom =
             y + i32::from(u16::from(heading.is_some())) + i32::from(metrics.total_height);
@@ -323,10 +325,13 @@ pub(crate) fn populate_form_layout(
             previous_heading = item.section_heading.as_deref();
             continue;
         }
-        let heading = if heading.is_some() {
+        let heading = if heading.is_some() && y >= i32::from(content_area.y) {
             let rect = clipped_rect(area.x, area.width, y, 1, content_area);
             y += 1;
             rect
+        } else if heading.is_some() {
+            y += 1;
+            None
         } else {
             None
         };
@@ -359,14 +364,7 @@ pub(crate) fn populate_form_layout(
             show_description,
             preferred_label_width,
             input_height_overrides.get(&item.arg.id).copied(),
-        );
-        let (section_rail, section_right_rail, section_cap) = field_section_decorations(
-            item,
-            y,
-            metrics.total_height,
-            area,
-            content_area,
-            section_ends,
+            label_height_overrides.get(&item.arg.id).copied(),
         );
 
         frame_layout.form_inputs.insert(item.arg.id.clone(), input);
@@ -378,9 +376,9 @@ pub(crate) fn populate_form_layout(
         frame_layout.form_fields.push(FormFieldLayout {
             arg_id: item.arg.id.clone(),
             heading,
-            section_rail,
-            section_right_rail,
-            section_cap,
+            section_rail: None,
+            section_right_rail: None,
+            section_cap: None,
             label,
             input,
             input_clip_top,
@@ -418,6 +416,7 @@ pub(crate) fn help_overlay_content_rect(area: Rect) -> Rect {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn form_description_rect(
     item: &OrderedArg<'_>,
     y: i32,
@@ -426,74 +425,31 @@ fn form_description_rect(
     show_description: bool,
     preferred_label_width: u16,
     input_height_override: Option<u16>,
+    label_height_override: Option<u16>,
 ) -> Option<Rect> {
     show_description.then_some(())?;
-    let description_y = y + i32::from(
-        form::field_description_offset_with_description_and_input_height(
-            item.arg,
-            show_description,
-            input_height_override,
-        )?,
-    );
+    let description_y = y + i32::from(form::field_description_offset_with_layout_overrides(
+        item.arg,
+        show_description,
+        input_height_override,
+        label_height_override,
+    )?);
     let (_, _, input_x, input_width) =
         field_content_geometry(area, form::field_is_in_section(item), preferred_label_width);
     clipped_rect(
         input_x,
         input_width,
         description_y,
-        form::field_metrics_with_description(item.arg, show_description)
-            .description_height
-            .max(1),
+        form::field_metrics_with_description_and_layout_overrides(
+            item.arg,
+            show_description,
+            input_height_override,
+            label_height_override,
+        )
+        .description_height
+        .max(1),
         content_area,
     )
-}
-
-fn field_section_decorations(
-    item: &OrderedArg<'_>,
-    y: i32,
-    total_height: u16,
-    area: Rect,
-    content_area: Rect,
-    section_ends: bool,
-) -> (Option<Rect>, Option<Rect>, Option<Rect>) {
-    if !form::field_is_in_section(item) || area.width == 0 || total_height == 0 {
-        return (None, None, None);
-    }
-
-    let rail_height = if section_ends {
-        total_height.saturating_sub(1)
-    } else {
-        total_height
-    };
-    let rail = if rail_height > 0 {
-        clipped_rect(area.x, 1, y, rail_height, content_area)
-    } else {
-        None
-    };
-    let right_rail = if rail_height > 0 && area.width > 1 {
-        clipped_rect(
-            area.x.saturating_add(area.width.saturating_sub(1)),
-            1,
-            y,
-            rail_height,
-            content_area,
-        )
-    } else {
-        None
-    };
-    let cap = if section_ends {
-        clipped_rect(
-            area.x,
-            area.width,
-            y + i32::from(total_height.saturating_sub(1)),
-            1,
-            content_area,
-        )
-    } else {
-        None
-    };
-
-    (rail, right_rail, cap)
 }
 
 fn field_content_geometry(
@@ -507,9 +463,7 @@ fn field_content_geometry(
         area.x
     };
     let content_width = if in_section && area.width > form::SECTION_FIELD_INDENT.saturating_add(1) {
-        area.width
-            .saturating_sub(form::SECTION_FIELD_INDENT)
-            .saturating_sub(1)
+        area.width.saturating_sub(form::SECTION_FIELD_INDENT)
     } else {
         area.width
     };
@@ -724,6 +678,7 @@ mod tests {
             &vm.command.help,
             &vm.validation,
             &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
             &mut snapshot,
         );
 
@@ -740,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn inherited_section_descriptions_indent_with_the_section_rail() {
+    fn inherited_section_descriptions_indent_with_the_section_content() {
         use clap::{Arg, Command};
 
         use crate::input::{ActiveTab, Focus, UiState};
@@ -783,6 +738,7 @@ mod tests {
             &root.help,
             &ValidationState::default(),
             &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
             &mut snapshot,
         );
 
@@ -793,11 +749,9 @@ mod tests {
             .find(|field| field.arg_id == "config")
             .expect("inherited config field");
 
-        assert_eq!(inherited.section_rail.expect("section rail").x, 0);
-        assert_eq!(
-            inherited.section_right_rail.expect("section right rail").x,
-            49
-        );
+        assert!(inherited.section_rail.is_none());
+        assert!(inherited.section_right_rail.is_none());
+        assert_eq!(inherited.label.expect("label rect").x, 1);
         assert_eq!(
             inherited.description.expect("description rect").x,
             inherited.input.x
@@ -826,6 +780,7 @@ pub struct TabButtonLayout {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FormFieldLayout {
     pub arg_id: String,
     pub heading: Option<Rect>,

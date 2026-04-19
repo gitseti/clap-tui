@@ -388,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn untouched_set_true_flag_does_not_render_default_badge() {
+    fn untouched_set_true_flag_hides_default_badge_text() {
         let mut state = AppState::from_command(
             &Command::new("tool").arg(Arg::new("upload").long("upload").action(ArgAction::SetTrue)),
         );
@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn untouched_grouped_flag_does_not_render_default_badge_after_sibling_is_selected() {
+    fn untouched_grouped_flag_hides_default_badge_text_after_sibling_is_selected() {
         let mut state = AppState::from_command(
             &Command::new("tool")
                 .arg(
@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn untouched_count_flag_does_not_render_default_badge() {
+    fn untouched_count_flag_hides_default_badge_text() {
         let mut state = AppState::from_command(
             &Command::new("tool").arg(Arg::new("verbose").short('v').action(ArgAction::Count)),
         );
@@ -569,11 +569,11 @@ mod tests {
         let safe = snapshot.layout.form_fields.get(1).expect("safe field");
 
         assert_eq!(
-            cell_fg(&backend, fast.input.x + 6, fast.input.y),
+            cell_fg(&backend, fast.input.x + 7, fast.input.y + 1),
             config.theme.metadata
         );
         assert_eq!(
-            cell_fg(&backend, safe.input.x + 6, safe.input.y),
+            cell_fg(&backend, safe.input.x + 7, safe.input.y + 1),
             config.theme.metadata
         );
     }

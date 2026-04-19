@@ -19,7 +19,7 @@ The TUI SHALL let users reach the search field through the normal focus traversa
 - **THEN** the hint matches the actual focus traversal behavior implemented by the TUI
 
 ### Requirement: Choice and counter widgets expose accurate interaction hints
-The TUI SHALL present control affordances and inline hints that match each widget's real interaction model, and SHALL make the redesigned choice, counter, toggle, and repeated-value widgets visually distinguishable before interaction.
+The TUI SHALL present control affordances and inline hints that match each widget's real interaction model and make different widget types visually distinguishable before interaction even when they share a textarea-like container treatment.
 
 #### Scenario: Multi-select dropdown is focused
 - **WHEN** a multi-select choice widget is selected or opened
@@ -29,14 +29,14 @@ The TUI SHALL present control affordances and inline hints that match each widge
 
 #### Scenario: Counter widget is rendered
 - **WHEN** a counter field is visible
-- **THEN** the field uses stepper-oriented affordances rather than dropdown-oriented affordances
+- **THEN** the field uses stepper-oriented affordances rather than dropdown-oriented or plain-text-only affordances
 - **AND** the inline hint matches the increment and decrement controls the widget supports
 - **AND** the counter remains visually distinct from ordinary choice controls even when not focused
 
-#### Scenario: Boolean or multi-value widget is rendered
-- **WHEN** the UI renders a boolean toggle or a multi-value text field
+#### Scenario: Boolean or optional-value widget is rendered
+- **WHEN** the UI renders a boolean toggle or an optional-value flag-like field
 - **THEN** the control uses an affordance pattern that identifies its interaction model before the user edits it
-- **AND** entered multi-value items remain visually distinguishable from a single plain text value
+- **AND** entering the shared textarea-like visual family does not change the field's underlying toggle or presence semantics
 
 ### Requirement: Descendant forms expose invocation-relevant inherited options
 The TUI SHALL show invocation-relevant inherited options in the active form panel when a descendant command is selected, even when those options are owned by an ancestor command.
@@ -177,4 +177,17 @@ The TUI SHALL render repeated-value inputs as distinct row editors with row-scop
 - **THEN** each fully visible repeated row still renders as its own row editor
 - **AND** the visible controls continue to match those rows
 - **AND** the field does not collapse into a single merged text block
+
+### Requirement: Focused search exposes an editable state
+The TUI SHALL make the search field look immediately editable when it receives focus through pointer or keyboard interaction.
+
+#### Scenario: User focuses an empty search field
+- **WHEN** the empty `Search commands` field receives focus
+- **THEN** the placeholder copy disappears from the editable area
+- **AND** the TUI shows a visible cursor position that indicates typing can begin immediately
+
+#### Scenario: User focuses a populated search field
+- **WHEN** the search field already contains a query and receives focus
+- **THEN** the current query remains visible
+- **AND** the field shows a visible cursor position within the editable area rather than only a focused border treatment
 

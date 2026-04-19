@@ -171,9 +171,23 @@ mod tests {
         state.ui.active_tab = ActiveTab::Inputs;
         frame_snapshot.layout.form = Some(Rect::new(0, 0, 30, 10));
         frame_snapshot.layout.form_view = Some(Rect::new(0, 0, 30, 10));
+        frame_snapshot
+            .layout
+            .form_fields
+            .push(crate::frame_snapshot::FormFieldLayout {
+                arg_id: "verbose".to_string(),
+                heading: None,
+                section_rail: None,
+                section_right_rail: None,
+                section_cap: None,
+                label: Some(Rect::new(0, 0, 12, 1)),
+                input: Rect::new(13, 0, 12, 3),
+                input_clip_top: 0,
+                description: Some(Rect::new(13, 3, 12, 1)),
+            });
 
         let action =
-            handle_mouse_event(click(1, 1), &state, &frame_snapshot, &TuiConfig::default())
+            handle_mouse_event(click(1, 0), &state, &frame_snapshot, &TuiConfig::default())
                 .expect("click action");
         let effect = apply_action(&action, &mut state, &frame_snapshot);
         assert_eq!(effect, Effect::None);
@@ -195,7 +209,7 @@ mod tests {
         );
 
         let action =
-            handle_mouse_event(click(1, 0), &state, &frame_snapshot, &TuiConfig::default())
+            handle_mouse_event(click(14, 1), &state, &frame_snapshot, &TuiConfig::default())
                 .expect("toggle action");
         let effect = apply_action(&action, &mut state, &frame_snapshot);
         assert_eq!(effect, Effect::None);

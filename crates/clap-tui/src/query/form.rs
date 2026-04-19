@@ -212,15 +212,30 @@ pub(crate) fn field_metrics_with_description_and_input_height(
     show_description: bool,
     input_height_override: Option<u16>,
 ) -> FieldMetrics {
+    field_metrics_with_description_and_layout_overrides(
+        arg,
+        show_description,
+        input_height_override,
+        None,
+    )
+}
+
+pub(crate) fn field_metrics_with_description_and_layout_overrides(
+    arg: &ArgSpec,
+    show_description: bool,
+    input_height_override: Option<u16>,
+    label_height_override: Option<u16>,
+) -> FieldMetrics {
     let widget = widget_for(arg);
-    let label_height = 1;
+    let label_height = label_height_override.unwrap_or(1);
     let description_height = u16::from(show_description);
     let input_height = input_height_override.unwrap_or(match widget {
         FieldWidget::Toggle
         | FieldWidget::SingleChoice
         | FieldWidget::MultiChoice
-        | FieldWidget::Counter => 1,
-        FieldWidget::SingleText | FieldWidget::OptionalValue => 3,
+        | FieldWidget::Counter
+        | FieldWidget::SingleText
+        | FieldWidget::OptionalValue => 3,
         FieldWidget::RepeatedText => 5,
     });
     let gap_height = 1;
@@ -249,6 +264,7 @@ pub(crate) fn field_description_offset(arg: &ArgSpec) -> Option<u16> {
     field_description_offset_with_description(arg, field_has_description(arg, None))
 }
 
+#[allow(dead_code)]
 pub(crate) fn field_description_offset_with_description(
     arg: &ArgSpec,
     show_description: bool,
@@ -256,15 +272,31 @@ pub(crate) fn field_description_offset_with_description(
     field_description_offset_with_description_and_input_height(arg, show_description, None)
 }
 
+#[allow(dead_code)]
 pub(crate) fn field_description_offset_with_description_and_input_height(
     arg: &ArgSpec,
     show_description: bool,
     input_height_override: Option<u16>,
 ) -> Option<u16> {
-    let metrics = field_metrics_with_description_and_input_height(
+    field_description_offset_with_layout_overrides(
         arg,
         show_description,
         input_height_override,
+        None,
+    )
+}
+
+pub(crate) fn field_description_offset_with_layout_overrides(
+    arg: &ArgSpec,
+    show_description: bool,
+    input_height_override: Option<u16>,
+    label_height_override: Option<u16>,
+) -> Option<u16> {
+    let metrics = field_metrics_with_description_and_layout_overrides(
+        arg,
+        show_description,
+        input_height_override,
+        label_height_override,
     );
     if metrics.description_height == 0 {
         None
@@ -291,16 +323,31 @@ pub(crate) fn measure_fields_height_with_overrides(
     field_errors: &BTreeMap<String, String>,
     input_height_overrides: &std::collections::HashMap<String, u16>,
 ) -> u16 {
+    measure_fields_height_with_layout_overrides(
+        args,
+        field_errors,
+        input_height_overrides,
+        &std::collections::HashMap::new(),
+    )
+}
+
+pub(crate) fn measure_fields_height_with_layout_overrides(
+    args: &[OrderedArg<'_>],
+    field_errors: &BTreeMap<String, String>,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
+    label_height_overrides: &std::collections::HashMap<String, u16>,
+) -> u16 {
     let mut total = 0;
     let mut previous_heading = None;
     for item in args {
         if field_heading(previous_heading, item).is_some() {
             total += 1;
         }
-        total += field_metrics_with_description_and_input_height(
+        total += field_metrics_with_description_and_layout_overrides(
             item.arg,
             field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str)),
             input_height_overrides.get(&item.arg.id).copied(),
+            label_height_overrides.get(&item.arg.id).copied(),
         )
         .total_height;
         previous_heading = item.section_heading.as_deref();
@@ -325,6 +372,22 @@ pub(crate) fn field_content_bounds_with_errors(
     selected_index: usize,
     field_errors: &BTreeMap<String, String>,
 ) -> Option<(u16, u16)> {
+    field_content_bounds_with_layout_overrides(
+        args,
+        selected_index,
+        field_errors,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    )
+}
+
+pub(crate) fn field_content_bounds_with_layout_overrides(
+    args: &[OrderedArg<'_>],
+    selected_index: usize,
+    field_errors: &BTreeMap<String, String>,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
+    label_height_overrides: &std::collections::HashMap<String, u16>,
+) -> Option<(u16, u16)> {
     let mut y: u16 = 0;
     let mut previous_heading = None;
     for item in args {
@@ -333,7 +396,12 @@ pub(crate) fn field_content_bounds_with_errors(
         }
         let show_description =
             field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str));
-        let metrics = field_metrics_with_description(item.arg, show_description);
+        let metrics = field_metrics_with_description_and_layout_overrides(
+            item.arg,
+            show_description,
+            input_height_overrides.get(&item.arg.id).copied(),
+            label_height_overrides.get(&item.arg.id).copied(),
+        );
         let input_top = y.saturating_add(field_input_offset_with_description(
             item.arg,
             show_description,
@@ -358,6 +426,22 @@ pub(crate) fn hit_test_form_content_with_errors(
     content_y: u16,
     field_errors: &BTreeMap<String, String>,
 ) -> Option<FormHit> {
+    hit_test_form_content_with_layout_overrides(
+        args,
+        content_y,
+        field_errors,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    )
+}
+
+pub(crate) fn hit_test_form_content_with_layout_overrides(
+    args: &[OrderedArg<'_>],
+    content_y: u16,
+    field_errors: &BTreeMap<String, String>,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
+    label_height_overrides: &std::collections::HashMap<String, u16>,
+) -> Option<FormHit> {
     let mut y: u16 = 0;
     let mut previous_heading = None;
     for item in args {
@@ -366,14 +450,24 @@ pub(crate) fn hit_test_form_content_with_errors(
         }
         let show_description =
             field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str));
-        let metrics = field_metrics_with_description(item.arg, show_description);
+        let metrics = field_metrics_with_description_and_layout_overrides(
+            item.arg,
+            show_description,
+            input_height_overrides.get(&item.arg.id).copied(),
+            label_height_overrides.get(&item.arg.id).copied(),
+        );
         let input_top = y.saturating_add(field_input_offset_with_description(
             item.arg,
             show_description,
         ));
         let input_bottom = input_top.saturating_add(metrics.input_height);
-        let description_top = field_description_offset_with_description(item.arg, show_description)
-            .map(|offset| y.saturating_add(offset));
+        let description_top = field_description_offset_with_layout_overrides(
+            item.arg,
+            show_description,
+            input_height_overrides.get(&item.arg.id).copied(),
+            label_height_overrides.get(&item.arg.id).copied(),
+        )
+        .map(|offset| y.saturating_add(offset));
         let label_bottom = y.saturating_add(metrics.label_height);
 
         let in_label = metrics.label_height > 0 && content_y >= y && content_y < label_bottom;
@@ -420,20 +514,6 @@ pub(crate) fn field_is_in_section(item: &OrderedArg<'_>) -> bool {
     item.section_heading
         .as_deref()
         .is_some_and(|heading| !heading.is_empty())
-}
-
-pub(crate) fn field_section_ends(current: &OrderedArg<'_>, next: Option<&OrderedArg<'_>>) -> bool {
-    let Some(current_heading) = current
-        .section_heading
-        .as_deref()
-        .filter(|heading| !heading.is_empty())
-    else {
-        return false;
-    };
-
-    next.and_then(|item| item.section_heading.as_deref())
-        .filter(|heading| !heading.is_empty())
-        != Some(current_heading)
 }
 
 fn is_help_arg(arg: &ArgSpec) -> bool {
@@ -581,7 +661,7 @@ mod tests {
 
         assert_eq!(field_metrics(&single).total_height, 4);
         assert_eq!(field_metrics(&multi).total_height, 7);
-        assert_eq!(field_metrics(&flag).total_height, 3);
+        assert_eq!(field_metrics(&flag).total_height, 5);
     }
 
     #[test]
@@ -594,9 +674,9 @@ mod tests {
             .expect("version arg should be present");
 
         assert!(matches!(widget_for(version), FieldWidget::Toggle));
-        assert_eq!(field_metrics(version).total_height, 3);
+        assert_eq!(field_metrics(version).total_height, 5);
         assert_eq!(field_input_offset(version), 0);
-        assert_eq!(field_description_offset(version), Some(1));
+        assert_eq!(field_description_offset(version), Some(3));
     }
 
     #[test]
@@ -653,15 +733,15 @@ mod tests {
         let command = command(vec![flag]);
         let visible = visible_args(&command, ActiveTab::Inputs);
 
-        assert_eq!(measure_fields_height(&visible), 3);
-        assert_eq!(field_content_bounds(&visible, 0), Some((0, 1)));
+        assert_eq!(measure_fields_height(&visible), 5);
+        assert_eq!(field_content_bounds(&visible, 0), Some((0, 3)));
 
         let input_hit = hit_test_form_content(&visible, 0).expect("input hit");
         assert!(matches!(input_hit.widget, FieldWidget::Toggle));
         assert!(input_hit.in_input);
         assert!(input_hit.in_label);
 
-        let description_hit = hit_test_form_content(&visible, 1).expect("description hit");
+        let description_hit = hit_test_form_content(&visible, 3).expect("description hit");
         assert!(description_hit.in_description);
         assert!(!description_hit.in_input);
     }
@@ -676,7 +756,7 @@ mod tests {
         let command = command(vec![multi, flag]);
         let visible = visible_args(&command, ActiveTab::Inputs);
 
-        assert_eq!(field_content_bounds(&visible, 1), Some((7, 8)));
+        assert_eq!(field_content_bounds(&visible, 1), Some((7, 10)));
 
         let second_input = hit_test_form_content(&visible, 7).expect("second field input");
         assert_eq!(second_input.arg_id, "verbose");

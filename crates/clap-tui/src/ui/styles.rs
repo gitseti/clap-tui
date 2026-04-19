@@ -20,6 +20,7 @@ pub(crate) enum SidebarRowState {
     ActiveUnfocused,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MetadataKind {
     Global,
@@ -81,12 +82,10 @@ pub(crate) fn input(config: &TuiConfig, selected: bool) -> Style {
 }
 
 pub(crate) fn field_border(config: &TuiConfig, focused: bool, invalid: bool) -> Style {
-    let color = if invalid && focused {
+    let color = if invalid {
         config.theme.error
     } else if focused {
         config.theme.focus
-    } else if invalid {
-        config.theme.warning
     } else {
         config.theme.border
     };
@@ -284,6 +283,7 @@ pub(crate) fn footer_chip(config: &TuiConfig, kind: FooterChipKind, hovered: boo
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn metadata_badge(config: &TuiConfig, kind: MetadataKind) -> Style {
     match kind {
         MetadataKind::Global => Style::default()
@@ -386,12 +386,12 @@ mod tests {
     }
 
     #[test]
-    fn field_border_uses_warning_for_unfocused_invalid_fields() {
+    fn field_border_uses_error_for_unfocused_invalid_fields() {
         let config = TuiConfig::default();
 
         assert_eq!(
             field_border(&config, false, true).fg,
-            Some(config.theme.warning)
+            Some(config.theme.error)
         );
     }
 
