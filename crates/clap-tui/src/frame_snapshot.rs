@@ -354,6 +354,7 @@ pub(crate) fn populate_form_layout(
             content_area,
         ) else {
             y += i32::from(metrics.total_height);
+            previous_heading = item.section_heading.as_deref();
             continue;
         };
         let description = form_description_rect(

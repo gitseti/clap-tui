@@ -1998,6 +1998,101 @@ mod tests {
     }
 
     #[test]
+    fn clipped_section_does_not_reintroduce_heading_for_next_visible_field() {
+        let mut first = option_arg("upload", "--upload");
+        first.metadata.display.help_heading = Some("Actions".to_string());
+        first.metadata.display.display_order = 1;
+        let mut second = option_arg("token", "--token");
+        second.metadata.display.help_heading = Some("Actions".to_string());
+        second.metadata.display.display_order = 2;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![first, second],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.form_scroll = 5;
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 4),
+            &vm,
+            &mut snapshot,
+        );
+
+        let visible_fields = &snapshot.layout.form_fields;
+        assert_eq!(visible_fields.len(), 1);
+        assert_eq!(visible_fields[0].arg_id, "token");
+        assert_eq!(visible_fields[0].heading, None);
+    }
+
+    #[test]
+    fn later_section_heading_appears_when_its_boundary_enters_the_viewport() {
+        let mut first = option_arg("upload", "--upload");
+        first.metadata.display.help_heading = Some("Actions".to_string());
+        first.metadata.display.display_order = 1;
+        let mut second = option_arg("dry_run", "--dry-run");
+        second.metadata.display.help_heading = Some("Actions".to_string());
+        second.metadata.display.display_order = 2;
+        let mut third = option_arg("offset", "--offset");
+        third.metadata.display.help_heading = Some("Input".to_string());
+        third.metadata.display.display_order = 3;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![first, second, third],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            preview_argv: Vec::new(),
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.form_scroll = 9;
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 5),
+            &vm,
+            &mut snapshot,
+        );
+
+        let visible_fields = &snapshot.layout.form_fields;
+        assert_eq!(visible_fields.len(), 1);
+        assert_eq!(visible_fields[0].arg_id, "offset");
+        assert!(visible_fields[0].heading.is_some());
+    }
+
+    #[test]
     fn repeated_text_fields_do_not_reserve_extra_height_by_default() {
         let mut multi = option_arg("include", "--include");
         multi.value_cardinality = ValueCardinality::Many;
