@@ -5,10 +5,13 @@ use super::{Action, Effect};
 pub(crate) fn apply(action: &Action, state: &mut AppState) -> Effect {
     match action {
         Action::Exit => Effect::Exit,
-        Action::Run => Effect::Run(state.preview_argv()),
+        Action::Run => Effect::Run(state.authoritative_argv()),
         Action::CopyPreview => {
             state.ui.dismiss_transient_interaction();
-            Effect::CopyToClipboard(state.preview_argv().join(" "))
+            match state.rendered_command() {
+                Some(command) => Effect::CopyToClipboard(command),
+                None => Effect::None,
+            }
         }
         _ => Effect::None,
     }

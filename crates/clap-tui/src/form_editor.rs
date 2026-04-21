@@ -591,7 +591,7 @@ mod tests {
 
         assert_eq!(result, EditResult::Ignored);
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec![
                 "tool".to_string(),
                 "--include".to_string(),
@@ -620,7 +620,7 @@ mod tests {
 
         assert_eq!(result, EditResult::Ignored);
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec![
                 "tool".to_string(),
                 "--include".to_string(),
@@ -703,7 +703,7 @@ mod tests {
             other => panic!("expected grouped values, got {other:?}"),
         }
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec![
                 "tool".to_string(),
                 "--pair".to_string(),
@@ -776,12 +776,8 @@ mod tests {
             other => panic!("expected value occurrences, got {other:?}"),
         }
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
-            vec![
-                "tool".to_string(),
-                "--tag".to_string(),
-                "alpha,beta".to_string(),
-            ]
+            crate::pipeline::build_authoritative_command_line(&state),
+            vec!["tool".to_string(), "--tag=alpha,beta".to_string()]
         );
     }
 }

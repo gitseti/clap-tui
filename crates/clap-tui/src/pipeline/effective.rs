@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 
 use clap::ArgMatches;
 use clap::parser::ValueSource;
@@ -23,7 +24,7 @@ pub(crate) struct EffectiveArgValue {
 
 pub(crate) fn derive_effective_values(
     state: &AppState,
-    argv: &[String],
+    argv: &[OsString],
 ) -> BTreeMap<String, EffectiveArgValue> {
     let Some(command) = state.domain.validation_command.as_ref() else {
         return BTreeMap::new();

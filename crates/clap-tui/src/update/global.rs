@@ -92,7 +92,7 @@ fn apply_footer_click(
     match target {
         HoverTarget::Run => {
             state.ui.dismiss_transient_interaction();
-            Effect::Run(state.preview_argv())
+            Effect::Run(state.authoritative_argv())
         }
         HoverTarget::Exit => {
             state.ui.dismiss_transient_interaction();

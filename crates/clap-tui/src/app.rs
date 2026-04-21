@@ -1,4 +1,5 @@
 use std::error::Error as StdError;
+use std::ffi::OsString;
 use std::marker::PhantomData;
 use std::time::Duration;
 
@@ -75,7 +76,11 @@ impl<R: Runtime> TuiApp<R> {
         }
     }
 
-    /// Run the TUI and return the selected argv.
+    /// Run the TUI and return the selected canonical argv.
+    ///
+    /// The returned argv is the executable token sequence. Preview and clipboard text are
+    /// rendered separately from these tokens, using POSIX shell quoting on Unix platforms and
+    /// `PowerShell` quoting on Windows.
     ///
     /// Returns `Ok(Some(argv))` when the user runs a valid command and `Ok(None)` when the
     /// user exits without running. Validation stays inside the TUI flow, so invalid form
@@ -84,7 +89,7 @@ impl<R: Runtime> TuiApp<R> {
     /// # Errors
     ///
     /// Returns an error when terminal setup or event handling fails.
-    pub fn run(self) -> Result<Option<Vec<String>>, TuiError> {
+    pub fn run(self) -> Result<Option<Vec<OsString>>, TuiError> {
         match self.run_inner() {
             Ok(argv) => Ok(Some(argv)),
             Err(TuiError::Cancelled) => Ok(None),
@@ -114,7 +119,7 @@ impl<R: Runtime> TuiApp<R> {
         run_matches_handler(command, argv, runner)
     }
 
-    fn run_inner(self) -> Result<Vec<String>, TuiError> {
+    fn run_inner(self) -> Result<Vec<OsString>, TuiError> {
         let Self {
             command,
             config,
@@ -171,7 +176,11 @@ where
         }
     }
 
-    /// Run the TUI and return the selected argv.
+    /// Run the TUI and return the selected canonical argv.
+    ///
+    /// The returned argv is the executable token sequence. Preview and clipboard text are
+    /// rendered separately from these tokens, using POSIX shell quoting on Unix platforms and
+    /// `PowerShell` quoting on Windows.
     ///
     /// Returns `Ok(Some(argv))` when the user runs a valid command and `Ok(None)` when the
     /// user exits without running. Validation stays inside the TUI flow, so invalid form
@@ -180,7 +189,7 @@ where
     /// # Errors
     ///
     /// Returns an error when terminal setup or event handling fails.
-    pub fn run(self) -> Result<Option<Vec<String>>, TuiError> {
+    pub fn run(self) -> Result<Option<Vec<OsString>>, TuiError> {
         self.inner.run()
     }
 
@@ -241,7 +250,11 @@ fn parse_or_display<T>(result: Result<T, clap::Error>) -> Result<Option<T>, TuiE
     }
 }
 
-fn run_matches_handler<F, E>(command: Command, argv: Vec<String>, runner: F) -> Result<(), TuiError>
+fn run_matches_handler<F, E>(
+    command: Command,
+    argv: Vec<OsString>,
+    runner: F,
+) -> Result<(), TuiError>
 where
     F: FnOnce(clap::ArgMatches) -> Result<(), E>,
     E: StdError + Send + Sync + 'static,
@@ -252,7 +265,7 @@ where
     runner(matches).map_err(|err| TuiError::Runner(Box::new(err)))
 }
 
-fn run_parser_handler<T, F, E>(argv: Vec<String>, runner: F) -> Result<(), TuiError>
+fn run_parser_handler<T, F, E>(argv: Vec<OsString>, runner: F) -> Result<(), TuiError>
 where
     T: Parser,
     F: FnOnce(T) -> Result<(), E>,
@@ -268,7 +281,7 @@ fn event_loop<R: Runtime>(
     command: &Command,
     config: &TuiConfig,
     session: &mut TerminalSession<'_, R>,
-) -> Result<Vec<String>, TuiError> {
+) -> Result<Vec<OsString>, TuiError> {
     let mut observer = NoopDrawObserver;
     event_loop_with_observer(command, config, session, &mut observer)
 }
@@ -278,7 +291,7 @@ fn event_loop_with_observer<R, O>(
     config: &TuiConfig,
     session: &mut TerminalSession<'_, R>,
     observer: &mut O,
-) -> Result<Vec<String>, TuiError>
+) -> Result<Vec<OsString>, TuiError>
 where
     R: Runtime,
     O: DrawObserver<R::Backend>,
@@ -473,13 +486,13 @@ impl<B: ratatui::backend::Backend> DrawObserver<B> for NoopDrawObserver {}
 enum ActionOutcome {
     Continue,
     Exit,
-    Run(Vec<String>),
+    Run(Vec<OsString>),
 }
 
 enum EventOutcome {
     Continue { needs_redraw: bool },
     Exit,
-    Run(Vec<String>),
+    Run(Vec<OsString>),
 }
 
 struct TerminalSession<'a, R: Runtime> {
@@ -543,6 +556,7 @@ mod scripted_tests;
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::ffi::OsString;
     use std::time::{Duration, Instant};
 
     use clap::{Arg, ArgAction, Command};
@@ -560,6 +574,10 @@ mod tests {
     use crate::spec::CommandSpec;
     use crate::update::Effect;
     use crate::{TuiConfig, TuiError};
+
+    fn os_vec(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
 
     #[derive(Debug)]
     struct TestRuntime {
@@ -652,7 +670,7 @@ mod tests {
 
         let result = event_loop(&command, &TuiConfig::default(), &mut session);
 
-        assert_eq!(result.expect("run result"), vec!["tool".to_string()]);
+        assert_eq!(result.expect("run result"), os_vec(&["tool"]));
     }
 
     #[test]
@@ -675,7 +693,7 @@ mod tests {
 
         let result = event_loop(&command, &TuiConfig::default(), &mut session);
 
-        assert_eq!(result.expect("run result"), vec!["tool".to_string()]);
+        assert_eq!(result.expect("run result"), os_vec(&["tool"]));
     }
 
     #[test]
@@ -731,11 +749,7 @@ mod tests {
         let mut session = terminal_session(&mut runtime);
         let mut state = app_state_from_command(&command);
 
-        let outcome = handle_effect(
-            Effect::Run(vec!["tool".to_string()]),
-            &mut state,
-            &mut session,
-        );
+        let outcome = handle_effect(Effect::Run(os_vec(&["tool"])), &mut state, &mut session);
 
         assert!(matches!(outcome, ActionOutcome::Continue));
         let toast = state.notifications.toast.as_ref().expect("toast");
@@ -756,7 +770,7 @@ mod tests {
         let mut runtime = TestRuntime::with_events([]);
         let mut session = terminal_session(&mut runtime);
         let mut state = app_state_from_command(&command);
-        let argv = state.preview_argv();
+        let argv = state.authoritative_argv();
 
         assert_eq!(pipeline::validation_call_count(), 1);
 
@@ -775,7 +789,7 @@ mod tests {
 
         let result = super::run_matches_handler(
             Command::new("tool").version("1.2.3"),
-            vec!["tool".to_string(), "--version".to_string()],
+            os_vec(&["tool", "--version"]),
             |_matches| {
                 called = true;
                 Ok::<_, std::io::Error>(())
@@ -794,13 +808,11 @@ mod tests {
 
         let mut called = false;
 
-        let result = super::run_parser_handler::<Cli, _, _>(
-            vec!["tool".to_string(), "--version".to_string()],
-            |_cli| {
+        let result =
+            super::run_parser_handler::<Cli, _, _>(os_vec(&["tool", "--version"]), |_cli| {
                 called = true;
                 Ok::<_, std::io::Error>(())
-            },
-        );
+            });
 
         assert!(result.is_ok());
         assert!(!called);
@@ -850,11 +862,7 @@ mod tests {
         let mut session = terminal_session(&mut runtime);
         let mut state = app_state_from_command(&command);
 
-        let outcome = handle_effect(
-            Effect::Run(vec!["tool".to_string()]),
-            &mut state,
-            &mut session,
-        );
+        let outcome = handle_effect(Effect::Run(os_vec(&["tool"])), &mut state, &mut session);
 
         assert!(matches!(outcome, ActionOutcome::Continue));
         let toast = state.notifications.toast.as_ref().expect("toast");
@@ -914,7 +922,7 @@ mod tests {
         );
         let derived = crate::pipeline::derive(&state);
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--path".to_string(),

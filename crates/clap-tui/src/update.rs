@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 mod command;
 mod form;
 mod global;
@@ -50,7 +52,7 @@ pub(crate) enum Action {
 pub(crate) enum Effect {
     None,
     Exit,
-    Run(Vec<String>),
+    Run(Vec<OsString>),
     CopyToClipboard(String),
 }
 

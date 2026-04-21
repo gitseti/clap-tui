@@ -1,3 +1,4 @@
+use crate::argv_serializer::RenderedCommand;
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, CommandFormState, Focus, UiState};
@@ -18,7 +19,9 @@ pub(crate) struct ScreenView<'a> {
     pub(crate) tree_rows: Vec<TreeRow>,
     pub(crate) sidebar_scroll: usize,
     pub(crate) active_args: Vec<form::OrderedArg<'a>>,
-    pub(crate) preview_argv: Vec<String>,
+    #[allow(dead_code)]
+    pub(crate) authoritative_argv: Vec<String>,
+    pub(crate) rendered_command: Option<RenderedCommand>,
     pub(crate) validation: ValidationState,
     pub(crate) effective_values: std::collections::BTreeMap<String, EffectiveArgValue>,
     pub(crate) inputs: Option<CommandFormState>,
@@ -41,7 +44,8 @@ impl<'a> ScreenView<'a> {
                 state.domain.selected_path(),
                 state.ui.active_tab,
             ),
-            preview_argv: derived.argv,
+            authoritative_argv: derived.authoritative_argv,
+            rendered_command: derived.rendered_command,
             validation: derived.validation,
             effective_values: derived.effective_values,
             inputs: state.domain.current_form(),

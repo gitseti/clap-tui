@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command};
@@ -57,6 +58,12 @@ fn ctrl(code: AppKeyCode) -> AppEvent {
     ))
 }
 
+fn argv_to_strings(argv: Vec<OsString>) -> Vec<String> {
+    argv.into_iter()
+        .map(|token| token.to_string_lossy().to_string())
+        .collect()
+}
+
 fn text(input: &str) -> Vec<AppEvent> {
     input.chars().map(|c| key(AppKeyCode::Char(c))).collect()
 }
@@ -80,6 +87,7 @@ fn repeated_occurrence_input_round_trips_through_the_real_app_loop() {
         .run()
         .expect("app run should succeed")
         .expect("run should return argv");
+    let argv = argv_to_strings(argv);
 
     assert_eq!(
         argv,
@@ -107,6 +115,7 @@ fn grouped_multi_value_input_round_trips_through_the_real_app_loop() {
         .run()
         .expect("app run should succeed")
         .expect("run should return argv");
+    let argv = argv_to_strings(argv);
 
     assert_eq!(
         argv,
@@ -139,15 +148,14 @@ fn delimited_append_input_round_trips_through_the_real_app_loop() {
         .run()
         .expect("app run should succeed")
         .expect("run should return argv");
+    let argv = argv_to_strings(argv);
 
     assert_eq!(
         argv,
         vec![
             "tool".to_string(),
-            "--tag".to_string(),
-            "alpha,beta".to_string(),
-            "--tag".to_string(),
-            "gamma".to_string(),
+            "--tag=alpha,beta".to_string(),
+            "--tag=gamma".to_string(),
         ]
     );
 }
@@ -175,6 +183,7 @@ fn fixed_arity_append_input_preserves_grouped_occurrences() {
         .run()
         .expect("app run should succeed")
         .expect("run should return argv");
+    let argv = argv_to_strings(argv);
 
     assert_eq!(
         argv,
@@ -208,6 +217,7 @@ fn positional_append_input_keeps_space_separated_values_in_one_occurrence() {
         .run()
         .expect("app run should succeed")
         .expect("run should return argv");
+    let argv = argv_to_strings(argv);
 
     assert_eq!(
         argv,
@@ -230,6 +240,7 @@ fn paste_event_round_trips_through_the_real_app_loop() {
         .run()
         .expect("app run should succeed")
         .expect("run should return argv");
+    let argv = argv_to_strings(argv);
 
     assert_eq!(
         argv,
@@ -268,6 +279,7 @@ fn inherited_global_choice_fields_work_from_descendant_forms() {
         .run()
         .expect("app run should succeed")
         .expect("run should return argv");
+    let argv = argv_to_strings(argv);
 
     assert_eq!(
         argv,

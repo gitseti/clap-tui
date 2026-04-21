@@ -104,6 +104,8 @@ pub(crate) fn handle_mouse_event(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use ratatui::layout::Rect;
 
     use super::handle_mouse_event;
@@ -115,6 +117,10 @@ mod tests {
     use crate::runtime::{AppKeyModifiers, AppMouseButton, AppMouseEvent, AppMouseEventKind};
     use crate::spec::{ArgKind, ArgSpec, CommandSpec, ValueCardinality};
     use crate::update::{Action, Effect, apply_action};
+
+    fn os_vec(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
         ArgSpec {
@@ -237,7 +243,7 @@ mod tests {
             handle_mouse_event(click(1, 20), &state, &frame_snapshot, &TuiConfig::default())
                 .expect("run action");
         let run_effect = apply_action(&run_action, &mut state, &frame_snapshot);
-        assert_eq!(run_effect, Effect::Run(vec!["tool".to_string()]));
+        assert_eq!(run_effect, Effect::Run(os_vec(&["tool"])));
 
         let search_action = handle_mouse_event(
             click(11, 20),
@@ -267,7 +273,7 @@ mod tests {
                 .expect("run action");
         let effect = apply_action(&action, &mut state, &frame_snapshot);
 
-        assert_eq!(effect, Effect::Run(vec!["tool".to_string()]));
+        assert_eq!(effect, Effect::Run(os_vec(&["tool"])));
         assert!(state.ui.dropdown_open.is_none());
     }
 

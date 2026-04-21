@@ -640,7 +640,8 @@ mod tests {
             tree_rows: Vec::new(),
             sidebar_scroll: 0,
             active_args: visible_args(&command, ActiveTab::Inputs),
-            preview_argv: Vec::new(),
+            authoritative_argv: Vec::new(),
+            rendered_command: None,
             validation: ValidationState {
                 is_valid: false,
                 summary: Some("Missing required arguments: --alpha, --beta".to_string()),

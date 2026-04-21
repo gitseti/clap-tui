@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
 use clap::Command;
@@ -1121,8 +1122,15 @@ impl AppState {
             .derived
     }
 
-    pub(crate) fn preview_argv(&mut self) -> Vec<String> {
-        self.derived().argv.clone()
+    pub(crate) fn authoritative_argv(&mut self) -> Vec<OsString> {
+        self.derived().serialization.argv.clone()
+    }
+
+    pub(crate) fn rendered_command(&mut self) -> Option<String> {
+        self.derived()
+            .rendered_command
+            .as_ref()
+            .map(|command| command.text.clone())
     }
 
     pub(crate) fn derived_validation(&mut self) -> crate::pipeline::ValidationState {

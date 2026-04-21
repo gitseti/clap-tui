@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define how the TUI preserves and presents clap metadata such as display order, value metadata, value sources, and validation feedback.
+
+## Requirements
 
 ### Requirement: Form and command navigation respect clap display metadata
 The TUI SHALL present arguments and subcommands using clap display metadata rather than convenience ordering. The form and sidebar MUST be able to use clap display order, headings, long help, aliases, value names, and combined labels where available.
@@ -38,17 +42,22 @@ The TUI SHALL use clap value-level metadata in choice editors when that metadata
 - **THEN** the TUI does not present it as a normal visible choice unless the interaction explicitly calls for showing hidden values
 
 ### Requirement: Value sources are surfaced clearly
-The TUI SHALL distinguish between user-entered values and values sourced from defaults, environment variables, or conditional default rules. The preview MUST avoid inventing argv tokens for non-user-supplied sources while still making those sources understandable in the UI.
+The TUI SHALL distinguish between user-entered values and values sourced from defaults, environment variables, or conditional default rules. Effective values MUST be derived by parsing canonical argv with clap and inspecting clap value sources. Displaying those sources MUST NOT cause the serializer to invent argv tokens for clap-derivable values.
 
 #### Scenario: Environment-provided value is identified as sourced
 - **WHEN** an argument value comes from an environment variable
 - **THEN** the form indicates that the displayed value is environment-derived
-- **THEN** preview omits the argument unless the user explicitly chooses to emit it
+- **AND** canonical argv omits the argument unless the user explicitly emits it
 
 #### Scenario: Conditional default is explained without pretending the user typed it
 - **WHEN** clap provides a conditional default for an argument
 - **THEN** the form identifies that value as default-derived rather than user-entered
-- **THEN** preview continues to represent only the argv that will actually be passed to the target command
+- **AND** canonical argv does not materialize extra tokens solely to mirror that effective value
+
+#### Scenario: Serialization ambiguity is distinct from validation failure
+- **WHEN** invocation state cannot be serialized into unique canonical argv
+- **THEN** the UI presents that as a serialization ambiguity
+- **AND** it does not label the condition as a clap validation failure or derived-value source
 
 ### Requirement: Validation feedback appears inline in the form
 The TUI SHALL surface field-linked validation feedback directly in the form when clap validation can attribute an error to one or more arguments, including required groups represented through composite clap references.

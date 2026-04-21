@@ -1,6 +1,7 @@
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 
 use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
@@ -14,7 +15,7 @@ thread_local! {
     static VALIDATION_CALL_COUNT: Cell<usize> = const { Cell::new(0) };
 }
 
-pub(crate) fn validate_argv(state: &AppState, argv: &[String]) -> ValidationState {
+pub(crate) fn validate_argv(state: &AppState, argv: &[OsString]) -> ValidationState {
     #[cfg(test)]
     VALIDATION_CALL_COUNT.with(|count| count.set(count.get() + 1));
 
@@ -38,7 +39,7 @@ pub(crate) fn reset_validation_call_count() {
     VALIDATION_CALL_COUNT.with(|count| count.set(0));
 }
 
-fn validate_with_clap(state: &AppState, command: Command, argv: &[String]) -> ValidationState {
+fn validate_with_clap(state: &AppState, command: Command, argv: &[OsString]) -> ValidationState {
     match command.try_get_matches_from(argv.iter().cloned()) {
         Ok(_) => missing_required_validation_state(state).unwrap_or(ValidationState {
             is_valid: true,

@@ -803,7 +803,7 @@ mod tests {
         );
 
         assert_eq!(effect, Effect::None);
-        let argv = crate::pipeline::build_command_line(&state);
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
         assert_eq!(argv, vec!["tool".to_string(), "--safe".to_string()]);
     }
 
@@ -844,7 +844,7 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec!["tool".to_string(), "-v".to_string()]
         );
 
@@ -861,7 +861,7 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec!["tool".to_string()]
         );
     }
@@ -921,7 +921,7 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec![
                 "tool".to_string(),
                 "--include".to_string(),
@@ -985,7 +985,7 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec![
                 "tool".to_string(),
                 "--include".to_string(),
@@ -1055,7 +1055,7 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec![
                 "tool".to_string(),
                 "--include".to_string(),
@@ -1164,7 +1164,7 @@ mod tests {
 
         assert_eq!(effect, Effect::None);
         assert_eq!(
-            crate::pipeline::build_command_line(&state),
+            crate::pipeline::build_authoritative_command_line(&state),
             vec![
                 "tool".to_string(),
                 "--include".to_string(),
@@ -1345,7 +1345,7 @@ mod tests {
         );
 
         assert_eq!(effect, Effect::None);
-        let argv = crate::pipeline::build_command_line(&state);
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
         assert_eq!(argv, vec!["tool".to_string()]);
     }
 
@@ -1429,7 +1429,7 @@ mod tests {
         );
         assert_eq!(effect, Effect::None);
 
-        let argv = crate::pipeline::build_command_line(&state);
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
         assert_eq!(argv, vec!["tool".to_string(), "--color=ne".to_string()]);
     }
 
@@ -1482,7 +1482,7 @@ mod tests {
                 .and_then(|form| form.compatibility_value(arg)),
             Some(crate::input::ArgValue::Text("ne".to_string()))
         );
-        let argv = crate::pipeline::build_command_line(&state);
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
         assert_eq!(argv, vec!["tool".to_string(), "--color=ne".to_string()]);
     }
 
@@ -1566,7 +1566,7 @@ mod tests {
         );
 
         assert_eq!(effect, Effect::None);
-        let argv = crate::pipeline::build_command_line(&state);
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
         assert_eq!(
             argv,
             vec![
@@ -1688,7 +1688,7 @@ mod tests {
         );
 
         assert_eq!(effect, Effect::None);
-        let argv = crate::pipeline::build_command_line(&state);
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
         assert_eq!(
             argv,
             vec![
@@ -1745,7 +1745,7 @@ mod tests {
             &FrameSnapshot::default(),
         );
 
-        let argv = crate::pipeline::build_command_line(&state);
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
         assert_eq!(
             argv,
             vec![

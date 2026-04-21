@@ -1,6 +1,8 @@
-use std::collections::BTreeMap;
-
+use crate::argv_serializer::{
+    RenderedCommand, SerializationDiagnostic, SerializationDiagnosticKind, SerializationResult,
+};
 use crate::input::AppState;
+use std::collections::BTreeMap;
 
 mod argv;
 mod effective;
@@ -17,29 +19,77 @@ pub(crate) struct ValidationState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DerivedState {
-    pub(crate) argv: Vec<String>,
+    pub(crate) serialization: SerializationResult,
+    pub(crate) authoritative_argv: Vec<String>,
+    pub(crate) rendered_command: Option<RenderedCommand>,
     pub(crate) validation: ValidationState,
     pub(crate) effective_values: BTreeMap<String, EffectiveArgValue>,
 }
 
 pub(crate) fn derive(state: &AppState) -> DerivedState {
-    let argv = argv::build_command_line(state);
-    let parse_argv = argv::build_parse_command_line(state);
+    let serialization = argv::serialize_authoritative_invocation(state);
+    let executable_argv = serialization.argv.clone();
+    let authoritative_argv = executable_argv
+        .iter()
+        .map(|token| token.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let rendered_command = serialization.rendered_for_platform();
+    let (validation, effective_values) = if serialization.is_ok() {
+        (
+            validation::validate_argv(state, &executable_argv),
+            effective::derive_effective_values(state, &executable_argv),
+        )
+    } else {
+        (
+            validation_state_from_serialization(&serialization.diagnostics),
+            BTreeMap::new(),
+        )
+    };
     DerivedState {
-        effective_values: effective::derive_effective_values(state, &parse_argv),
-        validation: validation::validate_argv(state, &parse_argv),
-        argv,
+        serialization,
+        authoritative_argv,
+        rendered_command,
+        validation,
+        effective_values,
+    }
+}
+
+fn validation_state_from_serialization(diagnostics: &[SerializationDiagnostic]) -> ValidationState {
+    let mut field_errors = BTreeMap::new();
+    for diagnostic in diagnostics {
+        if let crate::argv_serializer::DiagnosticTarget::Field(arg_id) = &diagnostic.target {
+            field_errors.insert(arg_id.clone(), diagnostic.message.clone());
+        }
+    }
+    ValidationState {
+        is_valid: false,
+        summary: diagnostics.first().map(|diagnostic| {
+            if diagnostic.kind == SerializationDiagnosticKind::UnsupportedParserShape {
+                format!("Unsupported parser shape: {}", diagnostic.message)
+            } else {
+                format!("Serialization ambiguity: {}", diagnostic.message)
+            }
+        }),
+        field_errors,
     }
 }
 
 #[cfg(test)]
-pub(crate) fn build_command_line(state: &AppState) -> Vec<String> {
-    argv::build_command_line(state)
+pub(crate) fn build_authoritative_command_line(state: &AppState) -> Vec<String> {
+    argv::serialize_authoritative_invocation(state)
+        .argv
+        .into_iter()
+        .map(|token| token.to_string_lossy().to_string())
+        .collect()
 }
 
 #[cfg(test)]
 pub(crate) fn validate_argv(state: &AppState, argv: &[String]) -> ValidationState {
-    validation::validate_argv(state, argv)
+    let argv = argv
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
+    validation::validate_argv(state, &argv)
 }
 
 #[cfg(test)]
@@ -54,9 +104,14 @@ pub(crate) fn reset_validation_call_count() {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use clap::{Arg, ArgAction, ArgGroup, Command, builder::ArgPredicate};
 
     use super::{EffectiveValueSource, derive};
+    use crate::argv_serializer::{
+        SerializationDiagnosticKind, TargetShell, TokenProvenanceKind, render_shell,
+    };
     use crate::input::{AppState, InputSource, InputValueOccurrence};
     use crate::spec::{
         ArgKind, ArgSpec, CommandSpec, EXTERNAL_SUBCOMMAND_ARGS_ID, EXTERNAL_SUBCOMMAND_NAME_ID,
@@ -90,18 +145,317 @@ mod tests {
         })
     }
 
+    fn os_vec(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+
     #[test]
-    fn derived_state_keeps_preview_and_run_argv_aligned() {
+    fn derived_state_keeps_one_authoritative_argv() {
         let mut state = app_state(vec![arg("verbose", "--verbose", ArgKind::Flag)]);
         state.domain.toggle_flag_touched("verbose");
 
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec!["tool".to_string(), "--verbose".to_string()]
         );
         assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn shell_rendering_is_projection_of_canonical_argv() {
+        let argv = os_vec(&["tool", "two words", "it's", "", "$HOME"]);
+
+        assert_eq!(
+            render_shell(&argv, TargetShell::Posix),
+            "tool 'two words' 'it'\\''s' '' '$HOME'"
+        );
+        assert_eq!(
+            render_shell(&argv, TargetShell::PowerShell),
+            "tool 'two words' 'it''s' '' '$HOME'"
+        );
+    }
+
+    #[test]
+    fn serialization_ambiguity_blocks_validation_and_rendering() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("feature")
+                        .long("feature")
+                        .action(ArgAction::Append)
+                        .num_args(1..),
+                )
+                .arg(Arg::new("document_root").required(true).index(1)),
+        );
+        state.domain.replace_occurrences(
+            "feature",
+            vec![InputValueOccurrence {
+                values: vec!["a".to_string(), "b".to_string()],
+                source: InputSource::User,
+            }],
+        );
+        state.domain.set_text_value("document_root", "abc");
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert!(derived.rendered_command.is_none());
+        assert_eq!(derived.effective_values, std::collections::BTreeMap::new());
+        assert!(
+            derived
+                .validation
+                .field_errors
+                .get("feature")
+                .is_some_and(|message| message.contains("variable values before a positional"))
+        );
+    }
+
+    #[test]
+    fn flattened_delimited_state_emits_one_joined_occurrence() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("feature")
+                    .long("feature")
+                    .action(ArgAction::Append)
+                    .num_args(1..)
+                    .value_delimiter(','),
+            ),
+        );
+        state.domain.replace_occurrences(
+            "feature",
+            vec![InputValueOccurrence {
+                values: vec!["gzip".to_string(), "brotli".to_string()],
+                source: InputSource::User,
+            }],
+        );
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "--feature=gzip,brotli".to_string()]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn delimited_variable_option_before_positional_uses_joined_token_shape() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").subcommand(
+                Command::new("serve")
+                    .arg(Arg::new("document_root").required(true).index(1))
+                    .arg(
+                        Arg::new("feature")
+                            .long("feature")
+                            .action(ArgAction::Append)
+                            .num_args(1..)
+                            .value_delimiter(',')
+                            .value_parser(["gzip", "brotli", "http2"]),
+                    ),
+            ),
+        );
+        state
+            .select_command_path(&["serve".to_string()])
+            .expect("valid subcommand");
+        state.domain.set_text_value("document_root", "abc");
+        state.domain.replace_occurrences(
+            "feature",
+            vec![
+                InputValueOccurrence {
+                    values: vec!["gzip".to_string()],
+                    source: InputSource::User,
+                },
+                InputValueOccurrence {
+                    values: vec!["brotli".to_string()],
+                    source: InputSource::User,
+                },
+            ],
+        );
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec![
+                "tool".to_string(),
+                "serve".to_string(),
+                "--feature=gzip".to_string(),
+                "--feature=brotli".to_string(),
+                "abc".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn does_not_collapse_distinct_represented_occurrences_even_when_clap_accepts_joined_form() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("feature")
+                    .long("feature")
+                    .action(ArgAction::Append)
+                    .num_args(1..)
+                    .value_delimiter(','),
+            ),
+        );
+        state.domain.replace_occurrences(
+            "feature",
+            vec![
+                InputValueOccurrence {
+                    values: vec!["gzip".to_string(), "brotli".to_string()],
+                    source: InputSource::User,
+                },
+                InputValueOccurrence {
+                    values: vec!["http2".to_string()],
+                    source: InputSource::User,
+                },
+            ],
+        );
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec![
+                "tool".to_string(),
+                "--feature=gzip,brotli".to_string(),
+                "--feature=http2".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn delimited_variable_option_uses_joined_token_shape_without_positional() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").subcommand(
+                Command::new("serve")
+                    .arg(Arg::new("document_root").required(true).index(1))
+                    .arg(
+                        Arg::new("feature")
+                            .long("feature")
+                            .action(ArgAction::Append)
+                            .num_args(1..)
+                            .value_delimiter(',')
+                            .value_parser(["gzip", "brotli", "http2"]),
+                    ),
+            ),
+        );
+        state
+            .select_command_path(&["serve".to_string()])
+            .expect("valid subcommand");
+        state.domain.replace_occurrences(
+            "feature",
+            vec![
+                InputValueOccurrence {
+                    values: vec!["gzip".to_string()],
+                    source: InputSource::User,
+                },
+                InputValueOccurrence {
+                    values: vec!["brotli".to_string()],
+                    source: InputSource::User,
+                },
+                InputValueOccurrence {
+                    values: vec!["http2".to_string()],
+                    source: InputSource::User,
+                },
+            ],
+        );
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec![
+                "tool".to_string(),
+                "serve".to_string(),
+                "--feature=gzip".to_string(),
+                "--feature=brotli".to_string(),
+                "--feature=http2".to_string(),
+            ]
+        );
+        assert!(!derived.validation.is_valid);
+        assert!(
+            derived
+                .validation
+                .summary
+                .as_deref()
+                .is_some_and(|message| message.contains("required"))
+        );
+        assert!(!derived.validation.field_errors.contains_key("feature"));
+    }
+
+    #[test]
+    fn serialization_records_value_delimiter_and_subcommand_provenance() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("input")
+                        .long("input")
+                        .num_args(1..)
+                        .value_delimiter(',')
+                        .require_equals(true),
+                )
+                .subcommand(Command::new("run")),
+        );
+        state.domain.replace_occurrences(
+            "input",
+            vec![InputValueOccurrence {
+                values: vec!["alpha".to_string(), "beta".to_string()],
+                source: InputSource::User,
+            }],
+        );
+        state
+            .select_command_path(&["run".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+
+        assert!(derived.serialization.provenance.iter().any(|provenance| {
+            matches!(
+                &provenance.kind,
+                TokenProvenanceKind::DelimiterJoined {
+                    arg_id,
+                    occurrence: Some(0)
+                } if arg_id == "input"
+            )
+        }));
+        assert!(derived.serialization.provenance.iter().any(|provenance| {
+            matches!(
+                &provenance.kind,
+                TokenProvenanceKind::SubcommandBoundary { path }
+                    if path.as_slice().first().is_some_and(|segment| segment == "run")
+            )
+        }));
+    }
+
+    #[test]
+    fn unsupported_shape_is_distinct_from_state_ambiguity() {
+        let mut unsupported = arg("mystery", "mystery", ArgKind::Option);
+        unsupported.value_cardinality = crate::spec::ValueCardinality::One;
+        let mut state = app_state(vec![unsupported]);
+        state.domain.set_text_value("mystery", "value");
+
+        let derived = derive(&state);
+
+        assert!(derived.rendered_command.is_none());
+        assert_eq!(
+            derived
+                .serialization
+                .diagnostics
+                .first()
+                .map(|diagnostic| &diagnostic.kind),
+            Some(&SerializationDiagnosticKind::UnsupportedParserShape)
+        );
+        assert!(
+            derived
+                .validation
+                .summary
+                .as_deref()
+                .is_some_and(|summary| summary.starts_with("Unsupported parser shape:"))
+        );
     }
 
     #[test]
@@ -131,7 +485,7 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert_eq!(derived.argv, vec!["tool".to_string()]);
+        assert_eq!(derived.authoritative_argv, vec!["tool".to_string()]);
         assert!(derived.validation.is_valid);
     }
 
@@ -183,7 +537,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--verbose".to_string(),
@@ -196,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn clap_backed_validation_reports_conflicts_from_preview_argv() {
+    fn clap_backed_validation_reports_conflicts_from_authoritative_argv() {
         let mut state = AppState::from_command(
             &Command::new("tool")
                 .arg(
@@ -260,14 +614,14 @@ mod tests {
     }
 
     #[test]
-    fn derived_state_remains_stable_after_env_source_changes() {
+    fn derived_state_keeps_authoritative_argv_stable_when_env_metadata_changes() {
         let path = std::env::var("PATH").expect("PATH should exist for env-backed default tests");
         let mut state = AppState::from_command(
             &Command::new("tool").arg(Arg::new("config").long("config").env("PATH").required(true)),
         );
 
         let initial = derive(&state);
-        assert_eq!(initial.argv, vec!["tool".to_string()]);
+        assert_eq!(initial.authoritative_argv, vec!["tool".to_string()]);
         assert!(initial.validation.is_valid);
         assert_eq!(
             initial
@@ -288,17 +642,11 @@ mod tests {
 
         state.domain.root.args[0].metadata.defaults.env =
             Some("CLAP_TUI_TEST_ENV_DERIVED_UNUSED".to_string());
-        state.domain.validation_command = Some(
-            Command::new("tool").arg(
-                Arg::new("config")
-                    .long("config")
-                    .env("CLAP_TUI_TEST_ENV_DERIVED_UNUSED")
-                    .required(true),
-            ),
-        );
-
         let after_mutation = derive(&state);
-        assert_eq!(after_mutation.argv, initial.argv);
+        assert_eq!(
+            after_mutation.authoritative_argv,
+            initial.authoritative_argv
+        );
         assert_eq!(after_mutation.validation, initial.validation);
         assert_eq!(after_mutation.effective_values, initial.effective_values);
     }
@@ -319,7 +667,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--include".to_string(),
@@ -346,7 +694,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec!["tool".to_string(), "--color".to_string()]
         );
         assert!(derived.validation.is_valid);
@@ -374,7 +722,7 @@ mod tests {
             .expect("effective source for color");
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec!["tool".to_string(), "--color".to_string()]
         );
         assert_eq!(effective.source, EffectiveValueSource::DefaultMissing);
@@ -401,7 +749,10 @@ mod tests {
             .get("mode")
             .expect("effective source for mode");
 
-        assert_eq!(derived.argv, vec!["tool".to_string(), "--flag".to_string()]);
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "--flag".to_string()]
+        );
         assert_eq!(effective.source, EffectiveValueSource::ConditionalDefault);
         assert_eq!(effective.values, vec!["auto".to_string()]);
         assert!(derived.validation.is_valid);
@@ -424,7 +775,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--color".to_string(),
@@ -452,7 +803,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--color".to_string(),
@@ -475,7 +826,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "-v".to_string(),
@@ -499,7 +850,10 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert_eq!(derived.argv, vec!["tool".to_string(), "other".to_string()]);
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "other".to_string()]
+        );
         assert!(derived.validation.is_valid);
     }
 
@@ -525,7 +879,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "cmd".to_string(),
                 "--arg".to_string(),
@@ -722,7 +1076,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec!["tool".to_string(), "--version".to_string()]
         );
         assert!(derived.validation.is_valid);
@@ -809,12 +1163,55 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--input=alpha,beta".to_string(),
                 "run".to_string(),
             ]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn require_equals_with_hyphen_leading_value_uses_safe_attached_shape() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("pattern").long("pattern").require_equals(true)),
+        );
+        state.domain.set_text_value("pattern", "-x");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "--pattern=-x".to_string()]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn delimited_attached_value_makes_hyphen_leading_ownership_explicit() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("pattern")
+                    .long("pattern")
+                    .num_args(1..)
+                    .value_delimiter(','),
+            ),
+        );
+        state.domain.replace_occurrences(
+            "pattern",
+            vec![InputValueOccurrence {
+                values: vec!["-x".to_string(), "literal".to_string()],
+                source: InputSource::User,
+            }],
+        );
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "--pattern=-x,literal".to_string()]
         );
         assert!(derived.validation.is_valid);
     }
@@ -832,7 +1229,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--mode".to_string(),
@@ -859,7 +1256,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--".to_string(),
@@ -889,7 +1286,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec!["tool".to_string(), "--".to_string(), "a".to_string()]
         );
         assert!(!derived.validation.is_valid);
@@ -931,7 +1328,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--".to_string(),
@@ -959,7 +1356,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--".to_string(),
@@ -984,7 +1381,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "plugin".to_string(),
@@ -993,6 +1390,14 @@ mod tests {
             ]
         );
         assert!(derived.validation.is_valid);
+        assert!(derived.serialization.provenance.iter().any(|provenance| {
+            matches!(
+                &provenance.kind,
+                TokenProvenanceKind::PreservedExternalSubcommandArg {
+                    occurrence: Some(0)
+                }
+            )
+        }));
     }
 
     #[test]
@@ -1014,7 +1419,10 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert_eq!(derived.argv, vec!["tool".to_string(), "build".to_string()]);
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "build".to_string()]
+        );
         assert!(derived.validation.is_valid);
     }
 
@@ -1036,7 +1444,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "alpha".to_string(),
@@ -1067,7 +1475,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(
-            derived.argv,
+            derived.authoritative_argv,
             vec![
                 "tool".to_string(),
                 "--input".to_string(),
@@ -1081,6 +1489,31 @@ mod tests {
     }
 
     #[test]
+    fn variable_option_without_boundary_before_subcommand_is_ambiguous() {
+        let root = Command::new("tool")
+            .arg(Arg::new("input").long("input").num_args(1..))
+            .subcommand(Command::new("run"));
+        let mut state = AppState::from_command(&root);
+        state.domain.set_text_value("input", "alpha\nbeta");
+        state
+            .select_command_path(&["run".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert!(derived.rendered_command.is_none());
+        assert_eq!(
+            derived
+                .serialization
+                .diagnostics
+                .first()
+                .map(|diagnostic| &diagnostic.kind),
+            Some(&SerializationDiagnosticKind::OwnershipAmbiguity)
+        );
+    }
+
+    #[test]
     fn hyphen_prefixed_positional_values_are_preserved_when_allowed() {
         let mut state = AppState::from_command(
             &Command::new("tool").arg(Arg::new("pattern").allow_hyphen_values(true).required(true)),
@@ -1089,7 +1522,150 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert_eq!(derived.argv, vec!["tool".to_string(), "-weird".to_string()]);
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "-weird".to_string()]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn detached_option_hyphen_leading_value_is_ambiguous() {
+        let mut state =
+            AppState::from_command(&Command::new("tool").arg(Arg::new("pattern").long("pattern")));
+        state.domain.set_text_value("pattern", "-x");
+
+        let derived = derive(&state);
+
+        assert!(!derived.validation.is_valid);
+        assert!(derived.rendered_command.is_none());
+        assert_eq!(
+            derived
+                .serialization
+                .diagnostics
+                .first()
+                .map(|diagnostic| &diagnostic.kind),
+            Some(&SerializationDiagnosticKind::HyphenLeadingAmbiguity)
+        );
+    }
+
+    #[test]
+    fn explicit_empty_require_equals_value_is_not_omitted() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("pattern").long("pattern").require_equals(true)),
+        );
+        state.domain.set_text_value("pattern", "");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "--pattern=".to_string()]
+        );
+        assert!(derived.validation.is_valid);
+    }
+
+    #[test]
+    fn derived_defaults_are_not_materialized_into_authoritative_argv() {
+        let state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("color").long("color").default_value("auto")),
+        );
+
+        let derived = derive(&state);
+
+        assert_eq!(derived.authoritative_argv, vec!["tool".to_string()]);
+        assert!(derived.validation.is_valid);
+        assert_eq!(
+            derived
+                .effective_values
+                .get("color")
+                .map(|value| &value.source),
+            Some(&EffectiveValueSource::Default)
+        );
+    }
+
+    #[test]
+    fn canonical_spelling_uses_primary_name_not_alias_with_field_provenance() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("color").long("color").alias("colour")),
+        );
+        state.domain.set_text_value("color", "always");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec![
+                "tool".to_string(),
+                "--color".to_string(),
+                "always".to_string(),
+            ]
+        );
+        assert!(derived.validation.is_valid);
+        assert!(derived.serialization.provenance.iter().any(|provenance| {
+            matches!(
+                &provenance.kind,
+                TokenProvenanceKind::CanonicalSpelling {
+                    arg_id,
+                    occurrence: Some(0)
+                } if arg_id == "color"
+            )
+        }));
+    }
+
+    #[test]
+    fn canonical_order_uses_command_model_order_and_parser_boundaries() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("beta").long("beta"))
+                .arg(Arg::new("input").required(true).index(1))
+                .arg(Arg::new("alpha").long("alpha"))
+                .arg(
+                    Arg::new("include")
+                        .long("include")
+                        .action(ArgAction::Append)
+                        .num_args(1),
+                )
+                .subcommand(Command::new("run")),
+        );
+        state.domain.set_text_value("alpha", "a");
+        state.domain.set_text_value("beta", "b");
+        state.domain.set_text_value("input", "file");
+        state.domain.replace_occurrences(
+            "include",
+            vec![
+                InputValueOccurrence {
+                    values: vec!["one".to_string()],
+                    source: InputSource::User,
+                },
+                InputValueOccurrence {
+                    values: vec!["two".to_string()],
+                    source: InputSource::User,
+                },
+            ],
+        );
+        state
+            .select_command_path(&["run".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+
+        assert_eq!(
+            derived.authoritative_argv,
+            vec![
+                "tool".to_string(),
+                "--beta".to_string(),
+                "b".to_string(),
+                "--alpha".to_string(),
+                "a".to_string(),
+                "--include".to_string(),
+                "one".to_string(),
+                "--include".to_string(),
+                "two".to_string(),
+                "file".to_string(),
+                "run".to_string(),
+            ]
+        );
         assert!(derived.validation.is_valid);
     }
 
@@ -1107,7 +1683,10 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert_eq!(derived.argv, vec!["tool".to_string(), "-42".to_string()]);
+        assert_eq!(
+            derived.authoritative_argv,
+            vec!["tool".to_string(), "-42".to_string()]
+        );
         assert!(derived.validation.is_valid);
     }
 

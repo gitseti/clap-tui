@@ -156,7 +156,11 @@ impl ScriptedHarness {
             &mut session,
             &mut observer,
         ) {
-            Ok(argv) => ScriptedOutcome::Run(argv),
+            Ok(argv) => ScriptedOutcome::Run(
+                argv.into_iter()
+                    .map(|token| token.to_string_lossy().to_string())
+                    .collect(),
+            ),
             Err(TuiError::Cancelled) => ScriptedOutcome::Cancelled,
             Err(err) => return Err(err),
         };

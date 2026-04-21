@@ -1,24 +1,7 @@
-## Purpose
-
-Define how clap parser semantics are preserved when interactive invocation state is serialized to canonical argv.
-
-## Requirements
-
-### Requirement: Validation, run, preview, and copy share canonical argv
-The system SHALL derive validation, run, preview, and copy behavior from one canonical argv token sequence. Preview and copy MUST be renderings of that sequence and MUST NOT define separate command behavior.
-
-#### Scenario: Preview and copy render the validated argv
-- **WHEN** the preview is rendered or copied for the current invocation state
-- **THEN** it renders the same canonical argv that validation checks
-- **AND** Run uses that same canonical argv
-
-#### Scenario: Serialization ambiguity blocks command surfaces
-- **WHEN** canonical serialization reports ambiguity
-- **THEN** validation, run, preview, and copy are blocked
-- **AND** the UI surfaces a serialization error distinct from a clap validation failure
+## MODIFIED Requirements
 
 ### Requirement: Argv synthesis preserves clap-relevant token shape
-The serializer SHALL preserve token-shape semantics that can change clap parsing, including grouped values per represented occurrence, `--opt=value`, delimiter-driven expansion, value terminators, trailing positional behavior, trailing delimiter controls, raw capture behavior, hyphen-leading token safety, explicit empty values, and parse-sensitive ordering between positionals, options, and subcommands. The emitted argv SHALL reparse under clap into the same semantic assignment represented by the interactive form state, or serialization SHALL report ambiguity.
+The serializer SHALL preserve token-shape semantics that can change clap parsing, including grouped values per represented occurrence, `--opt=value`, delimiter-driven expansion, value terminators, trailing positional behavior, trailing delimiter controls, raw capture behavior, and parse-sensitive ordering between positionals and variable-arity options. The emitted argv SHALL reparse under clap into the same semantic assignment represented by the interactive form state.
 
 Canonical serialization SHALL be driven by invocation state. It MUST preserve occurrence boundaries that invocation state explicitly represents. It MUST normalize distinctions not represented in invocation state according to canonical spelling and parser rules. Flattened state is insufficient only when canonical serialization or diagnostics require distinctions that the invocation state does not represent.
 
@@ -32,8 +15,8 @@ Preservation refers to maintaining parse-correct token structure and boundaries 
 
 #### Scenario: Require-equals option renders as attached value
 - **WHEN** an option requires an equals sign
-- **THEN** canonical argv serializes the option using `--option=value` form
-- **AND** clap accepts the serialized token shape
+- **THEN** preview and run serialize the option using `--option=value` form
+- **THEN** clap validation accepts the serialized token shape
 
 #### Scenario: Delimited multi-value argument preserves represented occurrence shape
 - **WHEN** an argument uses delimiter-driven or terminator-driven parsing
@@ -60,10 +43,10 @@ Preservation refers to maintaining parse-correct token structure and boundaries 
 - **THEN** preview and run preserve those trailing values as unsplit tokens
 - **THEN** clap validation evaluates the same unsplit argv
 
-#### Scenario: Positional and greedy option ownership is unambiguous
-- **WHEN** a command includes a positional and a variable-arity option whose value list could consume that positional
-- **THEN** canonical argv preserves the intended semantic assignment when a unique clap-correct representation exists
-- **AND** serialization reports ambiguity when no unique representation exists
+#### Scenario: Positional stays ahead of a greedy option when state requires it
+- **WHEN** invocation state represents a positional and a variable-arity option whose value list could otherwise consume that positional
+- **THEN** the serializer emits argv in a form that preserves the represented semantic assignment under clap parsing when such a form exists
+- **THEN** serialization reports ambiguity when parser semantics require ownership distinctions that invocation state does not represent
 
 #### Scenario: Unsupported parser shape is not approximated
 - **WHEN** a clap parser shape cannot be faithfully represented by the TUI invocation state model
@@ -79,26 +62,3 @@ Preservation refers to maintaining parse-correct token structure and boundaries 
 - **WHEN** a value could be parsed as an option, flag, or subcommand
 - **THEN** argv synthesis emits it only when parser settings or token boundaries make value ownership unambiguous
 - **THEN** otherwise serialization reports a hyphen-leading ambiguity
-
-### Requirement: Command-path edge cases remain parse-correct
-The system SHALL support clap command-level parsing rules that materially affect interactive command construction, including required subcommands, argument and subcommand conflicts, external subcommands, missing-positional edge cases, and parse-boundary rules between subcommands and arguments. Validation and run SHALL evaluate those rules against canonical argv.
-
-#### Scenario: Required subcommand remains invalid until selected
-- **WHEN** a command requires a subcommand and none is selected
-- **THEN** validation marks the invocation invalid
-- **AND** the form and summary explain that a subcommand is required
-
-#### Scenario: External subcommand can be entered and validated
-- **WHEN** a command allows external subcommands
-- **THEN** the user can provide an external subcommand and its trailing values through the TUI
-- **AND** canonical argv preserves that external subcommand structure
-
-#### Scenario: Parse boundary favors subcommand when configured
-- **WHEN** a command uses parser settings that control whether a token is treated as an argument value or a subcommand
-- **THEN** canonical argv respects the configured parse boundary
-- **AND** the resulting argv is accepted or rejected by clap for the same reasons the user sees in the TUI
-
-#### Scenario: Missing positional parsing follows command settings
-- **WHEN** a command allows otherwise-missing positional inputs under a parser edge setting
-- **THEN** validation and run follow that command-level behavior
-- **AND** the TUI does not invent stricter local parsing rules than clap applies

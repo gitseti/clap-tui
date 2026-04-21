@@ -5,6 +5,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 
+use crate::argv_serializer::{RenderedCommand, RenderedShellToken, RenderedShellTokenKind};
 use crate::config::TuiConfig;
 use crate::input::{HoverTarget, UiState};
 
@@ -13,7 +14,7 @@ use super::{layout::LayoutMode, screen::ScreenView};
 
 struct PreviewWidget<'a> {
     config: &'a TuiConfig,
-    argv: &'a [String],
+    command: Option<&'a RenderedCommand>,
     hovered: bool,
     mode: LayoutMode,
 }
@@ -26,12 +27,16 @@ impl Widget for PreviewWidget<'_> {
             styles::surface(self.config, styles::Surface::Result)
         };
         if area.height <= 1 || self.mode.is_compact() {
-            let compact =
-                Paragraph::new(compact_preview_line(self.config, self.argv, self.hovered)).style(
-                    surface
-                        .fg(self.config.theme.text)
-                        .bg(self.config.theme.header_bg),
-                );
+            let compact = Paragraph::new(compact_preview_line(
+                self.config,
+                self.command,
+                self.hovered,
+            ))
+            .style(
+                surface
+                    .fg(self.config.theme.text)
+                    .bg(self.config.theme.header_bg),
+            );
             Widget::render(compact, area, buf);
             return;
         }
@@ -49,9 +54,13 @@ impl Widget for PreviewWidget<'_> {
             area.width,
             area.height.saturating_sub(1),
         );
-        let bar = Paragraph::new(command_preview_line(self.config, self.argv, self.hovered))
-            .style(surface.fg(self.config.theme.text))
-            .wrap(Wrap { trim: false });
+        let bar = Paragraph::new(command_preview_line(
+            self.config,
+            self.command,
+            self.hovered,
+        ))
+        .style(surface.fg(self.config.theme.text))
+        .wrap(Wrap { trim: false });
         Widget::render(bar, content_area, buf);
     }
 }
@@ -68,7 +77,7 @@ pub(crate) fn render_preview(
     frame.render_widget(
         PreviewWidget {
             config,
-            argv: &vm.preview_argv,
+            command: vm.rendered_command.as_ref(),
             hovered,
             mode,
         },
@@ -92,7 +101,11 @@ fn preview_title_line(config: &TuiConfig, hovered: bool) -> Line<'static> {
     ])
 }
 
-fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: bool) -> Line<'a> {
+fn command_preview_line(
+    config: &TuiConfig,
+    command: Option<&RenderedCommand>,
+    hovered: bool,
+) -> Line<'static> {
     let hover_fg = config.theme.text;
     let prompt_style = if hovered {
         Style::default().fg(hover_fg).add_modifier(Modifier::BOLD)
@@ -100,33 +113,25 @@ fn command_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: boo
         styles::help(config)
     };
     let mut spans = vec![Span::styled("$ ", prompt_style)];
-    let mut seen_flag = false;
-    for (index, token) in argv.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw(" "));
-        }
-        let style = if index == 0 {
+    let Some(command) = command else {
+        spans.push(Span::styled(
+            "serialization blocked",
             Style::default()
-                .fg(config.theme.result_accent)
-                .add_modifier(Modifier::BOLD | Modifier::ITALIC)
-        } else if token.starts_with('-') {
-            seen_flag = true;
-            Style::default()
-                .fg(config.theme.info)
-                .add_modifier(Modifier::BOLD)
-        } else if !seen_flag {
-            Style::default()
-                .fg(if hovered { hover_fg } else { config.theme.text })
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(if hovered { hover_fg } else { config.theme.text })
-        };
-        spans.push(Span::styled(token.as_str(), style));
-    }
+                .fg(config.theme.error)
+                .add_modifier(Modifier::BOLD),
+        ));
+        return Line::from(spans);
+    };
+
+    spans.extend(rendered_token_spans(config, &command.tokens, hovered));
     Line::from(spans)
 }
 
-fn compact_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: bool) -> Line<'a> {
+fn compact_preview_line(
+    config: &TuiConfig,
+    command: Option<&RenderedCommand>,
+    hovered: bool,
+) -> Line<'static> {
     let mut spans = vec![
         Span::styled(
             "Preview",
@@ -140,7 +145,7 @@ fn compact_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: boo
         ),
         Span::raw(" "),
     ];
-    spans.extend(command_preview_line(config, argv, hovered).spans);
+    spans.extend(command_preview_line(config, command, hovered).spans);
     spans.push(Span::raw(" "));
     spans.push(Span::styled(
         "Ctrl+Y copy",
@@ -149,56 +154,121 @@ fn compact_preview_line<'a>(config: &TuiConfig, argv: &'a [String], hovered: boo
     Line::from(spans)
 }
 
+fn rendered_token_spans(
+    config: &TuiConfig,
+    tokens: &[RenderedShellToken],
+    hovered: bool,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::with_capacity(tokens.len().saturating_mul(2));
+    for (index, token) in tokens.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            token.text.clone(),
+            preview_token_style(config, token.kind, hovered),
+        ));
+    }
+    spans
+}
+
+fn preview_token_style(config: &TuiConfig, kind: RenderedShellTokenKind, hovered: bool) -> Style {
+    let _ = hovered;
+    let text = config.theme.text;
+    match kind {
+        RenderedShellTokenKind::EntryPoint => Style::default()
+            .fg(config.theme.result_accent)
+            .add_modifier(Modifier::BOLD),
+        RenderedShellTokenKind::SubcommandName => {
+            Style::default().fg(text).add_modifier(Modifier::BOLD)
+        }
+        RenderedShellTokenKind::OptionSpelling => Style::default()
+            .fg(config.theme.accent)
+            .add_modifier(Modifier::BOLD),
+        RenderedShellTokenKind::Value | RenderedShellTokenKind::DelimiterJoinedValue => {
+            Style::default().fg(text)
+        }
+        RenderedShellTokenKind::RawBoundary => Style::default()
+            .fg(config.theme.info)
+            .add_modifier(Modifier::BOLD),
+        RenderedShellTokenKind::Terminator => Style::default()
+            .fg(config.theme.warning)
+            .add_modifier(Modifier::BOLD),
+        RenderedShellTokenKind::PreservedExternalToken => {
+            Style::default().fg(config.theme.metadata)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use ratatui::style::{Color, Modifier};
+    use ratatui::style::Modifier;
 
     use super::{command_preview_line, compact_preview_line, preview_title_line};
+    use crate::argv_serializer::{RenderedCommand, RenderedShellToken, RenderedShellTokenKind};
     use crate::config::TuiConfig;
+
+    fn rendered_command(tokens: &[(&str, RenderedShellTokenKind)]) -> RenderedCommand {
+        let tokens = tokens
+            .iter()
+            .map(|(text, kind)| RenderedShellToken {
+                text: (*text).to_string(),
+                kind: *kind,
+            })
+            .collect::<Vec<_>>();
+        let text = tokens
+            .iter()
+            .map(|token| token.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        RenderedCommand { text, tokens }
+    }
 
     #[test]
     fn preview_highlights_binary_name_and_flags() {
         let config = TuiConfig::default();
-        let argv = vec![
-            "tool".to_string(),
-            "serve".to_string(),
-            "--port".to_string(),
-            "3000".to_string(),
-        ];
+        let command = rendered_command(&[
+            ("kitchen-sink", RenderedShellTokenKind::EntryPoint),
+            ("serve", RenderedShellTokenKind::SubcommandName),
+            ("--feature=gzip", RenderedShellTokenKind::OptionSpelling),
+            ("-literal", RenderedShellTokenKind::Value),
+        ]);
+        let line = command_preview_line(&config, Some(&command), false);
 
-        let line = command_preview_line(&config, &argv, false);
-
-        assert_eq!(line.spans[1].content.as_ref(), "tool");
+        assert_eq!(line.spans[1].content.as_ref(), "kitchen-sink");
         assert_eq!(line.spans[1].style.fg, Some(config.theme.result_accent));
         assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
-        assert!(line.spans[1].style.add_modifier.contains(Modifier::ITALIC));
-        assert_eq!(line.spans[3].style.fg, Some(config.theme.text));
-        assert_eq!(line.spans[5].content.as_ref(), "--port");
-        assert_eq!(line.spans[5].style.fg, Some(config.theme.info));
+        assert_eq!(line.spans[3].content.as_ref(), "serve");
+        assert!(line.spans[3].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line.spans[5].content.as_ref(), "--feature=gzip");
+        assert_eq!(line.spans[5].style.fg, Some(config.theme.accent));
+        assert!(line.spans[5].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line.spans[7].content.as_ref(), "-literal");
         assert_eq!(line.spans[7].style.fg, Some(config.theme.text));
-        assert_ne!(line.spans[5].style.fg, Some(Color::Reset));
+        assert!(!line.spans[7].style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
     fn preview_hover_uses_contrasting_text_on_accent_background() {
         let config = TuiConfig::default();
-        let argv = vec!["tool".to_string(), "--verbose".to_string()];
+        let command = rendered_command(&[
+            ("tool", RenderedShellTokenKind::EntryPoint),
+            ("--verbose", RenderedShellTokenKind::OptionSpelling),
+        ]);
+        let line = command_preview_line(&config, Some(&command), true);
 
-        let line = command_preview_line(&config, &argv, true);
-
-        assert_eq!(line.spans[1].style.fg, Some(config.theme.result_accent));
+        assert_eq!(line.spans[0].style.fg, Some(config.theme.text));
         assert_eq!(line.spans[1].style.bg, None);
-        assert!(line.spans[1].style.add_modifier.contains(Modifier::ITALIC));
-        assert_eq!(line.spans[3].style.fg, Some(config.theme.info));
-        assert_eq!(line.spans[3].style.bg, None);
     }
 
     #[test]
     fn compact_preview_line_advertises_keyboard_copy_path() {
         let config = TuiConfig::default();
-        let argv = vec!["tool".to_string(), "serve".to_string()];
-
-        let line = compact_preview_line(&config, &argv, false);
+        let command = rendered_command(&[
+            ("tool", RenderedShellTokenKind::EntryPoint),
+            ("serve", RenderedShellTokenKind::SubcommandName),
+        ]);
+        let line = compact_preview_line(&config, Some(&command), false);
         let rendered = line
             .spans
             .iter()
@@ -220,5 +290,27 @@ mod tests {
         assert_eq!(line.spans[0].style.fg, Some(config.theme.text));
         assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
         assert!(line.spans[2].content.as_ref().contains("copy"));
+    }
+
+    #[test]
+    fn preview_styles_boundaries_and_preserved_external_tokens() {
+        let config = TuiConfig::default();
+        let command = rendered_command(&[
+            ("tool", RenderedShellTokenKind::EntryPoint),
+            ("--", RenderedShellTokenKind::RawBoundary),
+            (";", RenderedShellTokenKind::Terminator),
+            (
+                "'external arg'",
+                RenderedShellTokenKind::PreservedExternalToken,
+            ),
+        ]);
+        let line = command_preview_line(&config, Some(&command), false);
+
+        assert_eq!(line.spans[3].content.as_ref(), "--");
+        assert_eq!(line.spans[3].style.fg, Some(config.theme.info));
+        assert_eq!(line.spans[5].content.as_ref(), ";");
+        assert_eq!(line.spans[5].style.fg, Some(config.theme.warning));
+        assert_eq!(line.spans[7].content.as_ref(), "'external arg'");
+        assert_eq!(line.spans[7].style.fg, Some(config.theme.metadata));
     }
 }
