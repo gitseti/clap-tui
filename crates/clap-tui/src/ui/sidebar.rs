@@ -509,6 +509,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         }
     }
@@ -768,6 +769,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut layout = FrameLayout::default();
@@ -822,6 +824,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut layout = FrameLayout::default();
@@ -858,6 +861,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut terminal = Terminal::new(TestBackend::new(24, 8)).expect("terminal");
@@ -906,6 +910,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut ui = ui_state();

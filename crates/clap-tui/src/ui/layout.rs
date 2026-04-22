@@ -188,6 +188,7 @@ mod tests {
             rendered_command: None,
             validation: ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         }
     }

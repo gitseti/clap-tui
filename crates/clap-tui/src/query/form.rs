@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::input::ActiveTab;
+use crate::pipeline::{FieldInstanceId, FieldSemantics};
 use crate::spec::{ArgActionKind, ArgSpec, CommandPath, CommandSpec, format_command_path};
 
 pub(crate) const SECTION_FIELD_INDENT: u16 = 1;
@@ -180,11 +181,22 @@ pub(crate) fn visible_arg_pairs<'a>(args: &[OrderedArg<'a>]) -> Vec<(usize, &'a 
         .collect()
 }
 
+#[allow(dead_code)]
 pub(crate) fn preferred_label_column_width(args: &[OrderedArg<'_>]) -> u16 {
+    preferred_label_column_width_with_semantics(args, &BTreeMap::new())
+}
+
+pub(crate) fn preferred_label_column_width_with_semantics(
+    args: &[OrderedArg<'_>],
+    field_semantics: &BTreeMap<FieldInstanceId, FieldSemantics>,
+) -> u16 {
     let widest_label = args
         .iter()
         .map(|item| {
-            let required_marker = u16::from(item.arg.required) * 2;
+            let required = field_semantics
+                .get(&FieldInstanceId::from_arg(item.arg))
+                .map_or(item.arg.required, |semantics| semantics.required_badge);
+            let required_marker = u16::from(required) * 2;
             let label_width =
                 u16::try_from(item.arg.display_label().chars().count()).unwrap_or(u16::MAX);
             label_width.saturating_add(required_marker)
@@ -337,15 +349,40 @@ pub(crate) fn measure_fields_height_with_layout_overrides(
     input_height_overrides: &std::collections::HashMap<String, u16>,
     label_height_overrides: &std::collections::HashMap<String, u16>,
 ) -> u16 {
+    measure_fields_height_with_layout_overrides_and_semantics(
+        args,
+        field_errors,
+        input_height_overrides,
+        label_height_overrides,
+        &BTreeMap::new(),
+    )
+}
+
+pub(crate) fn measure_fields_height_with_layout_overrides_and_semantics(
+    args: &[OrderedArg<'_>],
+    field_errors: &BTreeMap<String, String>,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
+    label_height_overrides: &std::collections::HashMap<String, u16>,
+    field_semantics: &BTreeMap<FieldInstanceId, FieldSemantics>,
+) -> u16 {
     let mut total = 0;
     let mut previous_heading = None;
     for item in args {
         if field_heading(previous_heading, item).is_some() {
             total += 1;
         }
+        let semantic_reason = field_semantics
+            .get(&FieldInstanceId::from_arg(item.arg))
+            .and_then(|semantics| semantics.reason.as_deref());
         total += field_metrics_with_description_and_layout_overrides(
             item.arg,
-            field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str)),
+            field_has_description(
+                item.arg,
+                field_errors
+                    .get(&item.arg.id)
+                    .map(String::as_str)
+                    .or(semantic_reason),
+            ),
             input_height_overrides.get(&item.arg.id).copied(),
             label_height_overrides.get(&item.arg.id).copied(),
         )
@@ -367,6 +404,7 @@ pub(crate) fn field_content_bounds(
     field_content_bounds_with_errors(args, selected_index, &BTreeMap::new())
 }
 
+#[allow(dead_code)]
 pub(crate) fn field_content_bounds_with_errors(
     args: &[OrderedArg<'_>],
     selected_index: usize,
@@ -381,6 +419,7 @@ pub(crate) fn field_content_bounds_with_errors(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn field_content_bounds_with_layout_overrides(
     args: &[OrderedArg<'_>],
     selected_index: usize,
@@ -388,14 +427,40 @@ pub(crate) fn field_content_bounds_with_layout_overrides(
     input_height_overrides: &std::collections::HashMap<String, u16>,
     label_height_overrides: &std::collections::HashMap<String, u16>,
 ) -> Option<(u16, u16)> {
+    field_content_bounds_with_layout_overrides_and_semantics(
+        args,
+        selected_index,
+        field_errors,
+        input_height_overrides,
+        label_height_overrides,
+        &BTreeMap::new(),
+    )
+}
+
+pub(crate) fn field_content_bounds_with_layout_overrides_and_semantics(
+    args: &[OrderedArg<'_>],
+    selected_index: usize,
+    field_errors: &BTreeMap<String, String>,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
+    label_height_overrides: &std::collections::HashMap<String, u16>,
+    field_semantics: &BTreeMap<FieldInstanceId, FieldSemantics>,
+) -> Option<(u16, u16)> {
     let mut y: u16 = 0;
     let mut previous_heading = None;
     for item in args {
         if field_heading(previous_heading, item).is_some() {
             y = y.saturating_add(1);
         }
-        let show_description =
-            field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str));
+        let semantic_reason = field_semantics
+            .get(&FieldInstanceId::from_arg(item.arg))
+            .and_then(|semantics| semantics.reason.as_deref());
+        let show_description = field_has_description(
+            item.arg,
+            field_errors
+                .get(&item.arg.id)
+                .map(String::as_str)
+                .or(semantic_reason),
+        );
         let metrics = field_metrics_with_description_and_layout_overrides(
             item.arg,
             show_description,
@@ -421,6 +486,7 @@ pub(crate) fn hit_test_form_content(args: &[OrderedArg<'_>], content_y: u16) -> 
     hit_test_form_content_with_errors(args, content_y, &BTreeMap::new())
 }
 
+#[allow(dead_code)]
 pub(crate) fn hit_test_form_content_with_errors(
     args: &[OrderedArg<'_>],
     content_y: u16,
@@ -435,6 +501,7 @@ pub(crate) fn hit_test_form_content_with_errors(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn hit_test_form_content_with_layout_overrides(
     args: &[OrderedArg<'_>],
     content_y: u16,
@@ -442,14 +509,40 @@ pub(crate) fn hit_test_form_content_with_layout_overrides(
     input_height_overrides: &std::collections::HashMap<String, u16>,
     label_height_overrides: &std::collections::HashMap<String, u16>,
 ) -> Option<FormHit> {
+    hit_test_form_content_with_layout_overrides_and_semantics(
+        args,
+        content_y,
+        field_errors,
+        input_height_overrides,
+        label_height_overrides,
+        &BTreeMap::new(),
+    )
+}
+
+pub(crate) fn hit_test_form_content_with_layout_overrides_and_semantics(
+    args: &[OrderedArg<'_>],
+    content_y: u16,
+    field_errors: &BTreeMap<String, String>,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
+    label_height_overrides: &std::collections::HashMap<String, u16>,
+    field_semantics: &BTreeMap<FieldInstanceId, FieldSemantics>,
+) -> Option<FormHit> {
     let mut y: u16 = 0;
     let mut previous_heading = None;
     for item in args {
         if field_heading(previous_heading, item).is_some() {
             y = y.saturating_add(1);
         }
-        let show_description =
-            field_has_description(item.arg, field_errors.get(&item.arg.id).map(String::as_str));
+        let semantic_reason = field_semantics
+            .get(&FieldInstanceId::from_arg(item.arg))
+            .and_then(|semantics| semantics.reason.as_deref());
+        let show_description = field_has_description(
+            item.arg,
+            field_errors
+                .get(&item.arg.id)
+                .map(String::as_str)
+                .or(semantic_reason),
+        );
         let metrics = field_metrics_with_description_and_layout_overrides(
             item.arg,
             show_description,

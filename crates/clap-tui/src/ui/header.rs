@@ -120,6 +120,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         }
     }

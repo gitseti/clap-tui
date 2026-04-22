@@ -1136,6 +1136,21 @@ impl AppState {
     pub(crate) fn derived_validation(&mut self) -> crate::pipeline::ValidationState {
         self.derived().validation.clone()
     }
+
+    pub(crate) fn field_semantics_for_arg(
+        &mut self,
+        arg: &ArgSpec,
+    ) -> Option<crate::pipeline::FieldSemantics> {
+        self.derived()
+            .field_semantics
+            .get(&crate::pipeline::FieldInstanceId::from_arg(arg))
+            .cloned()
+    }
+
+    pub(crate) fn field_can_edit(&mut self, arg: &ArgSpec) -> bool {
+        self.field_semantics_for_arg(arg)
+            .is_none_or(|semantics| semantics.can_edit)
+    }
 }
 
 fn clamp_dropdown_scroll(current: usize, total_rows: usize, visible_rows: usize) -> usize {

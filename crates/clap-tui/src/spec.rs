@@ -3,7 +3,7 @@ use clap::{Arg, ArgAction, Command};
 pub(crate) const EXTERNAL_SUBCOMMAND_NAME_ID: &str = "__external_subcommand_name";
 pub(crate) const EXTERNAL_SUBCOMMAND_ARGS_ID: &str = "__external_subcommand_args";
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub(crate) struct CommandPath(Vec<String>);
 
 #[allow(dead_code)]

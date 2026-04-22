@@ -41,11 +41,11 @@ pub(crate) fn reset_validation_call_count() {
 
 fn validate_with_clap(state: &AppState, command: Command, argv: &[OsString]) -> ValidationState {
     match command.try_get_matches_from(argv.iter().cloned()) {
-        Ok(_) => missing_required_validation_state(state).unwrap_or(ValidationState {
+        Ok(_) => ValidationState {
             is_valid: true,
             summary: None,
             field_errors: BTreeMap::new(),
-        }),
+        },
         Err(error) if error.kind() == ErrorKind::DisplayVersion => ValidationState {
             is_valid: true,
             summary: None,
@@ -55,30 +55,9 @@ fn validate_with_clap(state: &AppState, command: Command, argv: &[OsString]) -> 
     }
 }
 
-fn missing_required_validation_state(state: &AppState) -> Option<ValidationState> {
-    let missing = missing_required_arg_models(state);
-    if missing.is_empty() {
-        return None;
-    }
-
-    Some(ValidationState {
-        is_valid: false,
-        summary: summary_for_missing_required(state),
-        field_errors: missing
-            .into_iter()
-            .map(|arg| (arg.id.clone(), "Required argument".to_string()))
-            .collect(),
-    })
-}
-
 fn adapt_clap_error(state: &AppState, error: &clap::Error) -> ValidationState {
     let summary = summary_from_error_kind_and_context(state, error);
-    let mut field_errors = infer_field_errors(state, error, summary.as_deref());
-    for arg in missing_required_arg_models(state) {
-        field_errors
-            .entry(arg.id.clone())
-            .or_insert_with(|| "Required argument".to_string());
-    }
+    let field_errors = infer_field_errors(state, error, summary.as_deref());
 
     ValidationState {
         is_valid: false,

@@ -53,6 +53,9 @@ pub(crate) fn apply_paste_text(state: &mut AppState, text: &str) {
     if !item.widget.accepts_text_input() {
         return;
     }
+    if !state.field_can_edit(item.arg) {
+        return;
+    }
 
     let _ = matches!(
         form_editor::apply_paste_to_text_field(state, item.arg, text),
@@ -73,6 +76,9 @@ fn apply_form_text_input(key: AppKeyEvent, state: &mut AppState) {
     if !item.widget.accepts_text_input() {
         return;
     }
+    if !state.field_can_edit(item.arg) {
+        return;
+    }
 
     let _ = matches!(
         form_editor::apply_key_to_text_field(state, item.arg, key),
@@ -87,6 +93,9 @@ fn apply_form_widget_input(key: AppKeyEvent, state: &mut AppState, frame_snapsho
     let Some(item) = selectors::active_form_field(&args, state.ui.selected_arg_index) else {
         return;
     };
+    if !state.field_can_edit(item.arg) {
+        return;
+    }
 
     if matches!(item.widget, FieldWidget::Counter) {
         match key.code {
@@ -153,6 +162,10 @@ fn apply_choice_input(
         state.ui.close_dropdown();
         return;
     };
+    if !state.field_can_edit(&arg) {
+        state.ui.close_dropdown();
+        return;
+    }
     let len = arg.choices.len();
     let is_multi = matches!(form::widget_for(&arg), FieldWidget::MultiChoice);
 
@@ -224,15 +237,21 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
     let root = state.domain.root.clone();
     let selected_path = state.domain.selected_path().clone();
     let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
-    let validation = state.derived_validation();
+    let derived = state.derived().clone();
     if let Some(hit) = form_click_hit(
         &args,
         event,
         state,
         frame_snapshot,
-        &validation.field_errors,
+        &derived.validation.field_errors,
+        &derived.field_semantics,
     ) {
         state.ui.set_selected_arg_index(hit.item.order_index);
+        let can_edit = state.field_can_edit(hit.item.arg);
+        if !can_edit {
+            navigation::ensure_form_visible(state, frame_snapshot);
+            return;
+        }
         if matches!(hit.item.widget, FieldWidget::Counter) && hit.in_input {
             apply_counter_click(event, state, frame_snapshot, &hit.item.arg.id);
         } else if matches!(hit.item.widget, FieldWidget::RepeatedText) && hit.in_input {
@@ -453,6 +472,10 @@ fn form_click_hit<'a>(
     state: &AppState,
     frame_snapshot: &FrameSnapshot,
     field_errors: &std::collections::BTreeMap<String, String>,
+    field_semantics: &std::collections::BTreeMap<
+        crate::pipeline::FieldInstanceId,
+        crate::pipeline::FieldSemantics,
+    >,
 ) -> Option<FormClickHit<'a>> {
     if let Some(hit) = frame_snapshot.form_field_at(event.column, event.row) {
         let item = args.iter().find(|item| item.arg.id == hit.arg_id)?;
@@ -465,7 +488,14 @@ fn form_click_hit<'a>(
 
     let content_y =
         frame_snapshot.form_content_y(event.row, state.ui.form_scroll(frame_snapshot))?;
-    let hit = form::hit_test_form_content_with_errors(args, content_y, field_errors)?;
+    let hit = form::hit_test_form_content_with_layout_overrides_and_semantics(
+        args,
+        content_y,
+        field_errors,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+        field_semantics,
+    )?;
     let item = args
         .iter()
         .find(|item| item.order_index == hit.order_index)?;

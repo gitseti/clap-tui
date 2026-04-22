@@ -1,9 +1,4 @@
-# derived-state-lifecycle Specification
-
-## Purpose
-Define how derived command state is computed, cached, and shared so rendering and execution stay aligned without redundant validation.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Rendering reuses previously derived preview and validation state
 The TUI SHALL derive preview argv, validation state, effective values, and path-sensitive field semantics when relevant command input or selected command path changes and MUST reuse that derived state for rendering until another relevant state transition occurs.

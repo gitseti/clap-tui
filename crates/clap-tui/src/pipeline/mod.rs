@@ -6,9 +6,11 @@ use std::collections::BTreeMap;
 
 mod argv;
 mod effective;
+mod field_semantics;
 mod validation;
 
 pub(crate) use effective::{EffectiveArgValue, EffectiveValueSource};
+pub(crate) use field_semantics::{FieldInstanceId, FieldSemantics, FieldVisibility};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct ValidationState {
@@ -24,6 +26,7 @@ pub(crate) struct DerivedState {
     pub(crate) rendered_command: Option<RenderedCommand>,
     pub(crate) validation: ValidationState,
     pub(crate) effective_values: BTreeMap<String, EffectiveArgValue>,
+    pub(crate) field_semantics: BTreeMap<FieldInstanceId, FieldSemantics>,
 }
 
 pub(crate) fn derive(state: &AppState) -> DerivedState {
@@ -45,12 +48,14 @@ pub(crate) fn derive(state: &AppState) -> DerivedState {
             BTreeMap::new(),
         )
     };
+    let field_semantics = field_semantics::derive_field_semantics(state, &validation);
     DerivedState {
         serialization,
         authoritative_argv,
         rendered_command,
         validation,
         effective_values,
+        field_semantics,
     }
 }
 
@@ -108,13 +113,17 @@ mod tests {
 
     use clap::{Arg, ArgAction, ArgGroup, Command, builder::ArgPredicate};
 
-    use super::{EffectiveValueSource, derive};
+    use super::{
+        EffectiveValueSource, derive,
+        field_semantics::{FieldActivity, FieldConflictState, FieldInstanceId},
+    };
     use crate::argv_serializer::{
         SerializationDiagnosticKind, TargetShell, TokenProvenanceKind, render_shell,
     };
     use crate::input::{AppState, InputSource, InputValueOccurrence};
     use crate::spec::{
-        ArgKind, ArgSpec, CommandSpec, EXTERNAL_SUBCOMMAND_ARGS_ID, EXTERNAL_SUBCOMMAND_NAME_ID,
+        ArgKind, ArgSpec, CommandPath, CommandSpec, EXTERNAL_SUBCOMMAND_ARGS_ID,
+        EXTERNAL_SUBCOMMAND_NAME_ID,
     };
 
     fn arg(id: &str, name: &str, kind: ArgKind) -> ArgSpec {
@@ -583,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn clap_backed_validation_keeps_missing_fields_when_primary_error_differs() {
+    fn clap_backed_validation_does_not_invent_missing_fields_when_primary_error_differs() {
         let mut state = AppState::from_command(
             &Command::new("tool")
                 .arg(Arg::new("name").long("name").required(true))
@@ -605,10 +614,7 @@ mod tests {
             derived.validation.summary.as_deref(),
             Some("Conflicting arguments: --debug, --quiet")
         );
-        assert_eq!(
-            derived.validation.field_errors.get("name"),
-            Some(&"Required argument".to_string())
-        );
+        assert!(!derived.validation.field_errors.contains_key("name"));
         assert!(derived.validation.field_errors.contains_key("debug"));
         assert!(derived.validation.field_errors.contains_key("quiet"));
     }
@@ -1268,7 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn trailing_var_arg_does_not_satisfy_previous_required_positional() {
+    fn clap_success_does_not_gain_synthetic_missing_required_errors() {
         let mut state = AppState::from_command(
             &Command::new("tool")
                 .arg(Arg::new("program").required(true).index(1))
@@ -1289,15 +1295,132 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--".to_string(), "a".to_string()]
         );
+        assert!(derived.validation.is_valid);
+        assert!(derived.validation.field_errors.is_empty());
+        assert!(derived.validation.summary.is_none());
+    }
+
+    #[test]
+    fn subcommand_negated_parent_requirement_stays_presentation_only() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .subcommand_negates_reqs(true)
+                .arg(Arg::new("config").long("config").required(true))
+                .subcommand(Command::new("build")),
+        );
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+        let root_config = FieldInstanceId {
+            owner_path: CommandPath::default(),
+            arg_id: "config".to_string(),
+        };
+
+        assert!(derived.validation.is_valid);
+        assert!(derived.validation.field_errors.is_empty());
+        assert!(
+            !derived
+                .field_semantics
+                .get(&root_config)
+                .expect("root config semantics")
+                .required_badge
+        );
+    }
+
+    #[test]
+    fn empty_ancestor_arg_conflicting_with_subcommand_is_potential_ui_state() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .args_conflicts_with_subcommands(true)
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(ArgAction::SetTrue),
+                )
+                .subcommand(Command::new("build")),
+        );
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+        let verbose = FieldInstanceId {
+            owner_path: CommandPath::default(),
+            arg_id: "verbose".to_string(),
+        };
+        let semantics = derived
+            .field_semantics
+            .get(&verbose)
+            .expect("verbose semantics");
+
+        assert!(derived.validation.is_valid);
+        assert!(derived.validation.field_errors.is_empty());
+        assert_eq!(
+            semantics.conflict,
+            FieldConflictState::PotentialPathConflict
+        );
+        assert_eq!(semantics.activity, FieldActivity::Disabled);
+        assert!(!semantics.can_edit);
+    }
+
+    #[test]
+    fn authored_ancestor_arg_conflicting_with_subcommand_remains_clearable() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .args_conflicts_with_subcommands(true)
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(ArgAction::SetTrue),
+                )
+                .subcommand(Command::new("build")),
+        );
+        state.domain.toggle_flag_touched("verbose");
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+        let verbose = FieldInstanceId {
+            owner_path: CommandPath::default(),
+            arg_id: "verbose".to_string(),
+        };
+        let semantics = derived
+            .field_semantics
+            .get(&verbose)
+            .expect("verbose semantics");
+
         assert!(!derived.validation.is_valid);
         assert_eq!(
-            derived.validation.field_errors.get("program"),
-            Some(&"Required argument".to_string())
+            semantics.conflict,
+            FieldConflictState::ActualValidationConflict
         );
-        assert_eq!(
-            derived.validation.summary.as_deref(),
-            Some("Missing required argument: program")
+        assert!(semantics.can_edit);
+    }
+
+    #[test]
+    fn field_semantics_identity_includes_declaring_owner_path() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("config").long("config"))
+                .subcommand(Command::new("build").arg(Arg::new("config").long("config"))),
         );
+        state
+            .select_command_path(&["build".to_string()])
+            .expect("valid subcommand");
+
+        let derived = derive(&state);
+
+        assert!(derived.field_semantics.contains_key(&FieldInstanceId {
+            owner_path: CommandPath::default(),
+            arg_id: "config".to_string(),
+        }));
+        assert!(derived.field_semantics.contains_key(&FieldInstanceId {
+            owner_path: CommandPath::from(vec!["build".to_string()]),
+            arg_id: "config".to_string(),
+        }));
     }
 
     #[test]

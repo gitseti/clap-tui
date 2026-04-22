@@ -6,6 +6,7 @@ use crate::query::{
     tree::TreeRow,
 };
 use crate::spec::{CommandPath, SelectionError};
+use std::collections::HashMap;
 
 pub(crate) fn switch_tab(state: &mut AppState, tab: ActiveTab) {
     let tabs = UiState::visible_tabs();
@@ -199,6 +200,9 @@ pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSn
         return;
     };
     let arg = item.arg;
+    if !state.field_can_edit(arg) {
+        return;
+    }
     if matches!(item.widget, FieldWidget::Toggle) {
         state.domain.toggle_flag_touched(&arg.id);
     } else if matches!(
@@ -252,6 +256,13 @@ pub(crate) fn open_enum_dropdown(
         state.ui.set_dropdown_scroll(0);
         return;
     }
+    if let Some(arg) = state.domain.arg_for_input(arg_id).cloned()
+        && !state.field_can_edit(&arg)
+    {
+        state.ui.close_dropdown();
+        state.ui.set_dropdown_scroll(0);
+        return;
+    }
 
     state.ui.open_dropdown(arg_id.to_string(), 0, 0);
     let current = state
@@ -300,12 +311,17 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     let root = state.domain.root.clone();
     let selected_path = state.domain.selected_path().clone();
     let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
-    let validation = state.derived_validation();
-    let Some((input_top, input_bottom)) = form::field_content_bounds_with_errors(
-        &args,
-        state.ui.selected_arg_index,
-        &validation.field_errors,
-    ) else {
+    let derived = state.derived().clone();
+    let Some((input_top, input_bottom)) =
+        form::field_content_bounds_with_layout_overrides_and_semantics(
+            &args,
+            state.ui.selected_arg_index,
+            &derived.validation.field_errors,
+            &HashMap::new(),
+            &HashMap::new(),
+            &derived.field_semantics,
+        )
+    else {
         return;
     };
     let visible_top = state.ui.form_scroll(frame_snapshot);

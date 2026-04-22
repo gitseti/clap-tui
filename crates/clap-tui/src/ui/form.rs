@@ -38,6 +38,7 @@ pub(crate) fn populate_layout(
         &vm.active_args,
         &vm.command.help,
         &vm.validation,
+        &vm.field_semantics,
         &input_height_overrides,
         &label_height_overrides,
         frame_snapshot,
@@ -58,11 +59,12 @@ pub(crate) fn render_form(
     let content_area = frame_layout.form_view.unwrap_or(area);
     let input_height_overrides = repeated_input_height_overrides(ui, vm);
     let label_height_overrides = label_height_overrides(vm);
-    let content_height = form::measure_fields_height_with_layout_overrides(
+    let content_height = form::measure_fields_height_with_layout_overrides_and_semantics(
         &vm.active_args,
         &vm.validation.field_errors,
         &input_height_overrides,
         &label_height_overrides,
+        &vm.field_semantics,
     );
     let viewport_height = content_area.height;
     let form_scroll = ui.form_scroll(frame_snapshot);
@@ -161,6 +163,11 @@ fn render_fields(
         let is_primary_invalid =
             frame_snapshot.first_invalid_field_id() == Some(item.arg.id.as_str());
         let source_badge = effective_source_badge(vm, item.arg);
+        let required_badge = vm.field_required(item.arg);
+        let can_edit = vm.field_can_edit(item.arg);
+        let semantic_reason = vm
+            .field_semantics(item.arg)
+            .and_then(|semantics| semantics.reason.as_deref());
 
         if let Some(heading_rect) = field.heading
             && let Some(heading) = item.section_heading.as_deref()
@@ -187,7 +194,7 @@ fn render_fields(
                 item.arg.display_label().to_string(),
                 label_style,
             )];
-            if item.arg.required {
+            if required_badge {
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled("*", styles::required_prompt(config)));
             }
@@ -229,7 +236,9 @@ fn render_fields(
                 is_primary_invalid,
             ));
         let fill_style = styles::input(config, selected);
-        let text_style = if shows_choice_placeholder && item.arg.required {
+        let text_style = if !can_edit {
+            styles::placeholder(config)
+        } else if shows_choice_placeholder && required_badge {
             styles::required_prompt(config)
         } else if uses_muted_non_user_value
             || is_default
@@ -249,7 +258,7 @@ fn render_fields(
             FieldWidget::SingleChoice | FieldWidget::MultiChoice | FieldWidget::Counter
         ) {
             let display = if value.is_empty() {
-                compact_placeholder(item.arg, item.widget)
+                compact_placeholder(item.arg, item.widget, required_badge)
             } else {
                 value.as_str()
             };
@@ -298,11 +307,17 @@ fn render_fields(
                 text_style,
                 selected,
                 field_error.is_none(),
+                required_badge,
             );
         } else if input_is_truncated {
             frame.render_widget(
-                Paragraph::new(repeated_display_lines(item.arg, item.widget, &value))
-                    .style(fill_style.patch(text_style)),
+                Paragraph::new(repeated_display_lines(
+                    item.arg,
+                    item.widget,
+                    &value,
+                    required_badge,
+                ))
+                .style(fill_style.patch(text_style)),
                 field.input,
             );
         } else if selected {
@@ -327,7 +342,8 @@ fn render_fields(
             );
             if value.is_empty()
                 && field_error.is_none()
-                && let Some(placeholder) = required_empty_prompt(item.arg, item.widget)
+                && let Some(placeholder) =
+                    required_empty_prompt(item.arg, item.widget, required_badge)
             {
                 textarea.set_placeholder_text(placeholder);
                 textarea.set_placeholder_style(styles::placeholder(config));
@@ -336,9 +352,14 @@ fn render_fields(
             place_textarea_cursor(frame, &textarea, field.input);
         } else {
             frame.render_widget(
-                Paragraph::new(repeated_display_lines(item.arg, item.widget, &value))
-                    .block(block)
-                    .style(fill_style.patch(text_style)),
+                Paragraph::new(repeated_display_lines(
+                    item.arg,
+                    item.widget,
+                    &value,
+                    required_badge,
+                ))
+                .block(block)
+                .style(fill_style.patch(text_style)),
                 field.input,
             );
         }
@@ -352,6 +373,7 @@ fn render_fields(
                     selected,
                     field_error: field_error.map(String::as_str),
                     effective_value: vm.effective_values.get(&item.arg.id),
+                    semantic_reason,
                 },
             ),
             field.description,
@@ -401,11 +423,11 @@ fn display_value(
     }
 }
 
-fn compact_placeholder(arg: &ArgSpec, widget: FieldWidget) -> &'static str {
+fn compact_placeholder(_arg: &ArgSpec, widget: FieldWidget, required: bool) -> &'static str {
     match widget {
         FieldWidget::Counter => "0",
-        FieldWidget::MultiChoice if arg.required => "Press Space to choose",
-        FieldWidget::SingleChoice if arg.required => "Press Enter to choose",
+        FieldWidget::MultiChoice if required => "Press Space to choose",
+        FieldWidget::SingleChoice if required => "Press Enter to choose",
         _ => "Select...",
     }
 }
@@ -427,9 +449,14 @@ fn expected_input_height(ui: &UiState, arg: &ArgSpec, widget: FieldWidget, value
     }
 }
 
-fn repeated_display_lines(arg: &ArgSpec, widget: FieldWidget, value: &str) -> Vec<Line<'static>> {
+fn repeated_display_lines(
+    arg: &ArgSpec,
+    widget: FieldWidget,
+    value: &str,
+    required: bool,
+) -> Vec<Line<'static>> {
     if value.is_empty() {
-        return required_empty_prompt(arg, widget)
+        return required_empty_prompt(arg, widget, required)
             .map_or_else(Vec::new, |placeholder| vec![Line::from(placeholder)]);
     }
 
@@ -452,6 +479,7 @@ fn render_repeated_text_field(
     text_style: Style,
     selected: bool,
     show_placeholder: bool,
+    required: bool,
 ) {
     let editor = form_editor::editor_for_render(ui, arg.owner_path(), arg, value);
     let total_rows = editor.row_count().max(1);
@@ -459,7 +487,7 @@ fn render_repeated_text_field(
     if total_rows <= 1 {
         let textarea_rect = repeated_row_textarea_rect(area, true, true);
         let placeholder = (show_placeholder && value.is_empty())
-            .then(|| required_empty_prompt(arg, FieldWidget::RepeatedText))
+            .then(|| required_empty_prompt(arg, FieldWidget::RepeatedText, required))
             .flatten();
         let cursor_col =
             (current_row == 0).then_some(u16::try_from(editor.cursor().col).unwrap_or(u16::MAX));
@@ -493,7 +521,7 @@ fn render_repeated_text_field(
         let active_row = selected && row_index == current_row;
         let line = editor.lines().get(row_index).cloned().unwrap_or_default();
         let placeholder = (show_placeholder && row_index == 0 && line.is_empty())
-            .then(|| required_empty_prompt(arg, FieldWidget::RepeatedText))
+            .then(|| required_empty_prompt(arg, FieldWidget::RepeatedText, required))
             .flatten();
 
         render_repeated_row_textarea(
@@ -1098,6 +1126,7 @@ struct FieldHelpContext<'a> {
     selected: bool,
     field_error: Option<&'a str>,
     effective_value: Option<&'a EffectiveArgValue>,
+    semantic_reason: Option<&'a str>,
 }
 
 fn field_help_text(
@@ -1112,6 +1141,9 @@ fn field_help_text(
     }
 
     let mut parts = Vec::new();
+    if let Some(reason) = help.semantic_reason {
+        parts.push(reason.to_string());
+    }
     let primary_help = if help.selected {
         arg.long_help()
             .filter(|long_help| Some(*long_help) != arg.help.as_deref())
@@ -1191,8 +1223,9 @@ fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
     }
 }
 
-fn required_empty_prompt(arg: &ArgSpec, widget: FieldWidget) -> Option<String> {
-    if !arg.required {
+fn required_empty_prompt(arg: &ArgSpec, widget: FieldWidget, required: bool) -> Option<String> {
+    let _ = arg;
+    if !required {
         return None;
     }
 
@@ -1392,6 +1425,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1424,6 +1458,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1467,6 +1502,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1497,6 +1533,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1537,6 +1574,7 @@ mod tests {
                 selected: false,
                 field_error: Some("Required argument"),
                 effective_value: None,
+                semantic_reason: None,
             },
         )
         .expect("help text");
@@ -1559,6 +1597,7 @@ mod tests {
                 selected: false,
                 field_error: Some("Required argument"),
                 effective_value: None,
+                semantic_reason: None,
             },
         )
         .expect("help text");
@@ -1611,6 +1650,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1653,6 +1693,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1701,6 +1742,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1751,6 +1793,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1800,6 +1843,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1841,6 +1885,7 @@ mod tests {
                 selected: true,
                 field_error: None,
                 effective_value: None,
+                semantic_reason: None,
             },
         )
         .expect("selected help text");
@@ -1875,6 +1920,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1922,6 +1968,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -1978,6 +2025,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2037,6 +2085,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2087,6 +2136,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2130,6 +2180,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2174,6 +2225,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2236,6 +2288,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2282,6 +2335,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2349,6 +2403,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2446,6 +2501,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2506,6 +2562,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2561,6 +2618,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2616,6 +2674,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2661,6 +2720,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: command.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2721,6 +2781,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2776,6 +2837,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2861,6 +2923,7 @@ mod tests {
                 selected: true,
                 field_error: None,
                 effective_value: None,
+                semantic_reason: None,
             },
         )
         .expect("override help");
@@ -2891,6 +2954,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2945,6 +3009,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -2998,6 +3063,7 @@ mod tests {
             rendered_command: None,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
@@ -3037,6 +3103,7 @@ mod tests {
             rendered_command: None,
             validation: crate::pipeline::ValidationState::default(),
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();

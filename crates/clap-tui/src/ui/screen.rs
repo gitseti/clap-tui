@@ -2,7 +2,9 @@ use crate::argv_serializer::RenderedCommand;
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, CommandFormState, Focus, UiState};
-use crate::pipeline::{self, EffectiveArgValue, ValidationState};
+use crate::pipeline::{
+    self, EffectiveArgValue, FieldInstanceId, FieldSemantics, FieldVisibility, ValidationState,
+};
 use crate::query::{form, selectors, tree::TreeRow};
 use crate::spec::{CommandPath, CommandSpec};
 use ratatui::Frame;
@@ -24,6 +26,7 @@ pub(crate) struct ScreenView<'a> {
     pub(crate) rendered_command: Option<RenderedCommand>,
     pub(crate) validation: ValidationState,
     pub(crate) effective_values: std::collections::BTreeMap<String, EffectiveArgValue>,
+    pub(crate) field_semantics: std::collections::BTreeMap<FieldInstanceId, FieldSemantics>,
     pub(crate) inputs: Option<CommandFormState>,
 }
 
@@ -43,13 +46,36 @@ impl<'a> ScreenView<'a> {
                 root,
                 state.domain.selected_path(),
                 state.ui.active_tab,
-            ),
+            )
+            .into_iter()
+            .filter(|item| {
+                derived
+                    .field_semantics
+                    .get(&FieldInstanceId::from_arg(item.arg))
+                    .is_none_or(|semantics| semantics.visibility == FieldVisibility::Visible)
+            })
+            .collect(),
             authoritative_argv: derived.authoritative_argv,
             rendered_command: derived.rendered_command,
             validation: derived.validation,
             effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
             inputs: state.domain.current_form(),
         }
+    }
+
+    pub(crate) fn field_semantics(&self, arg: &crate::spec::ArgSpec) -> Option<&FieldSemantics> {
+        self.field_semantics.get(&FieldInstanceId::from_arg(arg))
+    }
+
+    pub(crate) fn field_required(&self, arg: &crate::spec::ArgSpec) -> bool {
+        self.field_semantics(arg)
+            .map_or(arg.required, |semantics| semantics.required_badge)
+    }
+
+    pub(crate) fn field_can_edit(&self, arg: &crate::spec::ArgSpec) -> bool {
+        self.field_semantics(arg)
+            .is_none_or(|semantics| semantics.can_edit)
     }
 }
 
@@ -178,7 +204,7 @@ mod tests {
     use crate::controller;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::AppState;
-    use crate::pipeline;
+    use crate::pipeline::{self, FieldInstanceId, FieldVisibility};
     use crate::runtime::{
         AppKeyCode, AppKeyEvent, AppKeyModifiers, AppMouseButton, AppMouseEvent, AppMouseEventKind,
     };
@@ -277,6 +303,130 @@ mod tests {
     }
 
     #[test]
+    fn negated_parent_required_arg_renders_without_required_ui_in_descendant_path() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .subcommand_negates_reqs(true)
+                .arg(Arg::new("config").long("config").required(true))
+                .subcommand(Command::new("child")),
+        );
+        state
+            .select_command_path(&["child".to_string()])
+            .expect("valid child path");
+
+        let (backend, snapshot) = render_app(&mut state);
+        let rendered = buffer_text(&backend);
+        let field = snapshot
+            .layout
+            .form_fields
+            .iter()
+            .find(|field| field.arg_id == "config")
+            .expect("inherited config field");
+        let label = field.label.expect("label rect");
+        let label_text = rect_text(&backend, label);
+
+        assert!(!rendered.contains("Missing required argument"));
+        assert!(!rendered.contains("Enter a value to continue"));
+        assert!(!label_text.contains('*'));
+    }
+
+    #[test]
+    fn empty_ancestor_arg_conflicting_with_subcommand_renders_disabled_without_validation_error() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .args_conflicts_with_subcommands(true)
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(ArgAction::SetTrue),
+                )
+                .subcommand(Command::new("child")),
+        );
+        state
+            .select_command_path(&["child".to_string()])
+            .expect("valid child path");
+
+        let (backend, snapshot) = render_app(&mut state);
+        let rendered = buffer_text(&backend);
+
+        assert!(
+            snapshot
+                .layout
+                .form_fields
+                .iter()
+                .any(|field| field.arg_id == "verbose")
+        );
+        assert!(rendered.contains("Disabled because it conflicts with the selected subcommand."));
+        assert!(!rendered.contains("Conflicting arguments"));
+    }
+
+    #[test]
+    fn authored_ancestor_path_conflict_remains_clearable_from_descendant_view() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .args_conflicts_with_subcommands(true)
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .action(ArgAction::SetTrue),
+                )
+                .subcommand(Command::new("child")),
+        );
+        state
+            .select_command_path(&["child".to_string()])
+            .expect("valid child path");
+        state.domain.toggle_flag_touched("verbose");
+
+        let (_, snapshot) = render_app(&mut state);
+        assert!(
+            state
+                .derived()
+                .authoritative_argv
+                .iter()
+                .any(|token| token == "--verbose")
+        );
+        assert!(!state.derived_validation().is_valid);
+
+        controller::navigation::activate_form_field(&mut state, &snapshot);
+
+        assert!(
+            !state
+                .derived()
+                .authoritative_argv
+                .iter()
+                .any(|token| token == "--verbose")
+        );
+        assert!(state.derived_validation().is_valid);
+    }
+
+    #[test]
+    fn hidden_field_semantics_are_omitted_from_screen_view_projection() {
+        let state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("visible").long("visible"))
+                .arg(Arg::new("hidden").long("hidden")),
+        );
+        let mut derived = pipeline::derive(&state);
+        let hidden = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "hidden")
+            .expect("hidden arg");
+        derived
+            .field_semantics
+            .get_mut(&FieldInstanceId::from_arg(hidden))
+            .expect("hidden semantics")
+            .visibility = FieldVisibility::Hidden;
+
+        let vm = super::ScreenView::from_state(&state, derived);
+
+        assert!(vm.active_args.iter().any(|item| item.arg.id == "visible"));
+        assert!(!vm.active_args.iter().any(|item| item.arg.id == "hidden"));
+    }
+
+    #[test]
     fn conflict_errors_render_inline_for_both_fields_and_match_footer_summary() {
         let mut state = AppState::from_command(
             &Command::new("tool")
@@ -303,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_validation_errors_render_inline_for_all_fields() {
+    fn conflict_primary_error_does_not_invent_missing_required_inline_error() {
         let mut state = AppState::from_command(
             &Command::new("tool")
                 .group(ArgGroup::new("mode").args(["debug", "quiet"]))
@@ -324,7 +474,7 @@ mod tests {
         let summary = "Conflicting arguments: --debug, --quiet";
 
         assert_eq!(count_occurrences(&rendered, summary), 3);
-        assert_eq!(count_occurrences(&rendered, "Required argument"), 1);
+        assert_eq!(count_occurrences(&rendered, "Required argument"), 0);
         assert_eq!(
             snapshot
                 .layout
@@ -332,7 +482,7 @@ mod tests {
                 .iter()
                 .filter(|field| field.description.is_some())
                 .count(),
-            3
+            2
         );
     }
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ratatui::layout::{Margin, Rect};
 
 use crate::input::{ActiveTab, HoverTarget, UiState};
-use crate::pipeline::ValidationState;
+use crate::pipeline::{FieldInstanceId, FieldSemantics, ValidationState};
 use crate::query::form::{self, OrderedArg};
 use crate::spec::CommandPath;
 
@@ -271,16 +271,18 @@ pub(crate) fn populate_form_layout(
     active_args: &[OrderedArg<'_>],
     help: &str,
     validation: &ValidationState,
+    field_semantics: &std::collections::BTreeMap<FieldInstanceId, FieldSemantics>,
     input_height_overrides: &std::collections::HashMap<String, u16>,
     label_height_overrides: &std::collections::HashMap<String, u16>,
     frame_snapshot: &mut FrameSnapshot,
 ) {
     let content_area = area;
-    let content_height = form::measure_fields_height_with_layout_overrides(
+    let content_height = form::measure_fields_height_with_layout_overrides_and_semantics(
         active_args,
         &validation.field_errors,
         input_height_overrides,
         label_height_overrides,
+        field_semantics,
     );
     let help_height = form::measure_help_height(help);
     let viewport_height = content_area.height;
@@ -296,18 +298,23 @@ pub(crate) fn populate_form_layout(
     frame_layout.form_tabs.clear();
     frame_layout.invalid_field_ids.clear();
     frame_layout.form_view = Some(content_area);
-    let preferred_label_width = form::preferred_label_column_width(active_args);
+    let preferred_label_width =
+        form::preferred_label_column_width_with_semantics(active_args, field_semantics);
 
     let mut y = i32::from(content_area.y) - i32::from(form_scroll);
     let mut previous_heading = None;
     for item in active_args {
         let heading = form::field_heading(previous_heading, item);
+        let semantic_reason = field_semantics
+            .get(&FieldInstanceId::from_arg(item.arg))
+            .and_then(|semantics| semantics.reason.as_deref());
         let show_description = form::field_has_description(
             item.arg,
             validation
                 .field_errors
                 .get(&item.arg.id)
-                .map(String::as_str),
+                .map(String::as_str)
+                .or(semantic_reason),
         );
         let metrics = form::field_metrics_with_description_and_layout_overrides(
             item.arg,
@@ -591,6 +598,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn populate_form_layout_preserves_form_field_order_when_errors_are_present() {
         use crate::input::{ActiveTab, Focus, UiState};
         use crate::pipeline::ValidationState;
@@ -651,6 +659,7 @@ mod tests {
                 ]),
             },
             effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
             inputs: None,
         };
         let mut snapshot = FrameSnapshot::default();
@@ -679,6 +688,7 @@ mod tests {
             &vm.active_args,
             &vm.command.help,
             &vm.validation,
+            &vm.field_semantics,
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
             &mut snapshot,
@@ -739,6 +749,7 @@ mod tests {
             &active_args,
             &root.help,
             &ValidationState::default(),
+            &std::collections::BTreeMap::new(),
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
             &mut snapshot,
