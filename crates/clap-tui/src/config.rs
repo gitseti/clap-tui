@@ -98,17 +98,17 @@ impl Theme {
             ThemePreset::CalmDark => Self {
                 text: Color::Rgb(214, 225, 228),
                 accent: Color::Rgb(67, 225, 232),
-                result_accent: Color::Rgb(67, 225, 232),
-                focus: Color::Rgb(242, 252, 255),
+                result_accent: Color::Rgb(102, 236, 242),
+                focus: Color::Rgb(198, 245, 248),
                 success: Color::Rgb(110, 214, 154),
                 info: Color::Rgb(109, 198, 210),
                 warning: Color::Rgb(232, 186, 92),
-                metadata: Color::Rgb(122, 150, 156),
-                border: Color::Rgb(40, 78, 86),
+                metadata: Color::Rgb(132, 160, 166),
+                border: Color::Rgb(36, 72, 79),
                 shell_border: Color::Rgb(25, 49, 56),
-                panel_focus_border: Color::Rgb(242, 252, 255),
+                panel_focus_border: Color::Rgb(102, 236, 242),
                 error: Color::Rgb(255, 99, 110),
-                dim: Color::Rgb(122, 150, 156),
+                dim: Color::Rgb(92, 116, 122),
                 input_bg: Color::Rgb(15, 34, 38),
                 shell_bg: Color::Rgb(5, 14, 17),
                 sidebar_bg: Color::Rgb(8, 20, 24),
@@ -129,22 +129,22 @@ impl Theme {
                 secondary_action_fg: Color::Rgb(230, 243, 245),
                 preview_bg: Color::Rgb(8, 20, 24),
                 overlay_bg: Color::Rgb(12, 26, 31),
-                divider: Color::Rgb(32, 78, 86),
+                divider: Color::Rgb(28, 58, 64),
             },
             ThemePreset::HighContrastDark => Self {
                 text: Color::Rgb(245, 247, 250),
                 accent: Color::Rgb(102, 218, 194),
                 result_accent: Color::Rgb(245, 185, 96),
-                focus: Color::Rgb(228, 235, 242),
+                focus: Color::Rgb(210, 225, 236),
                 success: Color::Rgb(125, 229, 171),
                 info: Color::Rgb(136, 201, 222),
                 warning: Color::Rgb(242, 195, 102),
                 metadata: Color::Rgb(175, 188, 202),
                 border: Color::Rgb(90, 106, 122),
                 shell_border: Color::Rgb(62, 75, 90),
-                panel_focus_border: Color::Rgb(228, 235, 242),
+                panel_focus_border: Color::Rgb(136, 201, 222),
                 error: Color::Rgb(255, 99, 110),
-                dim: Color::Rgb(175, 188, 202),
+                dim: Color::Rgb(128, 142, 156),
                 input_bg: Color::Rgb(26, 34, 42),
                 shell_bg: Color::Rgb(10, 15, 22),
                 sidebar_bg: Color::Rgb(16, 22, 30),
@@ -165,22 +165,22 @@ impl Theme {
                 secondary_action_fg: Color::Rgb(238, 242, 246),
                 preview_bg: Color::Rgb(14, 20, 26),
                 overlay_bg: Color::Rgb(18, 25, 33),
-                divider: Color::Rgb(88, 102, 116),
+                divider: Color::Rgb(72, 88, 102),
             },
             ThemePreset::Light => Self {
                 text: Color::Rgb(24, 32, 40),
                 accent: Color::Rgb(34, 149, 132),
-                result_accent: Color::Rgb(181, 116, 32),
-                focus: Color::Rgb(114, 126, 138),
+                result_accent: Color::Rgb(168, 110, 36),
+                focus: Color::Rgb(90, 122, 142),
                 success: Color::Rgb(49, 148, 96),
                 info: Color::Rgb(70, 120, 150),
                 warning: Color::Rgb(160, 113, 25),
                 metadata: Color::Rgb(96, 108, 120),
                 border: Color::Rgb(180, 188, 196),
                 shell_border: Color::Rgb(204, 210, 218),
-                panel_focus_border: Color::Rgb(114, 126, 138),
+                panel_focus_border: Color::Rgb(34, 149, 132),
                 error: Color::Rgb(199, 58, 71),
-                dim: Color::Rgb(96, 108, 120),
+                dim: Color::Rgb(130, 140, 150),
                 input_bg: Color::Rgb(243, 246, 250),
                 shell_bg: Color::Rgb(236, 240, 244),
                 sidebar_bg: Color::Rgb(242, 246, 250),
@@ -210,6 +210,32 @@ impl Theme {
 impl Default for Theme {
     fn default() -> Self {
         Theme::from_preset(ThemePreset::CalmDark)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Theme, ThemePreset};
+
+    #[test]
+    fn presets_keep_secondary_text_and_focus_roles_distinct() {
+        for preset in [
+            ThemePreset::CalmDark,
+            ThemePreset::HighContrastDark,
+            ThemePreset::Light,
+        ] {
+            let theme = Theme::from_preset(preset);
+
+            assert_ne!(theme.metadata, theme.dim);
+            assert_ne!(theme.focus, theme.panel_focus_border);
+        }
+    }
+
+    #[test]
+    fn calm_dark_uses_distinct_result_accent() {
+        let theme = Theme::from_preset(ThemePreset::CalmDark);
+
+        assert_ne!(theme.accent, theme.result_accent);
     }
 }
 
