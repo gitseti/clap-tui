@@ -13,7 +13,6 @@ This is the same baseline verification enforced by the GitHub `verify` job:
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `cargo test --workspace --all-targets --all-features`
-- `./scripts/check-terminal-stack.sh`
 - `cargo package -p clap-tui --list`
 
 If you need to validate local changes before committing them, use:

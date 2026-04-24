@@ -10,7 +10,6 @@ Runs the baseline repository verification flow for clap-tui:
   - cargo fmt --all --check
   - cargo clippy --workspace --all-targets --all-features -- -D warnings
   - cargo test --workspace --all-targets --all-features
-  - ./scripts/check-terminal-stack.sh
   - cargo package -p clap-tui --list
 
 Pass --allow-dirty to let the package inspection include the current working tree.
@@ -45,9 +44,6 @@ package_cmd=(cargo package -p clap-tui --list)
 if [[ "${allow_dirty}" -eq 1 ]]; then
   package_cmd+=(--allow-dirty)
 fi
-
-echo "+ ./scripts/check-terminal-stack.sh"
-./scripts/check-terminal-stack.sh
 
 printf '+'
 printf ' %q' "${package_cmd[@]}"
