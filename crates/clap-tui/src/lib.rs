@@ -9,10 +9,18 @@
 //! You can keep `clap` as the source of truth, collect input in the TUI, and then hand the
 //! selected command value back to your normal application dispatch.
 //!
+//! It reduces trial-and-error for complex CLIs by making commands, flags, and values easier to
+//! explore before execution. It also improves discoverability without changing the CLI behavior
+//! your existing scripts and docs already rely on.
+//!
 //! This crate was heavily inspired by [Trogon](https://github.com/Textualize/trogon).
 //! `clap-tui` is a community crate and is not an official `clap` project.
 //!
+//! ![clap-tui hero screenshot](https://raw.githubusercontent.com/gitseti/clap-tui/main/docs/assets/hero.png)
+//!
 //! # Quick Start
+//!
+//! Add a `Tui` subcommand and delegate to [`Tui::run`].
 //!
 //! The recommended integration model is to define a normal `tui` subcommand in your own CLI and
 //! run [`Tui`] from that dispatch branch:
@@ -54,12 +62,15 @@
 //!
 //! # Choosing An Entry Point
 //!
-//! You probably want [`Tui`].
+//! Use [`Tui`] (recommended).
 //!
 //! - Use [`Tui::<T>::run()`][Tui::run] when you want typed results from a derive-based parser.
-//! - Use [`TuiApp`] when you are working directly with a hand-built [`clap::Command`].
+//! - Use [`TuiApp`] when you are working directly with a hand-built [`clap::Command`] or need a
+//!   lower-level integration surface.
 //!
 //! # Typed Outcomes
+//!
+//! You can also use [`Tui`] with a single struct instead of an enum:
 //!
 //! ```no_run
 //! use clap::Parser;
@@ -81,30 +92,35 @@
 //! ```
 //!
 //! [`Tui::run`] returns:
-//! - `Ok(Some(T))` when the user submits a valid command
-//! - `Ok(None)` when the user cancels before submission
-//! - `Err(TuiError::Clap(_))` for clap help, version, and parse-display flows
-//! - another [`TuiError`] variant for runtime, terminal, or internal failures
+//! - `Some(T)` when the user submits a valid command
+//! - `None` when the user cancels before submission
+//! - `Err(TuiError)` for runtime failures or clap-driven flows such as help and version handling
 //!
-//! # Feature Flags And Runtime Expectations
+//! See [`TuiError`] for the detailed error taxonomy.
+//!
+//! # Feature Flags
 //!
 //! - The default `mouse` feature enables mouse capture and mouse-driven controls.
-//! - The default [`CrosstermRuntime`] expects an interactive terminal with raw mode and an
-//!   alternate screen.
+//!
+//! # Runtime Expectations
+//!
+//! - The default [`CrosstermRuntime`] requires a terminal supporting raw mode and an alternate
+//!   screen.
 //!
 //! # Customization
 //!
 //! - [`TuiConfig`] controls theme, layout, key bindings, and initial command selection.
 //! - [`Theme`] and [`ThemePreset`] help you start from a built-in look and adjust from there.
-//! - [`Runtime`] plus the exported runtime event types support advanced integration.
+//! - [`Runtime`] plus the exported runtime event types support custom event loops or embedding into
+//!   existing runtimes.
 //!
 //! # Examples
 //!
 //! The crate ships with four public examples:
-//! - `simple` for the smallest explicit `Command::Tui` setup
-//! - `showcase` for a compact CLI that demonstrates nested commands, dropdowns, and text input
-//! - `subcommands` for explicit typed dispatch with nested command trees
-//! - `kitchen_sink` for the untyped [`TuiApp`] surface and broader `clap` coverage
+//! - `simple` for minimal `Command::Tui` setup
+//! - `showcase` for nested commands and common UI elements
+//! - `subcommands` for typed dispatch across command trees
+//! - `kitchen_sink` for the full [`TuiApp`] surface
 
 mod app;
 mod argv_serializer;

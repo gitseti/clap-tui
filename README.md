@@ -2,6 +2,8 @@
 
 `clap-tui` turns a `clap` CLI into an interactive terminal UI while preserving the original command-line interface. You can keep `clap` as the source of truth, collect input in a terminal form, and then continue your normal application dispatch with the selected typed command value.
 
+It reduces trial-and-error for complex CLIs by making commands, flags, and values easier to explore before execution. It also improves discoverability without changing the CLI behavior your existing scripts and docs already rely on.
+
 This crate was heavily inspired by [Trogon](https://github.com/Textualize/trogon). `clap-tui` is a community crate and is not an official `clap` project.
 
 ![clap-tui hero screenshot](docs/assets/hero.png)
@@ -17,6 +19,8 @@ clap-tui = "0.1.0"
 Minimum supported Rust version: `1.85`.
 
 ## Quick start
+
+Add a `Tui` subcommand and delegate to `Tui::run()`.
 
 The recommended 0.1.0 integration model is an explicit `Command::Tui` dispatch branch that calls `Tui::<Command>::run()`.
 
@@ -57,20 +61,21 @@ fn main() -> Result<(), clap_tui::TuiError> {
 
 `Tui::<T>::run()` returns:
 
-- `Ok(Some(T))` when the user submits a valid command
-- `Ok(None)` when the user cancels before submission
-- `Err(TuiError::Clap(_))` for clap help, version, and parse-display flows after argv exists
-- another `TuiError` variant for terminal, rendering, runtime, or internal failures
+- `Some(T)` when the user submits a valid command
+- `None` when the user cancels before submission
+- `Err(TuiError)` for runtime failures or clap-driven flows such as help and version handling
+
+See `TuiError` for the detailed error taxonomy.
 
 ## Choose an entrypoint
 
-- Use `Tui::<T>::run()` when you want typed results from a derive-based clap parser.
-- Use `TuiApp::from_command(...)` when you already have a hand-built `clap::Command` and want the untyped argv or `ArgMatches` flow.
+- Use `Tui::<T>::run()` (recommended) when you want typed results from a derive-based clap parser.
+- Use `TuiApp::from_command(...)` when you already have a hand-built `clap::Command` or need the lower-level untyped argv or `ArgMatches` flow.
 
 ## Supported customization seams
 
 - `TuiConfig` controls theme, layout, key bindings, and initial command selection.
-- `TuiApp::with_runtime(...)` and the exported `Runtime` event types support advanced runtime integration.
+- `TuiApp::with_runtime(...)` and the exported `Runtime` event types support custom event loops or embedding into existing runtimes.
 - `TuiConfig.start_command` lets you preselect a command path such as `build::release`.
 
 Internal reducers, projections, render helpers, and other support modules are not stable extension points.
@@ -81,17 +86,17 @@ Internal reducers, projections, render helpers, and other support modules are no
 
 ## Terminal expectations
 
-- `clap-tui` is designed for interactive terminals that support raw mode and an alternate screen.
+- `clap-tui` requires an interactive terminal that supports raw mode and an alternate screen.
 - The default `CrosstermRuntime` restores the terminal before returning, including when the user cancels.
 - Mouse interactions require the default `mouse` feature.
 - Validation stays inside the TUI flow: invalid forms show inline feedback instead of returning partially parsed values.
 
 ## Example guide
 
-- `simple` shows the smallest explicit `Command::Tui` setup.
-- `showcase` is the best starting point for demos and screenshots: it shows nested commands, dropdowns, text input, shared global fields, and a readable preview.
-- `subcommands` shows explicit typed dispatch for a CLI with nested command trees.
-- `kitchen_sink` demonstrates the untyped `TuiApp::from_command(...)` path and a wider range of `clap` surface area.
+- `simple` shows minimal `Command::Tui` setup.
+- `showcase` shows nested commands and common UI elements.
+- `subcommands` shows typed dispatch across command trees.
+- `kitchen_sink` shows the full `TuiApp::from_command(...)` surface.
 
 ```bash
 cargo run -p clap-tui --example simple -- tui
