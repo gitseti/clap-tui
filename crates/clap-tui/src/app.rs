@@ -147,6 +147,21 @@ impl<T, R: Runtime> Tui<T, R>
 where
     T: Parser + CommandFactory,
 {
+    /// Hide a matching top-level entrypoint subcommand from the rendered TUI.
+    ///
+    /// This only changes the command tree used to build the TUI. Typed reparsing after submit
+    /// still uses the original clap parser type `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TuiError::UnknownEntrypoint`] when `name` does not match a canonical top-level
+    /// subcommand name on the render command.
+    pub fn hide_entrypoint(mut self, name: impl Into<String>) -> Result<Self, TuiError> {
+        let name = name.into();
+        hide_top_level_entrypoint(&mut self.inner.command, &name)?;
+        Ok(self)
+    }
+
     /// Apply configuration before the TUI starts.
     #[must_use]
     pub fn with_config(self, config: TuiConfig) -> Self {
@@ -192,6 +207,29 @@ where
 
 fn parse_result<T>(result: Result<T, clap::Error>) -> Result<T, TuiError> {
     result.map_err(TuiError::from)
+}
+
+fn hide_top_level_entrypoint(command: &mut Command, name: &str) -> Result<(), TuiError> {
+    let candidates = top_level_entrypoint_candidates(command);
+
+    for subcommand in command.get_subcommands_mut() {
+        if subcommand.get_name() == name {
+            *subcommand = subcommand.clone().hide(true);
+            return Ok(());
+        }
+    }
+
+    Err(TuiError::UnknownEntrypoint {
+        name: name.to_string(),
+        candidates,
+    })
+}
+
+fn top_level_entrypoint_candidates(command: &Command) -> Vec<String> {
+    command
+        .get_subcommands()
+        .map(|subcommand| subcommand.get_name().to_string())
+        .collect()
 }
 
 fn run_matches_handler<F, E>(
@@ -762,6 +800,110 @@ mod tests {
     }
 
     #[test]
+    fn hide_entrypoint_hides_a_matching_top_level_subcommand_from_the_render_tree() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        enum Cli {
+            Tui,
+            Hello {
+                #[arg(long, default_value = "world")]
+                name: String,
+            },
+        }
+
+        let app = super::Tui::<Cli>::new()
+            .hide_entrypoint("tui")
+            .expect("top-level entrypoint should exist");
+        let spec = crate::spec::CommandSpec::from_command(&app.inner.command);
+
+        assert!(
+            spec.subcommands
+                .iter()
+                .all(|subcommand| subcommand.name != "tui")
+        );
+        assert!(
+            app.inner
+                .command
+                .get_subcommands()
+                .all(|subcommand| subcommand.get_name() != "tui" || subcommand.is_hide_set())
+        );
+    }
+
+    #[test]
+    fn hide_entrypoint_returns_unknown_entrypoint_with_candidates() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        enum Cli {
+            Tui,
+            Build,
+            Serve,
+        }
+
+        let Err(error) = super::Tui::<Cli>::new().hide_entrypoint("missing") else {
+            panic!("missing entrypoint should fail");
+        };
+
+        assert!(matches!(
+            error,
+            TuiError::UnknownEntrypoint { ref name, ref candidates }
+                if name == "missing" && candidates == &vec![
+                    "tui".to_string(),
+                    "build".to_string(),
+                    "serve".to_string()
+                ]
+        ));
+    }
+
+    #[test]
+    fn hide_entrypoint_does_not_match_aliases() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        enum Cli {
+            #[command(visible_alias = "interactive")]
+            Tui,
+            Build,
+        }
+
+        let Err(error) = super::Tui::<Cli>::new().hide_entrypoint("interactive") else {
+            panic!("aliases should not match");
+        };
+
+        assert!(matches!(
+            error,
+            TuiError::UnknownEntrypoint { ref name, ref candidates }
+                if name == "interactive" && candidates == &vec![
+                    "tui".to_string(),
+                    "build".to_string()
+                ]
+        ));
+    }
+
+    #[test]
+    fn hide_entrypoint_can_be_applied_twice() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        enum Cli {
+            Tui,
+            Build,
+        }
+
+        let app = super::Tui::<Cli>::new()
+            .hide_entrypoint("tui")
+            .expect("first hide should succeed")
+            .hide_entrypoint("tui")
+            .expect("second hide should also succeed");
+
+        let hidden = app
+            .inner
+            .command
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "tui")
+            .expect("tui subcommand should still exist");
+
+        assert!(hidden.is_hide_set());
+    }
+
+    #[test]
     fn tui_run_returns_none_on_cancel() {
         #[derive(Debug, clap::Parser, PartialEq, Eq)]
         #[command(name = "tool", version = "1.2.3")]
@@ -790,6 +932,46 @@ mod tests {
             .expect_err("version display should be returned");
         assert!(
             matches!(error, TuiError::Clap(ref clap_error) if clap_error.kind() == ErrorKind::DisplayVersion)
+        );
+    }
+
+    #[test]
+    fn tui_run_reparses_selected_command_after_hiding_entrypoint() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        enum Cli {
+            Tui,
+            Hello {
+                #[arg(long, default_value = "world")]
+                name: String,
+            },
+        }
+
+        let runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('r'),
+            AppKeyModifiers {
+                control: true,
+                ..AppKeyModifiers::default()
+            },
+        ))]);
+
+        let config = TuiConfig {
+            start_command: Some("hello".to_string()),
+            ..TuiConfig::default()
+        };
+
+        let result = super::Tui::<Cli, _>::new()
+            .hide_entrypoint("tui")
+            .expect("entrypoint should exist")
+            .with_config(config)
+            .with_runtime(runtime)
+            .run();
+
+        assert_eq!(
+            result.expect("typed run should succeed"),
+            Some(Cli::Hello {
+                name: "world".to_string()
+            })
         );
     }
 

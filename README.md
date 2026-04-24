@@ -22,7 +22,7 @@ Minimum supported Rust version: `1.85`.
 
 Add a `Tui` subcommand and delegate to `Tui::run()`.
 
-The recommended 0.1.0 integration model is an explicit `Command::Tui` dispatch branch that calls `Tui::<Command>::run()`.
+The recommended 0.1.0 integration model is an explicit `Command::Tui` dispatch branch that calls `Tui::<Command>::hide_entrypoint("tui")?.run()`.
 
 ```rust
 use clap::Parser;
@@ -48,7 +48,7 @@ fn dispatch(command: Command) {
 fn main() -> Result<(), clap_tui::TuiError> {
     match Command::parse() {
         Command::Tui => {
-            if let Some(command) = Tui::<Command>::new().run()? {
+            if let Some(command) = Tui::<Command>::new().hide_entrypoint("tui")?.run()? {
                 dispatch(command);
             }
         }
@@ -93,7 +93,7 @@ Internal reducers, projections, render helpers, and other support modules are no
 
 ## Example guide
 
-- `simple` shows minimal `Command::Tui` setup.
+- `simple` shows minimal `Command::Tui` setup with the entrypoint hidden from the rendered TUI.
 - `showcase` shows nested commands and common UI elements.
 - `subcommands` shows typed dispatch across command trees.
 - `kitchen_sink` shows the full `TuiApp::from_command(...)` surface.

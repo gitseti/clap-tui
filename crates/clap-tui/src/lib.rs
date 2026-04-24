@@ -49,7 +49,7 @@
 //! fn main() -> Result<(), clap_tui::TuiError> {
 //!     match Command::parse() {
 //!         Command::Tui => {
-//!             if let Some(command) = Tui::<Command>::new().run()? {
+//!             if let Some(command) = Tui::<Command>::new().hide_entrypoint("tui")?.run()? {
 //!                 dispatch(command);
 //!             }
 //!         }

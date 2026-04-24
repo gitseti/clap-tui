@@ -19,4 +19,23 @@ pub enum TuiError {
     /// normalize this into `Ok(None)` or let callers decide what cancellation means.
     #[error("cancelled")]
     Cancelled,
+    /// Requested entrypoint subcommand does not exist on the top-level render command.
+    #[error("{}", unknown_entrypoint_message(name, candidates))]
+    UnknownEntrypoint {
+        /// Requested canonical top-level subcommand name.
+        name: String,
+        /// Available canonical top-level subcommand names in declaration order.
+        candidates: Vec<String>,
+    },
+}
+
+fn unknown_entrypoint_message(name: &str, candidates: &[String]) -> String {
+    if candidates.is_empty() {
+        format!("unknown TUI entrypoint `{name}`; no top-level subcommands are available")
+    } else {
+        format!(
+            "unknown TUI entrypoint `{name}`; expected one of: {}",
+            candidates.join(", ")
+        )
+    }
 }
