@@ -1,14 +1,11 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, ValueEnum};
+use clap_tui::Tui;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, PartialEq, Eq)]
 #[command(name = "tool", about = "Subcommand example", version = "0.1.0")]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Debug, Subcommand)]
-enum Commands {
+enum Command {
+    /// Launch the interactive TUI
+    Tui,
     Build {
         #[arg(short, long)]
         release: bool,
@@ -25,15 +22,29 @@ enum Commands {
     },
 }
 
-#[derive(Debug, Copy, Clone, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 enum Color {
     Red,
     Green,
     Blue,
 }
 
-#[clap_tui::main]
-fn main(cli: Cli) -> Result<(), clap_tui::TuiError> {
-    println!("Selected: {:?}", cli.command);
+fn dispatch(command: Command) {
+    match command {
+        Command::Tui => {}
+        other => println!("Selected: {other:?}"),
+    }
+}
+
+fn main() -> Result<(), clap_tui::TuiError> {
+    match Command::parse() {
+        Command::Tui => {
+            if let Some(command) = Tui::<Command>::new().run()? {
+                dispatch(command);
+            }
+        }
+        command => dispatch(command),
+    }
+
     Ok(())
 }

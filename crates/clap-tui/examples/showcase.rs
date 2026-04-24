@@ -1,41 +1,46 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap_tui::Tui;
 use std::str::FromStr;
 use std::time::Duration;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, PartialEq, Eq)]
 #[command(
     name = "showcase",
     about = "Compact showcase for nested commands, dropdowns, and text input",
     version = "0.1.0"
 )]
-struct Cli {
-    /// Shared deployment profile
-    #[arg(long, value_enum, default_value_t = Profile::Preview, global = true)]
-    profile: Profile,
-
-    /// Team or project name
-    #[arg(long, default_value = "checkout", global = true)]
-    team: String,
-
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Debug, Subcommand)]
-enum Commands {
+enum Command {
+    /// Launch the interactive TUI
+    Tui,
     /// Deploy an application target
     Deploy {
+        /// Shared deployment profile
+        #[arg(long, value_enum, default_value_t = Profile::Preview, global = true)]
+        profile: Profile,
+
+        /// Team or project name
+        #[arg(long, default_value = "checkout", global = true)]
+        team: String,
+
         #[command(subcommand)]
         target: DeployTarget,
     },
     /// Inspect logs for a running target
     Logs {
+        /// Shared deployment profile
+        #[arg(long, value_enum, default_value_t = Profile::Preview, global = true)]
+        profile: Profile,
+
+        /// Team or project name
+        #[arg(long, default_value = "checkout", global = true)]
+        team: String,
+
         #[command(subcommand)]
         target: LogsTarget,
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, PartialEq, Eq)]
 enum DeployTarget {
     /// Deploy the web application
     Web(ReleaseOptions),
@@ -43,7 +48,7 @@ enum DeployTarget {
     Worker(ReleaseOptions),
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, PartialEq, Eq)]
 enum LogsTarget {
     /// Inspect web logs
     Web(LogOptions),
@@ -51,7 +56,7 @@ enum LogsTarget {
     Worker(LogOptions),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, PartialEq, Eq)]
 struct ReleaseOptions {
     /// Deployment environment
     #[arg(long, value_enum, default_value_t = Environment::Staging)]
@@ -74,7 +79,7 @@ struct ReleaseOptions {
     canary: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, PartialEq, Eq)]
 struct LogOptions {
     /// Environment to inspect
     #[arg(long, value_enum, default_value_t = Environment::Staging)]
@@ -92,28 +97,28 @@ struct LogOptions {
     follow: bool,
 }
 
-#[derive(Debug, Copy, Clone, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 enum Profile {
     Preview,
     Team,
     Production,
 }
 
-#[derive(Debug, Copy, Clone, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 enum Environment {
     Dev,
     Staging,
     Production,
 }
 
-#[derive(Debug, Copy, Clone, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 enum Region {
     UsEast1,
     EuCentral1,
     ApSouth1,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Since(pub Duration);
 
 impl FromStr for Since {
@@ -142,8 +147,22 @@ impl FromStr for Since {
     }
 }
 
-#[clap_tui::main]
-fn main(cli: Cli) -> Result<(), clap_tui::TuiError> {
-    println!("{cli:#?}");
+fn dispatch(command: Command) {
+    match command {
+        Command::Tui => {}
+        other => println!("{other:#?}"),
+    }
+}
+
+fn main() -> Result<(), clap_tui::TuiError> {
+    match Command::parse() {
+        Command::Tui => {
+            if let Some(command) = Tui::<Command>::new().run()? {
+                dispatch(command);
+            }
+        }
+        command => dispatch(command),
+    }
+
     Ok(())
 }

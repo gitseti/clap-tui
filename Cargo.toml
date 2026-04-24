@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/clap-tui", "crates/clap-tui-macros", "xtask"]
+members = ["crates/clap-tui", "xtask"]
 resolver = "2"
 
 [workspace.package]
@@ -10,8 +10,5 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive", "env", "string"] }
 ratatui = "0.28"
-crossterm = "0.27"
+crossterm = "0.28"
 thiserror = "1"
-proc-macro2 = "1"
-quote = "1"
-syn = { version = "2", features = ["full"] }

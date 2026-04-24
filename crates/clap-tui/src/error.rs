@@ -15,28 +15,8 @@ pub enum TuiError {
     Runner(Box<dyn std::error::Error + Send + Sync>),
     /// Lower-level TUI flow exited without running.
     ///
-    /// Higher-level entry points such as `TuiApp::run`, `TypedTuiApp::run`,
-    /// `run_with_matches`, and `run_with_parser` normalize this into `Ok(None)` or `Ok(())`.
+    /// Higher-level entry points such as `TuiApp::run`, `Tui::run`, and `run_with_matches`
+    /// normalize this into `Ok(None)` or let callers decide what cancellation means.
     #[error("cancelled")]
     Cancelled,
-    /// Synthetic launcher name is invalid.
-    #[error("invalid synthetic launcher name `{name}`: {reason}")]
-    InvalidLauncherName {
-        /// The configured synthetic launcher name.
-        name: String,
-        /// Why the launcher name cannot be used.
-        reason: String,
-    },
-    /// Synthetic launcher conflicts with an existing root command path.
-    #[error("synthetic launcher conflicts with existing root command path `{path}`")]
-    LauncherConflict {
-        /// The conflicting root command path, such as `tool tui`.
-        path: String,
-    },
-    /// Synthetic launcher cannot attach safely to the root command grammar.
-    #[error("synthetic launcher is ambiguous for this root command: {reason}")]
-    AmbiguousLauncherAttachment {
-        /// Why the root clap grammar makes synthetic launcher attachment ambiguous.
-        reason: String,
-    },
 }

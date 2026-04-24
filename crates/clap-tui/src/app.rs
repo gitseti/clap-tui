@@ -3,7 +3,6 @@ use std::ffi::OsString;
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use clap::error::ErrorKind;
 use clap::{Command, CommandFactory, Parser};
 use ratatui::Frame;
 
@@ -18,7 +17,7 @@ use crate::update::{self, Effect};
 
 /// Build and run a TUI from a hand-built [`clap::Command`].
 ///
-/// Use [`crate::TuiLauncher`] for most derive-based CLIs.
+/// Use [`crate::Tui`] for derive-based CLIs that want typed results.
 /// Use `TuiApp` when you are already building a [`clap::Command`] by hand, or when you want
 /// the untyped surface that returns argv or `ArgMatches`.
 pub struct TuiApp<R: Runtime = CrosstermRuntime> {
@@ -29,11 +28,9 @@ pub struct TuiApp<R: Runtime = CrosstermRuntime> {
 
 /// Direct typed TUI execution for a derive-based `clap` parser.
 ///
-/// Use `TypedTuiApp` when you want to launch the TUI directly and parse the selected argv back
-/// into the same parser type, without adding a synthetic `tool tui` launcher to your CLI.
-///
-/// Most derive-based applications should prefer [`crate::TuiLauncher`].
-pub struct TypedTuiApp<T, R: Runtime = CrosstermRuntime> {
+/// `Tui::<T>::run()` is the primary explicit integration surface for applications that define
+/// their own `Command::Tui` dispatch branch and want the selected command value back as `T`.
+pub struct Tui<T, R: Runtime = CrosstermRuntime> {
     inner: TuiApp<R>,
     _parser: PhantomData<fn() -> T>,
 }
@@ -47,14 +44,6 @@ impl TuiApp<CrosstermRuntime> {
             config: TuiConfig::default(),
             runtime: CrosstermRuntime,
         }
-    }
-
-    /// Create a typed app from a derive-based parser.
-    ///
-    /// This is the direct-run alternative to [`crate::TuiLauncher`].
-    #[must_use]
-    pub fn from_parser<T: Parser + CommandFactory>() -> TypedTuiApp<T, CrosstermRuntime> {
-        TypedTuiApp::new()
     }
 }
 
@@ -131,7 +120,7 @@ impl<R: Runtime> TuiApp<R> {
     }
 }
 
-impl<T> TypedTuiApp<T, CrosstermRuntime>
+impl<T> Tui<T, CrosstermRuntime>
 where
     T: Parser + CommandFactory,
 {
@@ -145,7 +134,7 @@ where
     }
 }
 
-impl<T> Default for TypedTuiApp<T, CrosstermRuntime>
+impl<T> Default for Tui<T, CrosstermRuntime>
 where
     T: Parser + CommandFactory,
 {
@@ -154,7 +143,7 @@ where
     }
 }
 
-impl<T, R: Runtime> TypedTuiApp<T, R>
+impl<T, R: Runtime> Tui<T, R>
 where
     T: Parser + CommandFactory,
 {
@@ -169,67 +158,29 @@ where
 
     /// Replace the default runtime.
     #[must_use]
-    pub fn with_runtime<NR: Runtime>(self, runtime: NR) -> TypedTuiApp<T, NR> {
-        TypedTuiApp {
+    pub fn with_runtime<NR: Runtime>(self, runtime: NR) -> Tui<T, NR> {
+        Tui {
             inner: self.inner.with_runtime(runtime),
             _parser: PhantomData,
         }
     }
 
-    /// Run the TUI and return the selected canonical argv.
+    /// Run the TUI and parse the submitted command into the bound parser type.
     ///
-    /// The returned argv is the executable token sequence. Preview and clipboard text are
-    /// rendered separately from these tokens, using POSIX shell quoting on Unix platforms and
-    /// `PowerShell` quoting on Windows.
-    ///
-    /// Returns `Ok(Some(argv))` when the user runs a valid command and `Ok(None)` when the
-    /// user exits without running. Validation stays inside the TUI flow, so invalid form
-    /// state is surfaced in-app rather than returned as a clap error from this method.
+    /// Returns `Ok(Some(parsed))` when the user submits a valid command and `Ok(None)` when the
+    /// user exits without submitting. If clap reparsing produces help, version, or parse-display
+    /// behavior, this method returns `Err(TuiError::Clap(_))` without printing automatically or
+    /// calling `std::process::exit`.
     ///
     /// # Errors
     ///
-    /// Returns an error when terminal setup or event handling fails.
-    pub fn run(self) -> Result<Option<Vec<OsString>>, TuiError> {
-        self.inner.run()
-    }
-
-    /// Run the TUI and execute a custom handler with `ArgMatches`.
-    ///
-    /// Returns `Ok(())` when the user exits without running. When the user does run, this
-    /// method reparses the selected argv with the bound command schema before calling the
-    /// handler.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when terminal setup or event handling fails, when reparsing the
-    /// selected argv with clap fails, or when the runner callback fails.
-    pub fn run_with_matches<F, E>(self, runner: F) -> Result<(), TuiError>
-    where
-        F: FnOnce(clap::ArgMatches) -> Result<(), E>,
-        E: StdError + Send + Sync + 'static,
-    {
-        self.inner.run_with_matches(runner)
-    }
-
-    /// Run the TUI and parse into the bound parser type.
-    ///
-    /// Returns `Ok(())` when the user exits without running. When the user does run, this
-    /// method reparses the selected argv with the bound parser type before calling the
-    /// handler.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when terminal setup or event handling fails, when reparsing the
-    /// selected argv with the bound parser fails, or when the runner callback fails.
-    pub fn run_with_parser<F, E>(self, runner: F) -> Result<(), TuiError>
-    where
-        F: FnOnce(T) -> Result<(), E>,
-        E: StdError + Send + Sync + 'static,
-    {
-        let Some(argv) = self.run()? else {
-            return Ok(());
+    /// Returns an error when terminal setup, rendering, runtime integration, or clap reparsing
+    /// fails.
+    pub fn run(self) -> Result<Option<T>, TuiError> {
+        let Some(argv) = self.inner.run()? else {
+            return Ok(None);
         };
-        run_parser_handler::<T, _, _>(argv, runner)
+        parse_result(T::try_parse_from(argv)).map(Some)
     }
 
     /// Drop down to the untyped app surface when only argv or `ArgMatches` execution is needed.
@@ -239,15 +190,8 @@ where
     }
 }
 
-fn parse_or_display<T>(result: Result<T, clap::Error>) -> Result<Option<T>, TuiError> {
-    match result {
-        Ok(parsed) => Ok(Some(parsed)),
-        Err(error) if error.kind() == ErrorKind::DisplayVersion => {
-            error.print()?;
-            Ok(None)
-        }
-        Err(error) => Err(error.into()),
-    }
+fn parse_result<T>(result: Result<T, clap::Error>) -> Result<T, TuiError> {
+    result.map_err(TuiError::from)
 }
 
 fn run_matches_handler<F, E>(
@@ -259,22 +203,8 @@ where
     F: FnOnce(clap::ArgMatches) -> Result<(), E>,
     E: StdError + Send + Sync + 'static,
 {
-    let Some(matches) = parse_or_display(command.try_get_matches_from(argv))? else {
-        return Ok(());
-    };
+    let matches = parse_result(command.try_get_matches_from(argv))?;
     runner(matches).map_err(|err| TuiError::Runner(Box::new(err)))
-}
-
-fn run_parser_handler<T, F, E>(argv: Vec<OsString>, runner: F) -> Result<(), TuiError>
-where
-    T: Parser,
-    F: FnOnce(T) -> Result<(), E>,
-    E: StdError + Send + Sync + 'static,
-{
-    let Some(parsed) = parse_or_display(T::try_parse_from(argv))? else {
-        return Ok(());
-    };
-    runner(parsed).map_err(|err| TuiError::Runner(Box::new(err)))
 }
 
 fn event_loop<R: Runtime>(
@@ -559,7 +489,8 @@ mod tests {
     use std::ffi::OsString;
     use std::time::{Duration, Instant};
 
-    use clap::{Arg, ArgAction, Command};
+    use clap::error::ErrorKind;
+    use clap::{Arg, ArgAction, Command, Parser};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -784,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn run_matches_handler_treats_version_display_as_success_and_skips_runner() {
+    fn run_matches_handler_returns_clap_display_errors_without_running_callback() {
         let mut called = false;
 
         let result = super::run_matches_handler(
@@ -796,30 +727,15 @@ mod tests {
             },
         );
 
-        assert!(result.is_ok());
+        let error = result.expect_err("version display should be returned");
+        assert!(
+            matches!(error, TuiError::Clap(ref clap_error) if clap_error.kind() == ErrorKind::DisplayVersion)
+        );
         assert!(!called);
     }
 
     #[test]
-    fn run_parser_handler_treats_version_display_as_success_and_skips_runner() {
-        #[derive(clap::Parser)]
-        #[command(name = "tool", version = "1.2.3")]
-        struct Cli;
-
-        let mut called = false;
-
-        let result =
-            super::run_parser_handler::<Cli, _, _>(os_vec(&["tool", "--version"]), |_cli| {
-                called = true;
-                Ok::<_, std::io::Error>(())
-            });
-
-        assert!(result.is_ok());
-        assert!(!called);
-    }
-
-    #[test]
-    fn typed_tui_app_runs_with_its_bound_parser_type() {
+    fn tui_run_returns_typed_value_on_submit() {
         #[derive(Debug, clap::Parser, PartialEq, Eq)]
         #[command(name = "tool")]
         struct Cli {
@@ -835,21 +751,85 @@ mod tests {
             },
         ))]);
 
-        let mut parsed = None;
-        let result = super::TuiApp::from_parser::<Cli>()
-            .with_runtime(runtime)
-            .run_with_parser(|cli| {
-                parsed = Some(cli);
-                Ok::<_, std::io::Error>(())
-            });
+        let result = super::Tui::<Cli, _>::new().with_runtime(runtime).run();
 
-        assert!(result.is_ok());
         assert_eq!(
-            parsed,
+            result.expect("typed run should succeed"),
             Some(Cli {
                 name: "world".to_string()
             })
         );
+    }
+
+    #[test]
+    fn tui_run_returns_none_on_cancel() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool", version = "1.2.3")]
+        struct Cli;
+
+        let runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('c'),
+            AppKeyModifiers {
+                control: true,
+                ..AppKeyModifiers::default()
+            },
+        ))]);
+
+        let result = super::Tui::<Cli, _>::new().with_runtime(runtime).run();
+
+        assert_eq!(result.expect("cancel should map to None"), None);
+    }
+
+    #[test]
+    fn tui_run_returns_clap_display_errors_without_printing() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool", version = "1.2.3")]
+        struct Cli;
+
+        let error = super::parse_result(Cli::try_parse_from(os_vec(&["tool", "--version"])))
+            .expect_err("version display should be returned");
+        assert!(
+            matches!(error, TuiError::Clap(ref clap_error) if clap_error.kind() == ErrorKind::DisplayVersion)
+        );
+    }
+
+    #[test]
+    fn tui_run_propagates_runtime_failures() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        struct Cli;
+
+        #[derive(Debug)]
+        struct FailingRuntime;
+
+        impl Runtime for FailingRuntime {
+            type Backend = TestBackend;
+
+            fn init_terminal(&mut self) -> Result<Terminal<Self::Backend>, TuiError> {
+                Err(std::io::Error::other("boom").into())
+            }
+
+            fn restore_terminal(&mut self, _terminal: &mut Terminal<Self::Backend>) {}
+
+            fn poll_event(&mut self, _timeout: Duration) -> Result<bool, TuiError> {
+                unreachable!("terminal initialization should fail first")
+            }
+
+            fn read_event(&mut self) -> Result<AppEvent, TuiError> {
+                unreachable!("terminal initialization should fail first")
+            }
+
+            fn copy_to_clipboard(&mut self, _text: &str) -> Result<(), String> {
+                unreachable!("terminal initialization should fail first")
+            }
+        }
+
+        let error = super::Tui::<Cli, _>::new()
+            .with_runtime(FailingRuntime)
+            .run()
+            .expect_err("runtime failure should propagate");
+
+        assert!(matches!(error, TuiError::Terminal(_)));
     }
 
     #[test]

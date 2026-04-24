@@ -37,24 +37,6 @@ jobs:
       - name: Re-run release-readiness verification
         run: ./scripts/verify-release-readiness.sh
 
-      - name: Dry-run publish proc-macro crate
-        run: cargo publish -p clap-tui-macros --locked --dry-run
-
-      - name: Compute release plan
-        id: plan
-        run: cargo run -q -p xtask -- release-plan --github-output "${GITHUB_OUTPUT}"
-
-      - name: Show release plan
-        run: |
-          echo "clap-tui version: ${{ steps.plan.outputs.clap_tui_version }}"
-          echo "referenced clap-tui-macros requirement: ${{ steps.plan.outputs.clap_tui_macros_requirement }}"
-          echo "referenced clap-tui-macros version: ${{ steps.plan.outputs.clap_tui_macros_version }}"
-          echo "workspace clap-tui-macros manifest version: ${{ steps.plan.outputs.clap_tui_macros_manifest_version }}"
-
-      - name: Confirm referenced proc-macro version is already published
-        if: ${{ vars.CLAP_TUI_PUBLISH_MODE == 'trusted-publishing' || vars.CLAP_TUI_PUBLISH_MODE == 'token' }}
-        run: cargo run -q -p xtask -- check-crate-version-published clap-tui-macros "${{ steps.plan.outputs.clap_tui_macros_version }}"
-
       - name: Run crates.io publish dry-run when publishing is enabled
         if: ${{ vars.CLAP_TUI_PUBLISH_MODE == 'trusted-publishing' || vars.CLAP_TUI_PUBLISH_MODE == 'token' }}
         run: ./scripts/verify-release-readiness.sh --publish-dry-run
@@ -86,7 +68,5 @@ jobs:
         run: |
           echo "Tag validation and pre-publish verification passed."
           echo "Publishing is intentionally disabled until the release prerequisites are complete."
-          echo "When you enable publishing, the workflow will require clap-tui-macros ${{ steps.plan.outputs.clap_tui_macros_version }} to already exist on crates.io."
-          echo "Publish any required clap-tui-macros version independently first."
-          echo "Then set CLAP_TUI_PUBLISH_MODE=trusted-publishing for the default OIDC path,"
+          echo "Set CLAP_TUI_PUBLISH_MODE=trusted-publishing for the default OIDC path,"
           echo "or CLAP_TUI_PUBLISH_MODE=token with CRATES_IO_TOKEN as the explicit fallback."

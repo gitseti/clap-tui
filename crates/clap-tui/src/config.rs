@@ -249,7 +249,7 @@ impl Default for LayoutConfig {
     }
 }
 
-/// Top-level configuration for [`crate::TuiLauncher`], [`crate::TypedTuiApp`], and [`crate::TuiApp`].
+/// Top-level configuration for [`crate::Tui`] and [`crate::TuiApp`].
 ///
 /// Most applications only need to customize the theme or `start_command`.
 #[derive(Debug, Clone, Default)]
