@@ -14,14 +14,16 @@ use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ArgInput, ArgInputState, ArgValue, Focus, InputSource, UiState};
 use crate::pipeline::{EffectiveArgValue, EffectiveValueSource};
 use crate::query::form::{self, FieldWidget, field_metrics};
+use crate::repeated_field::{
+    project_repeated_field, repeated_add_rect, repeated_input_height, repeated_remove_rect,
+    repeated_row_textarea_rect,
+};
 use crate::spec::{ArgSpec, choice_value_matches_default, format_command_path};
 
 use super::{screen::ScreenView, styles};
 
 const REPEATED_CONTROL_REMOVE: &str = " - ";
 const REPEATED_CONTROL_ADD: &str = " + ";
-const REPEATED_CONTROL_WIDTH: u16 = 8;
-const REPEATED_ROW_HEIGHT: u16 = 3;
 
 #[allow(dead_code)]
 pub(crate) fn populate_layout(
@@ -121,19 +123,10 @@ fn repeated_input_height_overrides(ui: &UiState, vm: &ScreenView<'_>) -> HashMap
             let current_value = effective_compatibility_value(vm, item.arg);
             let selected_values = effective_selected_values(vm, item.arg);
             let value = display_value(item.widget, current_value.as_ref(), &selected_values);
-            let editor =
-                form_editor::editor_for_render(ui, item.arg.owner_path(), item.arg, &value);
-            let rows = editor.row_count().max(1);
-            let input_height = if rows <= 1 {
-                field_metrics(item.arg)
-                    .input_height
-                    .min(REPEATED_ROW_HEIGHT)
-            } else {
-                u16::try_from(rows)
-                    .unwrap_or(u16::MAX)
-                    .saturating_mul(REPEATED_ROW_HEIGHT)
-            };
-            (item.arg.id.clone(), input_height)
+            (
+                item.arg.id.clone(),
+                repeated_input_height(ui, item.arg, &value),
+            )
         })
         .collect()
 }
@@ -434,17 +427,7 @@ fn compact_placeholder(_arg: &ArgSpec, widget: FieldWidget, required: bool) -> &
 
 fn expected_input_height(ui: &UiState, arg: &ArgSpec, widget: FieldWidget, value: &str) -> u16 {
     match widget {
-        FieldWidget::RepeatedText => {
-            let editor = form_editor::editor_for_render(ui, arg.owner_path(), arg, value);
-            let rows = editor.row_count().max(1);
-            if rows <= 1 {
-                field_metrics(arg).input_height.min(REPEATED_ROW_HEIGHT)
-            } else {
-                u16::try_from(rows)
-                    .unwrap_or(u16::MAX)
-                    .saturating_mul(REPEATED_ROW_HEIGHT)
-            }
-        }
+        FieldWidget::RepeatedText => repeated_input_height(ui, arg, value),
         _ => field_metrics(arg).input_height,
     }
 }
@@ -505,17 +488,29 @@ fn render_repeated_text_field(
         render_repeated_row_controls(config, frame, area, selected, false, true, true);
         return;
     }
-    let visible_rows = usize::from(area.height / REPEATED_ROW_HEIGHT).min(total_rows);
+    let projection = project_repeated_field(ui, arg, value, 0, area.x, area.width, false, 1);
+    let visible_rows =
+        usize::from(area.height / crate::repeated_field::REPEATED_ROW_HEIGHT).min(total_rows);
     if visible_rows == 0 {
         return;
     }
-    let start_row = repeated_visible_start_row(visible_rows, total_rows, input_clip_top);
+    let start_row = repeated_visible_start_row(visible_rows, projection.rows.len(), input_clip_top);
 
     for visible_index in 0..visible_rows {
         let row_index = start_row + visible_index;
-        let Some(row_rect) = repeated_row_rect(area, row_index - start_row) else {
+        let Some(row) = projection.row(row_index) else {
             continue;
         };
+        let row_rect = Rect::new(
+            area.x,
+            area.y.saturating_add(
+                u16::try_from(visible_index)
+                    .unwrap_or(u16::MAX)
+                    .saturating_mul(crate::repeated_field::REPEATED_ROW_HEIGHT),
+            ),
+            row.width,
+            row.height,
+        );
         let is_last_row = row_index + 1 == total_rows;
         let textarea_rect = repeated_row_textarea_rect(row_rect, true, is_last_row);
         let active_row = selected && row_index == current_row;
@@ -645,71 +640,10 @@ fn repeated_visible_start_row(
     input_clip_top: u16,
 ) -> usize {
     let clipped_rows = usize::from(
-        input_clip_top.saturating_add(REPEATED_ROW_HEIGHT.saturating_sub(1)) / REPEATED_ROW_HEIGHT,
+        input_clip_top.saturating_add(crate::repeated_field::REPEATED_ROW_HEIGHT.saturating_sub(1))
+            / crate::repeated_field::REPEATED_ROW_HEIGHT,
     );
     clipped_rows.min(total_rows.saturating_sub(visible_rows.min(total_rows)))
-}
-
-fn repeated_row_rect(area: Rect, visible_index: usize) -> Option<Rect> {
-    let y = area.y.saturating_add(
-        u16::try_from(visible_index)
-            .ok()?
-            .saturating_mul(REPEATED_ROW_HEIGHT),
-    );
-    if y >= area.y.saturating_add(area.height) {
-        return None;
-    }
-    Some(Rect::new(area.x, y, area.width, REPEATED_ROW_HEIGHT))
-}
-
-fn repeated_row_textarea_rect(row_rect: Rect, show_remove: bool, show_add: bool) -> Rect {
-    let with_controls = show_remove || show_add;
-    let width = if with_controls && row_rect.width > REPEATED_CONTROL_WIDTH {
-        row_rect
-            .width
-            .saturating_sub(REPEATED_CONTROL_WIDTH)
-            .saturating_sub(1)
-    } else {
-        row_rect.width
-    };
-    Rect::new(row_rect.x, row_rect.y, width, row_rect.height)
-}
-
-fn repeated_remove_rect(row_rect: Rect, show_remove: bool, show_add: bool) -> Option<Rect> {
-    if !show_remove || row_rect.height < 2 {
-        return None;
-    }
-    let strip_start = row_rect
-        .x
-        .saturating_add(row_rect.width.saturating_sub(REPEATED_CONTROL_WIDTH));
-    let x = if show_add {
-        strip_start
-    } else {
-        strip_start.saturating_add(2)
-    };
-    Some(Rect::new(
-        x,
-        row_rect
-            .y
-            .saturating_add(row_rect.height.saturating_sub(1).min(1)),
-        3,
-        1,
-    ))
-}
-
-fn repeated_add_rect(row_rect: Rect) -> Option<Rect> {
-    if row_rect.height < 2 {
-        return None;
-    }
-    let x = row_rect.x.saturating_add(row_rect.width.saturating_sub(4));
-    Some(Rect::new(
-        x,
-        row_rect
-            .y
-            .saturating_add(row_rect.height.saturating_sub(1).min(1)),
-        3,
-        1,
-    ))
 }
 
 fn field_border_style(
@@ -2055,6 +1989,66 @@ mod tests {
             terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
             "╭"
         );
+    }
+
+    #[test]
+    fn descriptions_do_not_render_when_the_field_top_row_is_scrolled_offscreen() {
+        let mut define = option_arg("define", "--define");
+        define.help = Some("Key/value pairs".to_string());
+        let mut include = option_arg("include", "--include");
+        include.help = Some("Multi-value path list".to_string());
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![define, include],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: Vec::new(),
+            rendered_command: None,
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.form_scroll = 6;
+
+        populate_layout(
+            &ui,
+            ratatui::layout::Rect::new(0, 0, 40, 4),
+            &vm,
+            &mut snapshot,
+        );
+
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("visible field layout");
+        assert_eq!(field.arg_id, "include");
+        assert!(field.label.is_none());
+        assert!(field.description.is_none());
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 4)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(!rendered.contains("Multi-value path list"));
     }
 
     #[test]

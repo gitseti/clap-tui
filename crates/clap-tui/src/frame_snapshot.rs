@@ -4,7 +4,8 @@ use ratatui::layout::{Margin, Rect};
 
 use crate::input::{ActiveTab, HoverTarget, UiState};
 use crate::pipeline::{FieldInstanceId, FieldSemantics, ValidationState};
-use crate::query::form::{self, OrderedArg};
+use crate::query::form::{self, FieldWidget, OrderedArg};
+use crate::repeated_field::project_repeated_field_with_input_height;
 use crate::spec::CommandPath;
 
 pub(crate) const MAX_DROPDOWN_ROWS: u16 = 6;
@@ -349,31 +350,81 @@ pub(crate) fn populate_form_layout(
         } else {
             None
         };
-        let input_y = y + i32::from(form::field_input_offset_with_description(
-            item.arg,
-            show_description,
-        ));
-        let Some(input) = clipped_rect(
-            input_x,
-            input_width,
-            input_y,
-            metrics.input_height,
-            content_area,
-        ) else {
-            y += i32::from(metrics.total_height);
-            previous_heading = item.section_heading.as_deref();
-            continue;
+        let repeated_projection = matches!(item.widget, FieldWidget::RepeatedText).then(|| {
+            let field_top =
+                u16::try_from((y - i32::from(content_area.y) + i32::from(form_scroll)).max(0))
+                    .unwrap_or(u16::MAX);
+            project_repeated_field_with_input_height(
+                input_height_overrides
+                    .get(&item.arg.id)
+                    .copied()
+                    .unwrap_or(metrics.input_height),
+                field_top,
+                input_x,
+                input_width,
+                show_description,
+                metrics.label_height,
+            )
+        });
+        let description_anchor_visible = description_anchor_visible(y, content_area);
+        let (input_y, input, description) = if let Some(projection) = repeated_projection {
+            let input_y =
+                i32::from(content_area.y) + i32::from(projection.input.y) - i32::from(form_scroll);
+            let Some(input) = clipped_rect(
+                projection.input.x,
+                projection.input.width,
+                input_y,
+                projection.input.height,
+                content_area,
+            ) else {
+                y += i32::from(metrics.total_height);
+                previous_heading = item.section_heading.as_deref();
+                continue;
+            };
+            let description = description_anchor_visible
+                .then_some(())
+                .and(projection.description)
+                .and_then(|description| {
+                    let description_y = i32::from(content_area.y) + i32::from(description.y)
+                        - i32::from(form_scroll);
+                    clipped_rect(
+                        description.x,
+                        description.width,
+                        description_y,
+                        description.height,
+                        content_area,
+                    )
+                });
+            (input_y, input, description)
+        } else {
+            let input_y = y + i32::from(form::field_input_offset_with_description(
+                item.arg,
+                show_description,
+            ));
+            let Some(input) = clipped_rect(
+                input_x,
+                input_width,
+                input_y,
+                metrics.input_height,
+                content_area,
+            ) else {
+                y += i32::from(metrics.total_height);
+                previous_heading = item.section_heading.as_deref();
+                continue;
+            };
+            let description = form_description_rect(
+                item,
+                y,
+                area,
+                content_area,
+                description_anchor_visible,
+                show_description,
+                preferred_label_width,
+                input_height_overrides.get(&item.arg.id).copied(),
+                label_height_overrides.get(&item.arg.id).copied(),
+            );
+            (input_y, input, description)
         };
-        let description = form_description_rect(
-            item,
-            y,
-            area,
-            content_area,
-            show_description,
-            preferred_label_width,
-            input_height_overrides.get(&item.arg.id).copied(),
-            label_height_overrides.get(&item.arg.id).copied(),
-        );
 
         frame_layout.form_inputs.insert(item.arg.id.clone(), input);
         if validation.field_errors.contains_key(&item.arg.id) {
@@ -430,11 +481,13 @@ fn form_description_rect(
     y: i32,
     area: Rect,
     content_area: Rect,
+    description_anchor_visible: bool,
     show_description: bool,
     preferred_label_width: u16,
     input_height_override: Option<u16>,
     label_height_override: Option<u16>,
 ) -> Option<Rect> {
+    description_anchor_visible.then_some(())?;
     show_description.then_some(())?;
     let description_y = y + i32::from(form::field_description_offset_with_layout_overrides(
         item.arg,
@@ -460,7 +513,11 @@ fn form_description_rect(
     )
 }
 
-fn field_content_geometry(
+fn description_anchor_visible(field_top_y: i32, content_area: Rect) -> bool {
+    field_top_y >= i32::from(content_area.y)
+}
+
+pub(crate) fn field_content_geometry(
     area: Rect,
     in_section: bool,
     preferred_label_width: u16,

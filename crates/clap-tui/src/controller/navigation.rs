@@ -1,10 +1,12 @@
+use crate::form_editor;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, ArgValue, Focus, UiState};
 use crate::query::{
-    form::{self, FieldWidget},
+    form::{self, FieldWidget, OrderedArg},
     selectors,
     tree::TreeRow,
 };
+use crate::repeated_field::project_repeated_field;
 use crate::spec::{CommandPath, SelectionError};
 use std::collections::HashMap;
 
@@ -344,6 +346,7 @@ pub(crate) fn ensure_active_repeated_row_visible(
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
     arg_id: &str,
+    active_row_index: Option<usize>,
 ) {
     if state.ui.help_open {
         return;
@@ -351,43 +354,215 @@ pub(crate) fn ensure_active_repeated_row_visible(
     let Some(form_view) = frame_snapshot.form_view_rect() else {
         return;
     };
-    let Some(field) = frame_snapshot.form_field_layout(arg_id) else {
+    let Some(active_row_index) = active_row_index else {
         return;
     };
-    let Some(arg) = state.domain.arg_for_input(arg_id) else {
+
+    let root = state.domain.root.clone();
+    let selected_path = state.domain.selected_path().clone();
+    let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+    let derived = state.derived().clone();
+    let input_height_overrides = repeated_input_height_overrides(state, &args);
+    let label_height_overrides = HashMap::new();
+    let content_height = form::measure_fields_height_with_layout_overrides_and_semantics(
+        &args,
+        &derived.validation.field_errors,
+        &input_height_overrides,
+        &label_height_overrides,
+        &derived.field_semantics,
+    );
+    let scroll_max = content_height.saturating_sub(form_view.height);
+    state
+        .ui
+        .set_form_scroll(state.ui.form_scroll.min(scroll_max));
+
+    let Some(item) = args.iter().find(|item| item.arg.id == arg_id) else {
         return;
     };
+    let arg = item.arg;
     if !matches!(form::widget_for(arg), FieldWidget::RepeatedText) {
         return;
     }
 
-    let displayed = crate::form_editor::displayed_text(state, arg);
-    let editor =
-        crate::form_editor::editor_for_render(&state.ui, arg.owner_path(), arg, &displayed);
-    let current_row = editor.current_row();
-    let input_top = field
-        .input
-        .y
-        .saturating_sub(form_view.y)
-        .saturating_add(state.ui.form_scroll(frame_snapshot))
-        .saturating_sub(field.input_clip_top);
-    let visible_input_top = input_top.saturating_add(field.input_clip_top);
-    let visible_input_bottom = visible_input_top.saturating_add(field.input.height);
-    let row_offset = u16::try_from(current_row)
-        .unwrap_or(u16::MAX)
-        .saturating_mul(3);
-    let row_top = input_top.saturating_add(row_offset);
-    let row_bottom = row_top.saturating_add(3);
+    let Some(field_top) = form_field_content_top(
+        &args,
+        &derived.validation.field_errors,
+        &label_height_overrides,
+        &input_height_overrides,
+        &derived.field_semantics,
+        arg_id,
+    ) else {
+        return;
+    };
+    let preferred_label_width =
+        form::preferred_label_column_width_with_semantics(&args, &derived.field_semantics);
+    let (_, _, input_x, input_width) = crate::frame_snapshot::field_content_geometry(
+        frame_snapshot.layout.form.unwrap_or(form_view),
+        form::field_is_in_section(item),
+        preferred_label_width,
+    );
+    let semantic_reason = derived
+        .field_semantics
+        .get(&crate::pipeline::FieldInstanceId::from_arg(arg))
+        .and_then(|semantics| semantics.reason.as_deref());
+    let show_description = form::field_has_description(
+        arg,
+        derived
+            .validation
+            .field_errors
+            .get(arg_id)
+            .map(String::as_str)
+            .or(semantic_reason),
+    );
+    let displayed = form_editor::displayed_text(state, arg);
+    let projection = project_repeated_field(
+        &state.ui,
+        arg,
+        &displayed,
+        field_top,
+        input_x,
+        input_width,
+        show_description,
+        1,
+    );
+    let Some(row) = projection.row(active_row_index) else {
+        return;
+    };
+    let preferred = projection
+        .description
+        .map(|description| vertical_target(row.y, description.y.saturating_add(description.height)))
+        .filter(|target| target.height() <= form_view.height);
+    let fallback = vertical_target(row.y, row.y.saturating_add(row.height));
+    let next_scroll = repeated_row_scroll_target(
+        state.ui.form_scroll,
+        scroll_max,
+        form_view.height,
+        preferred,
+        fallback,
+    );
+    if next_scroll != state.ui.form_scroll {
+        state.ui.set_form_scroll(next_scroll);
+    }
+}
 
-    if row_top < visible_input_top {
-        state.ui.set_form_scroll(row_top);
-    } else if row_bottom > visible_input_bottom {
-        state.ui.set_form_scroll(
-            state
-                .ui
-                .form_scroll(frame_snapshot)
-                .saturating_add(row_bottom.saturating_sub(visible_input_bottom)),
+fn repeated_input_height_overrides(
+    state: &AppState,
+    args: &[OrderedArg<'_>],
+) -> HashMap<String, u16> {
+    args.iter()
+        .filter(|item| matches!(item.widget, FieldWidget::RepeatedText))
+        .map(|item| {
+            let value = form_editor::displayed_text(state, item.arg);
+            (
+                item.arg.id.clone(),
+                crate::repeated_field::repeated_input_height(&state.ui, item.arg, &value),
+            )
+        })
+        .collect()
+}
+
+fn form_field_content_top(
+    args: &[OrderedArg<'_>],
+    field_errors: &std::collections::BTreeMap<String, String>,
+    label_height_overrides: &HashMap<String, u16>,
+    input_height_overrides: &HashMap<String, u16>,
+    field_semantics: &std::collections::BTreeMap<
+        crate::pipeline::FieldInstanceId,
+        crate::pipeline::FieldSemantics,
+    >,
+    arg_id: &str,
+) -> Option<u16> {
+    let mut y: u16 = 0;
+    let mut previous_heading = None;
+    for item in args {
+        if form::field_heading(previous_heading, item).is_some() {
+            y = y.saturating_add(1);
+        }
+        if item.arg.id == arg_id {
+            return Some(y);
+        }
+        let semantic_reason = field_semantics
+            .get(&crate::pipeline::FieldInstanceId::from_arg(item.arg))
+            .and_then(|semantics| semantics.reason.as_deref());
+        let show_description = form::field_has_description(
+            item.arg,
+            field_errors
+                .get(&item.arg.id)
+                .map(String::as_str)
+                .or(semantic_reason),
         );
+        let metrics = form::field_metrics_with_description_and_layout_overrides(
+            item.arg,
+            show_description,
+            input_height_overrides.get(&item.arg.id).copied(),
+            label_height_overrides.get(&item.arg.id).copied(),
+        );
+        y = y.saturating_add(metrics.total_height);
+        previous_heading = item.section_heading.as_deref();
+    }
+    None
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VerticalTarget {
+    top: u16,
+    bottom: u16,
+}
+
+impl VerticalTarget {
+    fn height(self) -> u16 {
+        self.bottom.saturating_sub(self.top)
+    }
+
+    fn fully_visible(self, viewport_top: u16, viewport_bottom: u16) -> bool {
+        self.top >= viewport_top && self.bottom <= viewport_bottom
+    }
+}
+
+fn vertical_target(top: u16, bottom: u16) -> VerticalTarget {
+    VerticalTarget { top, bottom }
+}
+
+fn repeated_row_scroll_target(
+    current_scroll: u16,
+    scroll_max: u16,
+    viewport_height: u16,
+    preferred: Option<VerticalTarget>,
+    fallback: VerticalTarget,
+) -> u16 {
+    let viewport_top = current_scroll;
+    let viewport_bottom = viewport_top.saturating_add(viewport_height);
+    let target = preferred.unwrap_or(fallback);
+    if target.fully_visible(viewport_top, viewport_bottom) {
+        return current_scroll;
+    }
+    if fallback.fully_visible(viewport_top, viewport_bottom) {
+        return current_scroll;
+    }
+    if let Some(preferred) = preferred
+        && !preferred.fully_visible(viewport_top, viewport_bottom)
+    {
+        return reveal_target_with_padding(current_scroll, scroll_max, viewport_height, preferred);
+    }
+    reveal_target_with_padding(current_scroll, scroll_max, viewport_height, fallback)
+}
+
+fn reveal_target_with_padding(
+    current_scroll: u16,
+    scroll_max: u16,
+    viewport_height: u16,
+    target: VerticalTarget,
+) -> u16 {
+    let viewport_bottom = current_scroll.saturating_add(viewport_height);
+    if target.top < current_scroll {
+        target.top
+    } else if target.bottom > viewport_bottom {
+        target
+            .bottom
+            .saturating_sub(viewport_height)
+            .min(scroll_max)
+    } else {
+        current_scroll
     }
 }
 
@@ -593,9 +768,10 @@ mod tests {
 
     use super::{
         activate_form_field, apply_start_command, clamp_sidebar_selection_to_search,
-        collapse_selected, ensure_enum_visible, expand_selected, handle_escape,
-        move_form_selection, move_sidebar_selection, open_enum_dropdown, scroll_sidebar,
-        sidebar_right,
+        collapse_selected, ensure_active_repeated_row_visible, ensure_enum_visible,
+        expand_selected, handle_escape, move_form_selection, move_sidebar_selection,
+        open_enum_dropdown, repeated_row_scroll_target, scroll_sidebar, sidebar_right,
+        vertical_target,
     };
 
     fn sidebar_snapshot() -> FrameSnapshot {
@@ -1070,6 +1246,65 @@ mod tests {
 
         assert_eq!(state.ui.selected_arg_index, 2);
         assert_eq!(state.ui.form_scroll, 8);
+    }
+
+    #[test]
+    fn repeated_row_scroll_target_prefers_row_and_description_when_that_unit_fits() {
+        let next = repeated_row_scroll_target(
+            0,
+            20,
+            6,
+            Some(vertical_target(3, 7)),
+            vertical_target(3, 6),
+        );
+
+        assert_eq!(next, 0);
+    }
+
+    #[test]
+    fn repeated_row_scroll_target_falls_back_to_the_row_when_description_unit_does_not_fit() {
+        let next = repeated_row_scroll_target(0, 20, 5, None, vertical_target(2, 5));
+
+        assert_eq!(next, 0);
+    }
+
+    #[test]
+    fn repeated_row_scroll_target_does_not_chase_description_when_row_is_already_visible() {
+        let next = repeated_row_scroll_target(
+            10,
+            20,
+            6,
+            Some(vertical_target(11, 17)),
+            vertical_target(11, 14),
+        );
+
+        assert_eq!(next, 10);
+    }
+
+    #[test]
+    fn repeated_row_visibility_clamps_stale_scroll_before_targeting_the_resolved_row() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("prefix").long("prefix"))
+                .arg(
+                    Arg::new("include")
+                        .long("include")
+                        .help("Include path")
+                        .action(clap::ArgAction::Append)
+                        .num_args(1),
+                ),
+        );
+        state.domain.set_text_value("include", "alpha");
+        state.domain.mark_touched("include");
+        state.ui.form_scroll = 20;
+
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(Rect::new(0, 0, 60, 5));
+        snapshot.layout.form_view = Some(Rect::new(0, 0, 60, 5));
+
+        ensure_active_repeated_row_visible(&mut state, &snapshot, "include", Some(0));
+
+        assert_eq!(state.ui.form_scroll, 4);
     }
 
     #[test]

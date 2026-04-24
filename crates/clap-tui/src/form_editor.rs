@@ -14,6 +14,41 @@ pub(crate) enum EditResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepeatedRowEditResult {
+    Ignored,
+    HandledNoFocusChange,
+    Handled {
+        focus_changed: bool,
+        structure_changed: bool,
+        active_row_index: Option<usize>,
+    },
+}
+
+impl RepeatedRowEditResult {
+    pub(crate) fn should_recompute_visibility(self) -> bool {
+        matches!(
+            self,
+            Self::Handled {
+                focus_changed: true,
+                ..
+            } | Self::Handled {
+                structure_changed: true,
+                ..
+            }
+        )
+    }
+
+    pub(crate) fn active_row_index(self) -> Option<usize> {
+        match self {
+            Self::Handled {
+                active_row_index, ..
+            } => active_row_index,
+            Self::Ignored | Self::HandledNoFocusChange => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowEditorMode {
     Occurrence,
     FixedArityOccurrence { values_per_occurrence: usize },
@@ -153,21 +188,12 @@ pub(crate) fn apply_key_to_text_field(
         return EditResult::Ignored;
     }
     let text = textarea.text();
-    if text.is_empty() && has_default {
-        state.domain.clear_value_and_untouch(&arg.id);
-    } else if text.is_empty() && arg.uses_optional_value_semantics() {
-        state.domain.toggle_optional_value_flag(&arg.id, true);
-    } else if uses_row_editor(arg) {
-        let rows = textarea.lines().to_vec();
-        sync_row_editor_values(state, arg, &rows);
-    } else {
-        state.domain.set_text_value(&arg.id, &text);
-        state.domain.mark_touched(&arg.id);
-    }
+    let rows = uses_row_editor(arg).then(|| textarea.lines().to_vec());
+    sync_text_editor_value(state, arg, &text, rows.as_deref());
     EditResult::Handled
 }
 
-pub(crate) fn activate_repeated_row(state: &mut AppState, arg: &ArgModel) -> EditResult {
+pub(crate) fn activate_repeated_row(state: &mut AppState, arg: &ArgModel) -> RepeatedRowEditResult {
     let displayed = displayed_text(state, arg);
     let command_key = arg.owner_path().clone();
     let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
@@ -180,20 +206,28 @@ pub(crate) fn activate_repeated_row(state: &mut AppState, arg: &ArgModel) -> Edi
             u16::try_from(next_col).unwrap_or(u16::MAX),
         );
         editor.cancel_selection();
-        return EditResult::Handled;
+        return RepeatedRowEditResult::Handled {
+            focus_changed: true,
+            structure_changed: false,
+            active_row_index: Some(current_row + 1),
+        };
     }
 
     editor.insert_row_below();
     let rows = editor.lines().to_vec();
     sync_row_editor_values(state, arg, &rows);
-    EditResult::Handled
+    RepeatedRowEditResult::Handled {
+        focus_changed: true,
+        structure_changed: true,
+        active_row_index: Some(current_row.saturating_add(1)),
+    }
 }
 
 pub(crate) fn navigate_repeated_row(
     state: &mut AppState,
     arg: &ArgModel,
     delta: i32,
-) -> EditResult {
+) -> RepeatedRowEditResult {
     let displayed = displayed_text(state, arg);
     let command_key = arg.owner_path().clone();
     let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
@@ -204,7 +238,7 @@ pub(crate) fn navigate_repeated_row(
         (current_row + 1 < editor.row_count()).then_some(current_row + 1)
     };
     let Some(next_row) = next_row else {
-        return EditResult::Ignored;
+        return RepeatedRowEditResult::Ignored;
     };
     let next_col = editor.cursor().col.min(editor.lines()[next_row].len());
     editor.move_cursor_to(
@@ -212,7 +246,11 @@ pub(crate) fn navigate_repeated_row(
         u16::try_from(next_col).unwrap_or(u16::MAX),
     );
     editor.cancel_selection();
-    EditResult::Handled
+    RepeatedRowEditResult::Handled {
+        focus_changed: true,
+        structure_changed: false,
+        active_row_index: Some(next_row),
+    }
 }
 
 pub(crate) fn apply_paste_to_text_field(
@@ -233,18 +271,29 @@ pub(crate) fn apply_paste_to_text_field(
     }
 
     let text = textarea.text();
-    if text.is_empty() && has_default {
-        state.domain.clear_value_and_untouch(&arg.id);
-    } else if text.is_empty() && arg.uses_optional_value_semantics() {
+    let rows = uses_row_editor(arg).then(|| textarea.lines().to_vec());
+    sync_text_editor_value(state, arg, &text, rows.as_deref());
+    EditResult::Handled
+}
+
+fn sync_text_editor_value(
+    state: &mut AppState,
+    arg: &ArgModel,
+    text: &str,
+    rows: Option<&[String]>,
+) {
+    if let Some(rows) = rows {
+        sync_row_editor_values(state, arg, rows);
+        return;
+    }
+    if text.is_empty() && arg.uses_optional_value_semantics() {
         state.domain.toggle_optional_value_flag(&arg.id, true);
-    } else if uses_row_editor(arg) {
-        let rows = textarea.lines().to_vec();
-        sync_row_editor_values(state, arg, &rows);
+    } else if text.is_empty() {
+        state.domain.clear_value_and_untouch(&arg.id);
     } else {
-        state.domain.set_text_value(&arg.id, &text);
+        state.domain.set_text_value(&arg.id, text);
         state.domain.mark_touched(&arg.id);
     }
-    EditResult::Handled
 }
 
 fn sync_row_editor_values(state: &mut AppState, arg: &ArgModel, rows: &[String]) {
@@ -317,17 +366,22 @@ pub(crate) fn set_cursor_from_click(state: &mut AppState, arg: &ArgModel, row: u
     textarea.move_cursor_to(row, col);
 }
 
-pub(crate) fn insert_repeated_row(state: &mut AppState, arg: &ArgModel) -> EditResult {
+pub(crate) fn insert_repeated_row(state: &mut AppState, arg: &ArgModel) -> RepeatedRowEditResult {
     let displayed = displayed_text(state, arg);
     let command_key = arg.owner_path().clone();
     let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     editor.insert_row_below();
+    let active_row_index = editor.current_row();
     let rows = editor.lines().to_vec();
     sync_row_editor_values(state, arg, &rows);
-    EditResult::Handled
+    RepeatedRowEditResult::Handled {
+        focus_changed: true,
+        structure_changed: true,
+        active_row_index: Some(active_row_index),
+    }
 }
 
-pub(crate) fn remove_repeated_row(state: &mut AppState, arg: &ArgModel) -> EditResult {
+pub(crate) fn remove_repeated_row(state: &mut AppState, arg: &ArgModel) -> RepeatedRowEditResult {
     let displayed = displayed_text(state, arg);
     let command_key = arg.owner_path().clone();
     let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
@@ -335,37 +389,55 @@ pub(crate) fn remove_repeated_row(state: &mut AppState, arg: &ArgModel) -> EditR
     editor.remove_current_row();
     let text = editor.text();
     if text == before {
-        return EditResult::Ignored;
+        return RepeatedRowEditResult::Ignored;
     }
+    let active_row_index = editor.current_row();
     let rows = editor.lines().to_vec();
     sync_row_editor_values(state, arg, &rows);
-    EditResult::Handled
+    RepeatedRowEditResult::Handled {
+        focus_changed: true,
+        structure_changed: true,
+        active_row_index: Some(active_row_index),
+    }
 }
 
-pub(crate) fn move_repeated_row_up(state: &mut AppState, arg: &ArgModel) -> EditResult {
+pub(crate) fn move_repeated_row_up(state: &mut AppState, arg: &ArgModel) -> RepeatedRowEditResult {
     let displayed = displayed_text(state, arg);
     let command_key = arg.owner_path().clone();
     let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     if editor.row_count() <= 1 || editor.current_row() == 0 {
-        return EditResult::Ignored;
+        return RepeatedRowEditResult::Ignored;
     }
     editor.move_current_row_up();
+    let active_row_index = editor.current_row();
     let rows = editor.lines().to_vec();
     sync_row_editor_values(state, arg, &rows);
-    EditResult::Handled
+    RepeatedRowEditResult::Handled {
+        focus_changed: true,
+        structure_changed: true,
+        active_row_index: Some(active_row_index),
+    }
 }
 
-pub(crate) fn move_repeated_row_down(state: &mut AppState, arg: &ArgModel) -> EditResult {
+pub(crate) fn move_repeated_row_down(
+    state: &mut AppState,
+    arg: &ArgModel,
+) -> RepeatedRowEditResult {
     let displayed = displayed_text(state, arg);
     let command_key = arg.owner_path().clone();
     let editor = ensure_editor(&mut state.ui, &command_key, arg, &displayed);
     if editor.row_count() <= 1 || editor.current_row() + 1 >= editor.row_count() {
-        return EditResult::Ignored;
+        return RepeatedRowEditResult::Ignored;
     }
     editor.move_current_row_down();
+    let active_row_index = editor.current_row();
     let rows = editor.lines().to_vec();
     sync_row_editor_values(state, arg, &rows);
-    EditResult::Handled
+    RepeatedRowEditResult::Handled {
+        focus_changed: true,
+        structure_changed: true,
+        active_row_index: Some(active_row_index),
+    }
 }
 
 fn handle_repeated_empty_backspace(
@@ -571,6 +643,39 @@ mod tests {
             .find(|arg| arg.id == "include")
             .cloned()
             .expect("include arg")
+    }
+
+    #[test]
+    fn clearing_a_single_text_field_removes_the_option_from_argv() {
+        let mut state =
+            AppState::from_command(&Command::new("tool").arg(Arg::new("token").long("token")));
+        state.domain.set_text_value("token", "abc");
+        state.domain.mark_touched("token");
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "token")
+            .cloned()
+            .expect("token arg");
+        super::set_cursor_from_click(&mut state, &arg, 0, 3);
+
+        for _ in 0..3 {
+            let result = apply_key_to_text_field(&mut state, &arg, key(AppKeyCode::Backspace));
+            assert_eq!(result, EditResult::Handled);
+        }
+
+        assert_eq!(
+            crate::pipeline::build_authoritative_command_line(&state),
+            vec!["tool".to_string()]
+        );
+        assert!(
+            state
+                .domain
+                .current_form()
+                .is_none_or(|form| form.input("token").is_none())
+        );
     }
 
     #[test]

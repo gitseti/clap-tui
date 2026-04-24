@@ -1,18 +1,18 @@
 use crate::controller::navigation;
-use crate::form_editor::{self, EditResult};
+use crate::form_editor::{self, EditResult, RepeatedRowEditResult};
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, MouseSelection};
 use crate::query::{
     form::{self, FieldWidget, OrderedArg},
     selectors,
 };
+use crate::repeated_field::{
+    REPEATED_ROW_HEIGHT, repeated_add_rect, repeated_remove_rect, repeated_row_textarea_rect,
+};
 use crate::runtime::{AppKeyCode, AppKeyEvent, AppMouseEvent};
 use ratatui::layout::Rect;
 
 use super::{Action, Effect};
-
-const REPEATED_CONTROL_ROW_WIDTH: u16 = 8;
-const REPEATED_ROW_HEIGHT: u16 = 3;
 
 pub(crate) fn apply(
     action: &Action,
@@ -123,11 +123,11 @@ fn apply_form_widget_input(key: AppKeyEvent, state: &mut AppState, frame_snapsho
         {
             form_editor::remove_repeated_row(state, item.arg)
         } else {
-            EditResult::Ignored
+            RepeatedRowEditResult::Ignored
         };
         if matches!(key.code, AppKeyCode::Up | AppKeyCode::Down)
             && !key.modifiers.alt
-            && matches!(result, EditResult::Ignored)
+            && matches!(result, RepeatedRowEditResult::Ignored)
         {
             navigation::move_form_selection(
                 state,
@@ -138,8 +138,8 @@ fn apply_form_widget_input(key: AppKeyEvent, state: &mut AppState, frame_snapsho
                     1
                 },
             );
-        } else if matches!(key.code, AppKeyCode::Enter) && matches!(result, EditResult::Handled) {
-            navigation::ensure_active_repeated_row_visible(state, frame_snapshot, &item.arg.id);
+        } else {
+            handle_repeated_row_result(state, frame_snapshot, &item.arg.id, result);
         }
     } else if matches!(item.widget, FieldWidget::OptionalValue) {
         match key.code {
@@ -149,6 +149,22 @@ fn apply_form_widget_input(key: AppKeyEvent, state: &mut AppState, frame_snapsho
             }
             _ => {}
         }
+    }
+}
+
+fn handle_repeated_row_result(
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+    arg_id: &str,
+    result: RepeatedRowEditResult,
+) {
+    if result.should_recompute_visibility() {
+        navigation::ensure_active_repeated_row_visible(
+            state,
+            frame_snapshot,
+            arg_id,
+            result.active_row_index(),
+        );
     }
 }
 
@@ -255,12 +271,9 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
         if matches!(hit.item.widget, FieldWidget::Counter) && hit.in_input {
             apply_counter_click(event, state, frame_snapshot, &hit.item.arg.id);
         } else if matches!(hit.item.widget, FieldWidget::RepeatedText) && hit.in_input {
-            if apply_repeated_text_click(event, state, frame_snapshot, &hit.item.arg.id) {
-                navigation::ensure_active_repeated_row_visible(
-                    state,
-                    frame_snapshot,
-                    &hit.item.arg.id,
-                );
+            let result = apply_repeated_text_click(event, state, frame_snapshot, &hit.item.arg.id);
+            handle_repeated_row_result(state, frame_snapshot, &hit.item.arg.id, result);
+            if !matches!(result, RepeatedRowEditResult::Ignored) {
                 return;
             }
         } else if matches!(
@@ -309,13 +322,13 @@ fn apply_repeated_text_click(
     state: &mut AppState,
     frame_snapshot: &FrameSnapshot,
     arg_id: &str,
-) -> bool {
+) -> RepeatedRowEditResult {
     let Some(field) = frame_snapshot.form_field_layout(arg_id) else {
-        return false;
+        return RepeatedRowEditResult::Ignored;
     };
     let input = field.input;
     let Some(arg) = state.domain.arg_for_input(arg_id).cloned() else {
-        return false;
+        return RepeatedRowEditResult::Ignored;
     };
     let editor = form_editor::editor_for_render(
         &state.ui,
@@ -323,32 +336,33 @@ fn apply_repeated_text_click(
         &arg,
         &form_editor::displayed_text(state, &arg),
     );
+    let active_row_before = editor.current_row();
     let total_rows = editor.row_count().max(1);
     if total_rows <= 1 {
         match repeated_control_click_target(event.column, event.row, input, true, true) {
-            Some(RepeatedControlClickTarget::Remove) => return true,
-            Some(RepeatedControlClickTarget::Add) => {
-                let _ = form_editor::insert_repeated_row(state, &arg);
-                navigation::ensure_active_repeated_row_visible(state, frame_snapshot, &arg.id);
-                return true;
+            Some(RepeatedControlClickTarget::Remove) => {
+                return RepeatedRowEditResult::HandledNoFocusChange;
             }
-            None => return false,
+            Some(RepeatedControlClickTarget::Add) => {
+                return form_editor::insert_repeated_row(state, &arg);
+            }
+            None => return RepeatedRowEditResult::Ignored,
         }
     }
     let visible_rows = usize::from(input.height / REPEATED_ROW_HEIGHT).min(total_rows);
     if visible_rows == 0 {
-        return false;
+        return RepeatedRowEditResult::Ignored;
     }
     let start_row = repeated_visible_start_row(visible_rows, total_rows, field.input_clip_top);
     let relative_y = event.row.saturating_sub(input.y);
     let row_index = start_row + usize::from(relative_y / REPEATED_ROW_HEIGHT);
     if row_index >= total_rows {
-        return false;
+        return RepeatedRowEditResult::Ignored;
     }
     let row = u16::try_from(row_index).unwrap_or(u16::MAX);
     let row_rect = repeated_row_rect(input, row_index.saturating_sub(start_row));
     let Some(row_rect) = row_rect else {
-        return false;
+        return RepeatedRowEditResult::Ignored;
     };
     form_editor::clear_selection(state, &arg);
     state.ui.clear_mouse_selection();
@@ -357,13 +371,14 @@ fn apply_repeated_text_click(
         Some(RepeatedControlClickTarget::Remove) => {
             form_editor::set_cursor_from_click(state, &arg, row, 0);
             if total_rows > 1 {
-                let _ = form_editor::remove_repeated_row(state, &arg);
+                form_editor::remove_repeated_row(state, &arg)
+            } else {
+                RepeatedRowEditResult::HandledNoFocusChange
             }
         }
         Some(RepeatedControlClickTarget::Add) => {
             form_editor::set_cursor_from_click(state, &arg, row, 0);
-            let _ = form_editor::insert_repeated_row(state, &arg);
-            navigation::ensure_active_repeated_row_visible(state, frame_snapshot, &arg.id);
+            form_editor::insert_repeated_row(state, &arg)
         }
         None => {
             let textarea_rect = repeated_row_textarea_rect(row_rect, true, is_last_row);
@@ -377,11 +392,20 @@ fn apply_repeated_text_click(
                     active: false,
                 }));
                 form_editor::set_cursor_from_click(state, &arg, row, col);
+                if row_index == active_row_before {
+                    RepeatedRowEditResult::HandledNoFocusChange
+                } else {
+                    RepeatedRowEditResult::Handled {
+                        focus_changed: true,
+                        structure_changed: false,
+                        active_row_index: Some(row_index),
+                    }
+                }
+            } else {
+                RepeatedRowEditResult::HandledNoFocusChange
             }
         }
     }
-
-    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -524,56 +548,6 @@ fn repeated_visible_start_row(
         input_clip_top.saturating_add(REPEATED_ROW_HEIGHT.saturating_sub(1)) / REPEATED_ROW_HEIGHT,
     );
     clipped_rows.min(total_rows.saturating_sub(visible_rows.min(total_rows)))
-}
-
-fn repeated_row_textarea_rect(row_rect: Rect, show_remove: bool, show_add: bool) -> Rect {
-    let with_controls = show_remove || show_add;
-    let width = if with_controls && row_rect.width > REPEATED_CONTROL_ROW_WIDTH {
-        row_rect
-            .width
-            .saturating_sub(REPEATED_CONTROL_ROW_WIDTH)
-            .saturating_sub(1)
-    } else {
-        row_rect.width
-    };
-    Rect::new(row_rect.x, row_rect.y, width, row_rect.height)
-}
-
-fn repeated_remove_rect(row_rect: Rect, show_remove: bool, show_add: bool) -> Option<Rect> {
-    if !show_remove || row_rect.height < 2 {
-        return None;
-    }
-    let strip_start = row_rect
-        .x
-        .saturating_add(row_rect.width.saturating_sub(REPEATED_CONTROL_ROW_WIDTH));
-    let x = if show_add {
-        strip_start
-    } else {
-        strip_start.saturating_add(2)
-    };
-    Some(Rect::new(
-        x,
-        row_rect
-            .y
-            .saturating_add(row_rect.height.saturating_sub(1).min(1)),
-        3,
-        1,
-    ))
-}
-
-fn repeated_add_rect(row_rect: Rect) -> Option<Rect> {
-    if row_rect.height < 2 {
-        return None;
-    }
-    let x = row_rect.x.saturating_add(row_rect.width.saturating_sub(4));
-    Some(Rect::new(
-        x,
-        row_rect
-            .y
-            .saturating_add(row_rect.height.saturating_sub(1).min(1)),
-        3,
-        1,
-    ))
 }
 
 fn contains(area: Rect, x: u16, y: u16) -> bool {
@@ -1356,6 +1330,106 @@ mod tests {
     }
 
     #[test]
+    fn clicking_an_already_visible_repeated_row_does_not_scroll() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("include")
+                    .long("include")
+                    .action(ArgAction::Append)
+                    .num_args(1),
+            ),
+        );
+        state.domain.set_text_value("include", "alpha\nbeta");
+        state.domain.mark_touched("include");
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 80, 8));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 80, 8));
+        snapshot.layout.form_inputs.insert(
+            "include".to_string(),
+            ratatui::layout::Rect::new(10, 1, 30, 6),
+        );
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "include".to_string(),
+            heading: None,
+            section_rail: None,
+            section_right_rail: None,
+            section_cap: None,
+            label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
+            input: ratatui::layout::Rect::new(10, 1, 30, 6),
+            input_clip_top: 0,
+            description: None,
+        });
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 12,
+                row: 5,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.form_scroll, 0);
+        let arg = state.domain.arg_for_input("include").expect("include arg");
+        let editor = crate::form_editor::editor_for_render(
+            &state.ui,
+            arg.owner_path(),
+            arg,
+            &crate::form_editor::displayed_text(&state, arg),
+        );
+        assert_eq!(editor.cursor().row, 1);
+    }
+
+    #[test]
+    fn clicking_add_only_scrolls_when_the_resolved_target_is_clipped() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("include")
+                    .long("include")
+                    .action(ArgAction::Append)
+                    .num_args(1),
+            ),
+        );
+        state.domain.set_text_value("include", "alpha\nbeta");
+        state.domain.mark_touched("include");
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 80, 10));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 80, 10));
+        snapshot.layout.form_inputs.insert(
+            "include".to_string(),
+            ratatui::layout::Rect::new(10, 1, 30, 6),
+        );
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "include".to_string(),
+            heading: None,
+            section_rail: None,
+            section_right_rail: None,
+            section_cap: None,
+            label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
+            input: ratatui::layout::Rect::new(10, 1, 30, 6),
+            input_clip_top: 0,
+            description: None,
+        });
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 37,
+                row: 5,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.form_scroll, 0);
+    }
+
+    #[test]
     fn optional_value_widget_clear_disables_the_field() {
         let mut state = AppState::from_command(
             &Command::new("tool").arg(
@@ -1892,7 +1966,7 @@ mod tests {
         );
 
         assert_eq!(effect, Effect::None);
-        assert_eq!(state.ui.form_scroll, 4);
+        assert_eq!(state.ui.form_scroll, 1);
         let editor = crate::form_editor::editor_for_render(
             &state.ui,
             arg.owner_path(),
@@ -1900,5 +1974,93 @@ mod tests {
             &crate::form_editor::displayed_text(&state, &arg),
         );
         assert_eq!(editor.cursor().row, 2);
+    }
+
+    #[test]
+    fn repeated_row_insert_does_not_surface_an_orphaned_neighbor_description() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(
+                    Arg::new("define")
+                        .long("define")
+                        .help("Key/value pairs")
+                        .action(ArgAction::Append)
+                        .num_args(1),
+                )
+                .arg(
+                    Arg::new("include")
+                        .long("include")
+                        .action(ArgAction::Append)
+                        .num_args(1),
+                ),
+        );
+        state.domain.set_text_value("define", "A=1\nB=2");
+        state.domain.mark_touched("define");
+        state.domain.set_text_value("include", "alpha\nbeta");
+        state.domain.mark_touched("include");
+        state.ui.focus_form();
+        state.ui.selected_arg_index = 1;
+        state.ui.form_scroll = 5;
+        let include_arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "include")
+            .cloned()
+            .expect("include arg");
+        crate::form_editor::set_cursor_from_click(&mut state, &include_arg, 1, 0);
+
+        let mut snapshot = FrameSnapshot {
+            form_scroll_max: 99,
+            ..FrameSnapshot::default()
+        };
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 80, 6));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 80, 6));
+
+        let effect = apply_action(
+            &Action::FormWidgetInput(key(AppKeyCode::Enter)),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+
+        let root = state.domain.root.clone();
+        let selected_path = state.domain.selected_path().clone();
+        let active_args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
+        let derived = state.derived().clone();
+        let mut post_action_snapshot = FrameSnapshot::default();
+        let input_height_overrides = active_args
+            .iter()
+            .filter(|item| matches!(item.widget, FieldWidget::RepeatedText))
+            .map(|item| {
+                let displayed = crate::form_editor::displayed_text(&state, item.arg);
+                (
+                    item.arg.id.clone(),
+                    crate::repeated_field::repeated_input_height(&state.ui, item.arg, &displayed),
+                )
+            })
+            .collect();
+
+        crate::frame_snapshot::populate_form_layout(
+            &state.ui,
+            ratatui::layout::Rect::new(0, 0, 80, 6),
+            &active_args,
+            "",
+            &derived.validation,
+            &derived.field_semantics,
+            &input_height_overrides,
+            &std::collections::HashMap::new(),
+            &mut post_action_snapshot,
+        );
+
+        let define = post_action_snapshot
+            .layout
+            .form_fields
+            .iter()
+            .find(|field| field.arg_id == "define");
+        assert!(define.is_none_or(|field| field.description.is_none()));
+        assert!(define.is_none_or(|field| field.label.is_none()));
     }
 }
