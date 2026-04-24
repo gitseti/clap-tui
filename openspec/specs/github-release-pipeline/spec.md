@@ -1,7 +1,7 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Pull requests are gated by Rust verification
-The repository SHALL run a GitHub Actions verification workflow for pushes and pull requests with a stable required job named `verify` that checks formatting, linting, tests, and package-surface verification for the crates intended to be published from this repository. Maintainer documentation SHALL state that the `verify` job must be configured as a required status check in GitHub branch protection for the default branch.
+The repository SHALL run a GitHub Actions verification workflow for pull requests and normal branch pushes with a stable required job named `verify` that checks formatting, linting, tests, and package-surface verification for the published `clap-tui` crate. Maintainer documentation SHALL state that the `verify` job must be configured as a required status check in GitHub branch protection for the default branch. Release-tag pushes MAY be excluded from this separate workflow when the publish workflow reruns the same baseline verification contract.
 
 #### Scenario: Pull request triggers verification
 - **WHEN** a contributor opens or updates a pull request
@@ -11,41 +11,20 @@ The repository SHALL run a GitHub Actions verification workflow for pushes and p
 - **WHEN** maintainers follow the repository setup instructions
 - **THEN** they are told to mark the `verify` job as a required status check in GitHub branch protection
 
+#### Scenario: Release tags avoid redundant CI duplication
+- **WHEN** a maintainer pushes a `vX.Y.Z` release tag
+- **THEN** the repository does not need a second standalone `verify` workflow run if the publish workflow reruns the same baseline verification before any publish attempt
+
+## REMOVED Requirements
+
 ### Requirement: Proc-macro releases use a dedicated GitHub workflow
-The repository SHALL provide a GitHub-based release workflow at
-`.github/workflows/publish-macros.yml` that triggers on pushed `clap-tui-macros-v*` tags,
-validates that the tag version matches `crates/clap-tui-macros/Cargo.toml`, reruns pre-publish
-verification, and publishes `clap-tui-macros` from that tagged revision when automated publishing
-is enabled. When automated publishing is disabled, the workflow SHALL stop after verification and
-explain why publication did not run.
+**Reason**: The repository no longer contains `clap-tui-macros`, so release automation no longer needs a proc-macro-specific tag workflow.
+**Migration**: Treat `clap-tui` as the only published crate in GitHub Actions and remove any remaining references to proc-macro tag workflows.
 
-#### Scenario: Tagged proc-macro release starts publish flow
-- **WHEN** maintainers push a `clap-tui-macros-vX.Y.Z` tag for a reviewed commit
-- **THEN** GitHub runs the proc-macro publish workflow against that exact revision
-
-#### Scenario: Proc-macro tag version does not match Cargo version
-- **WHEN** the pushed `clap-tui-macros-vX.Y.Z` tag does not match the crate version declared in
-  `crates/clap-tui-macros/Cargo.toml`
-- **THEN** the proc-macro publish workflow fails before attempting crates.io authentication or
-  publication
-
-#### Scenario: Proc-macro publishing is disabled
-- **WHEN** maintainers push a proc-macro release tag while automated publishing is not enabled for
-  the repository
-- **THEN** the proc-macro workflow reruns verification, skips publication, and explains that it
-  remained in verification-only mode
+## MODIFIED Requirements
 
 ### Requirement: Releases use a controlled GitHub workflow
-The repository SHALL provide a GitHub-based release workflow at `.github/workflows/publish.yml`
-that triggers on pushed `v*` tags, validates that the tag version matches
-`crates/clap-tui/Cargo.toml`, and reruns pre-publish verification. The release process SHALL
-require maintainers to create release tags only from merged commits whose required `verify` check
-has already passed. When automated publishing is disabled, the workflow SHALL stop after
-verification and explain why publication did not run. When automated publishing is enabled, the
-workflow SHALL determine whether the `clap-tui-macros` version referenced by the tagged
-`clap-tui` release is already published, SHALL fail before authentication or publication when that
-proc-macro prerequisite is missing, and SHALL only then dry-run and publish `clap-tui` from that
-tagged revision.
+The repository SHALL provide a GitHub-based release workflow at `.github/workflows/publish.yml` that triggers on pushed `v*` tags, validates that the tag version matches `crates/clap-tui/Cargo.toml`, and reruns the shared baseline repository verification contract before any publish attempt. The release process SHALL require maintainers to create release tags only from merged commits whose required `verify` check has already passed. When automated publishing is disabled, the workflow SHALL stop after successful verification and explain why publication did not run. When automated publishing is enabled, the workflow SHALL run a `cargo publish -p clap-tui --locked --dry-run` preflight and SHALL then publish `clap-tui` from that tagged revision without depending on any separate proc-macro release prerequisite.
 
 #### Scenario: Tagged release starts publish flow
 - **WHEN** maintainers push a `vX.Y.Z` tag for a reviewed commit
@@ -53,33 +32,24 @@ tagged revision.
 
 #### Scenario: Maintainers prepare a release tag
 - **WHEN** maintainers follow the documented release process for `clap-tui`
-- **THEN** they are instructed to create the `vX.Y.Z` tag only from a merged commit whose `verify`
-  check has already passed
+- **THEN** they are instructed to create the `vX.Y.Z` tag only from a merged commit whose `verify` check has already passed
 
 #### Scenario: Tag version does not match Cargo version
 - **WHEN** the pushed `vX.Y.Z` tag does not match the crate version declared in `crates/clap-tui/Cargo.toml`
 - **THEN** the publish workflow fails before attempting crates.io authentication or publication
 
 #### Scenario: Publishing is disabled
-- **WHEN** maintainers push a release tag while automated publishing is not enabled for the
-  repository
-- **THEN** the workflow reruns verification, skips publication, and explains that it remained in
-  verification-only mode
+- **WHEN** maintainers push a release tag while automated publishing is not enabled for the repository
+- **THEN** the workflow reruns baseline verification, skips publication, and explains that it remained in verification-only mode
 
-#### Scenario: Referenced proc-macro version already exists
-- **WHEN** automated publishing is enabled and the `clap-tui-macros` version referenced by
-  `clap-tui` is already available on crates.io
-- **THEN** the workflow proceeds to the main-crate publish preflight
+#### Scenario: Publishing runs without a proc-macro prerequisite
+- **WHEN** automated publishing is enabled for a tagged `clap-tui` release
+- **THEN** the workflow proceeds directly from baseline verification to the `clap-tui` publish preflight without checking for a separate proc-macro version on crates.io
 
-#### Scenario: Referenced proc-macro version is missing
-- **WHEN** automated publishing is enabled and the referenced `clap-tui-macros` version is not yet
-  available on crates.io
-- **THEN** the workflow fails with guidance to publish `clap-tui-macros` independently before
-  retrying the `clap-tui` tag workflow
+#### Scenario: Publish dry-run gates publication
+- **WHEN** automated publishing is enabled for a tagged `clap-tui` release
+- **THEN** the workflow runs `cargo publish -p clap-tui --locked --dry-run` successfully before attempting the real crates.io publish
 
-### Requirement: Publishing credentials minimize long-lived secrets
-The release workflow SHALL use GitHub OIDC trusted publishing for crates.io authentication by default via `rust-lang/crates-io-auth-action@v1` and SHALL document `CRATES_IO_TOKEN` as the explicit fallback when trusted publishing cannot yet be configured.
-
-#### Scenario: Repository authentication is configured
-- **WHEN** maintainers enable the repository for automated publishing
-- **THEN** the workflow uses the documented OIDC path by default and only falls back to `CRATES_IO_TOKEN` if the preferred integration cannot be used
+#### Scenario: GitHub Release pages stay non-authoritative
+- **WHEN** maintainers create or edit a GitHub Release page for a tagged `clap-tui` release
+- **THEN** that page does not become the authoritative trigger for crates.io publication, which remains the pushed `vX.Y.Z` tag

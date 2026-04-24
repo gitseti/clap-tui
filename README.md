@@ -102,7 +102,7 @@ cargo run -p clap-tui --example kitchen_sink
 
 ## Release verification
 
-Maintainers can run `./scripts/verify-release-readiness.sh` for the same formatting, linting, test, dependency-graph, and package-surface checks that the GitHub `verify` workflow enforces. See `docs/release-readiness.md` for the release tag flow, crates.io owner setup, and the current publishing boundary.
+Maintainers can run `./scripts/verify.sh` for the same formatting, linting, test, dependency-graph, and package-surface checks that the GitHub `verify` workflow enforces. See [docs/release-readiness.md](docs/release-readiness.md) for the routine release runbook, [docs/publishing-setup.md](docs/publishing-setup.md) for one-time publishing setup, and [docs/release-troubleshooting.md](docs/release-troubleshooting.md) for troubleshooting and local simulation notes.
 
 ## Theme presets
 

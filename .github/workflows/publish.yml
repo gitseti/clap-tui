@@ -32,14 +32,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Validate release tag matches crate version
-        run: cargo run -q -p xtask -- check-tag-version "${GITHUB_REF_NAME}"
+        run: ./scripts/check-tag-version.sh "${GITHUB_REF_NAME}"
 
-      - name: Re-run release-readiness verification
-        run: ./scripts/verify-release-readiness.sh
+      - name: Re-run baseline repository verification
+        run: ./scripts/verify.sh
 
       - name: Run crates.io publish dry-run when publishing is enabled
         if: ${{ vars.CLAP_TUI_PUBLISH_MODE == 'trusted-publishing' || vars.CLAP_TUI_PUBLISH_MODE == 'token' }}
-        run: ./scripts/verify-release-readiness.sh --publish-dry-run
+        run: cargo publish -p clap-tui --locked --dry-run
 
       - name: Authenticate with crates.io using trusted publishing
         if: ${{ vars.CLAP_TUI_PUBLISH_MODE == 'trusted-publishing' }}
@@ -66,7 +66,7 @@ jobs:
       - name: Explain why publishing is still disabled
         if: ${{ vars.CLAP_TUI_PUBLISH_MODE != 'trusted-publishing' && vars.CLAP_TUI_PUBLISH_MODE != 'token' }}
         run: |
-          echo "Tag validation and pre-publish verification passed."
+          echo "Tag validation and baseline verification passed."
           echo "Publishing is intentionally disabled until the release prerequisites are complete."
           echo "Set CLAP_TUI_PUBLISH_MODE=trusted-publishing for the default OIDC path,"
           echo "or CLAP_TUI_PUBLISH_MODE=token with CRATES_IO_TOKEN as the explicit fallback."

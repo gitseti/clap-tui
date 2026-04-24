@@ -1,6 +1,7 @@
 ## Overview
 
 This change does not alter the core release invariants. It removes obsolete structure around them.
+This change does not redesign the actual publication policy, authentication modes, or tag naming scheme; it only simplifies and realigns the repository's automation, scripts, and docs around the existing single-crate model.
 
 The repository already sits in an in-between state:
 
@@ -59,6 +60,7 @@ Recommended shape:
 ### Why this is the best fit here
 
 - The repo still benefits from one shared local/CI verification contract.
+- `cargo package -p clap-tui --list` remains part of baseline verification because packaged-file correctness is a standing repository invariant, not only a release-day concern.
 - Package inspection and terminal-stack validation are ongoing invariants, not release-only extras.
 - A baseline-only script keeps the contract stable while making the publish preflight more explicit.
 
@@ -73,7 +75,7 @@ Recommended shape:
 
 ### Current state
 
-`xtask` only implements `check-tag-version`. The code reads one manifest and compares it against a `vX.Y.Z` tag.
+`xtask` only implements `check-tag-version`. The helper reads the crate manifest version and compares it to the pushed `vX.Y.Z` tag.
 
 That invariant matters, but the current implementation is not sized to the current repo:
 
@@ -87,7 +89,7 @@ Replace `xtask check-tag-version` with a small repository-owned script such as `
 
 ### Why this is the best fit here
 
-- The logic is shell-sized.
+- The logic is small enough to justify a simple repo script.
 - The invariant remains visible and reusable outside workflow YAML.
 - The repo no longer needs a Rust task runner just to compare a tag string with a manifest version.
 
@@ -107,7 +109,7 @@ The current publish flow is already close to the target model:
 - tag trigger on `v*`
 - tag/version validation
 - rerun verification
-- publish dry-run before real publish
+- publish dry-run before real publish only when publishing is enabled
 - OIDC preferred
 - token fallback
 - verification-only mode when publishing is disabled
@@ -144,7 +146,7 @@ Concrete mapping:
 
 `ci.yml` runs on every push and pull request. `publish.yml` already reruns verification on release tags.
 
-That means a `vX.Y.Z` tag push likely causes:
+That means a `vX.Y.Z` tag push causes both:
 
 - one `verify` workflow run
 - one `publish` workflow run that also reruns verification

@@ -263,8 +263,4 @@ The docs should stop referencing nonexistent artifacts, explicitly direct mainta
 - Release docs describe `cargo release` as an optional helper rather than a required happy-path step.
 - Release docs separate recurring runbook guidance from one-time publishing setup and troubleshooting guidance.
 - Any stale references to nonexistent or removed release artifacts are removed or replaced with accurate instructions.
-
-## Open Questions
-
-- What is the canonical release-notes artifact for this repository going forward? The current docs say `CHANGELOG.md`, but no such file exists. The implementation should document the real source of release notes rather than preserve a placeholder step.
 - Should `cargo release` remain part of the recommended routine release flow, or should it be demoted to an optional helper documented only in setup/troubleshooting? The existing `release.toml` supports it, but the current repo does not prove it must be the main happy path.

@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
   push:
+    tags-ignore:
+      - "v*"
 
 permissions:
   contents: read
@@ -24,5 +26,5 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Run release-readiness verification
-        run: ./scripts/verify-release-readiness.sh
+      - name: Run repository verification
+        run: ./scripts/verify.sh
