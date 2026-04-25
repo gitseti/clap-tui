@@ -2,49 +2,52 @@ use clap::{Arg, ArgAction, ArgGroup, Command, ValueHint, value_parser};
 use clap_tui::TuiApp;
 
 fn build_command() -> Command {
-    Command::new("kitchen-sink")
+    Command::new("clap-features")
         .version("0.1.0")
-        .about("Track clap feature coverage in the TUI generator")
+        .about("Manual compatibility and stress fixture for clap feature coverage")
         .long_about(
-            "A broad clap command graph used to track which clap features are \
-             already supported by clap-tui and which ones are still missing.",
+            "A broad clap command graph used to exercise clap features in clap-tui. \
+             This example is a diagnostic compatibility fixture rather than a learning-oriented CLI.",
         )
         .next_line_help(true)
         .arg_required_else_help(true)
         .subcommand_negates_reqs(true)
         .allow_external_subcommands(true)
         .external_subcommand_value_parser(value_parser!(String))
-        .group(ArgGroup::new("mode").args(["fast", "safe"]).required(true))
-        // Global args.
+        .group(
+            ArgGroup::new("required_mode_group")
+                .args(["required_mode_fast", "required_mode_safe"])
+                .required(true),
+        )
         .arg(
-            Arg::new("verbose")
+            Arg::new("global_counted_verbosity")
                 .short('v')
-                .long("verbose")
-                .help("Increase logging verbosity")
-                .long_help("Repeat to increase verbosity, for example `-v`, `-vv`, or `-vvv`.")
+                .long("global-counted-verbosity")
+                .help("Counted global flag")
+                .long_help("Repeat to increase the count, for example `-v`, `-vv`, or `-vvv`.")
                 .help_heading("Global")
                 .display_order(1)
                 .action(ArgAction::Count)
                 .global(true),
         )
         .arg(
-            Arg::new("quiet")
-                .long("quiet")
-                .help("Silence normal output")
+            Arg::new("global_conflicts_with_count")
+                .long("global-conflicts-with-count")
+                .help("Global flag that conflicts with --global-counted-verbosity")
                 .help_heading("Global")
                 .display_order(2)
                 .action(ArgAction::SetTrue)
-                .conflicts_with("verbose")
+                .conflicts_with("global_counted_verbosity")
                 .global(true),
         )
         .arg(
-            Arg::new("color")
-                .long("color")
-                .visible_alias("colour")
-                .help("Control color output")
+            Arg::new("global_optional_value_enum")
+                .long("global-optional-value-enum")
+                .visible_alias("global-optional-value-enum-alias")
+                .help("Global option with an optional value and default missing value")
                 .long_help(
-                    "Optional-value flag. `--color` uses the default missing value, while \
-                     `--color=never` sets an explicit value.",
+                    "Optional-value flag. `--global-optional-value-enum` uses the default missing \
+                     value, while `--global-optional-value-enum=never` sets an explicit value.",
                 )
                 .help_heading("Global")
                 .display_order(3)
@@ -56,12 +59,12 @@ fn build_command() -> Command {
                 .global(true),
         )
         .arg(
-            Arg::new("config")
+            Arg::new("global_config_path")
                 .short('c')
-                .long("config")
-                .aliases(["conf"])
-                .visible_alias("cfg")
-                .help("Path to the main config file")
+                .long("global-config-path")
+                .aliases(["config-path-alias"])
+                .visible_alias("cfg-path")
+                .help("Global file path option")
                 .help_heading("Global")
                 .display_order(4)
                 .value_name("FILE")
@@ -69,67 +72,64 @@ fn build_command() -> Command {
                 .global(true),
         )
         .arg(
-            Arg::new("profile")
-                .long("profile")
-                .visible_aliases(["environment", "stage"])
-                .help("Named execution profile")
+            Arg::new("global_defaulted_value_enum")
+                .long("global-defaulted-value-enum")
+                .visible_aliases(["global-visible-alias-a", "global-visible-alias-b"])
+                .help("Global option with a defaulted enumerated value")
                 .help_heading("Global")
                 .display_order(5)
                 .default_value("dev")
                 .value_parser(["dev", "stage", "prod"])
                 .global(true),
         )
-        // Required group on the root command.
         .arg(
-            Arg::new("fast")
-                .long("fast")
-                .help("Optimize for speed")
-                .help_heading("Mode")
+            Arg::new("required_mode_fast")
+                .long("required-mode-fast")
+                .help("First member of a required ArgGroup")
+                .help_heading("Groups")
                 .display_order(10)
                 .action(ArgAction::SetTrue)
-                .group("mode"),
+                .group("required_mode_group"),
         )
         .arg(
-            Arg::new("safe")
-                .long("safe")
-                .help("Optimize for safety")
-                .help_heading("Mode")
+            Arg::new("required_mode_safe")
+                .long("required-mode-safe")
+                .help("Second member of a required ArgGroup")
+                .help_heading("Groups")
                 .display_order(11)
                 .action(ArgAction::SetTrue)
-                .group("mode"),
+                .group("required_mode_group"),
         )
-        // Argument relationships and richer value shapes.
         .arg(
-            Arg::new("upload")
-                .long("upload")
-                .help("Upload results to the remote target")
-                .help_heading("Actions")
+            Arg::new("debug")
+                .long("debug")
+                .help("Boolean flag used by --conflicts-with-debug")
+                .help_heading("Relations")
                 .display_order(20)
-                .action(ArgAction::SetTrue)
-                .requires("token")
-                .conflicts_with("dry_run"),
+                .action(ArgAction::SetTrue),
         )
         .arg(
-            Arg::new("token")
-                .long("token")
-                .help("Authentication token required by --upload")
-                .help_heading("Actions")
+            Arg::new("conflicts_with_debug")
+                .long("conflicts-with-debug")
+                .help("Boolean flag that conflicts with --debug")
+                .help_heading("Relations")
                 .display_order(21)
-                .value_name("TOKEN"),
+                .action(ArgAction::SetTrue)
+                .conflicts_with("debug"),
         )
         .arg(
-            Arg::new("dry_run")
-                .long("dry-run")
-                .help("Preview actions without writing changes")
-                .help_heading("Actions")
+            Arg::new("requires_config")
+                .long("requires-config")
+                .help("Boolean flag that requires --global-config-path")
+                .help_heading("Relations")
                 .display_order(22)
                 .action(ArgAction::SetTrue)
-                .conflicts_with("upload"),
+                .requires("global_config_path"),
         )
         .arg(
-            Arg::new("offset")
-                .long("offset")
-                .help("Integer offset that accepts negative numbers")
+            Arg::new("allow_negative_integer")
+                .long("allow-negative-integer")
+                .help("Integer option that accepts negative numbers")
                 .help_heading("Input")
                 .display_order(30)
                 .default_value("0")
@@ -137,22 +137,22 @@ fn build_command() -> Command {
                 .value_parser(value_parser!(i32)),
         )
         .arg(
-            Arg::new("tag")
-                .short('t')
-                .long("tag")
-                .visible_alias("label")
-                .help("Repeatable tag list; also accepts comma-delimited values")
+            Arg::new("multiple_values")
+                .short('m')
+                .long("multiple-values")
+                .visible_alias("multiple-values-alias")
+                .help("Repeatable option that also accepts comma-delimited values")
                 .help_heading("Input")
                 .display_order(31)
                 .action(ArgAction::Append)
                 .num_args(1..)
-                .value_name("TAG")
+                .value_name("VALUE")
                 .value_delimiter(','),
         )
         .arg(
-            Arg::new("define")
-                .long("define")
-                .help("Key/value pairs")
+            Arg::new("key_value_pair")
+                .long("key-value-pair")
+                .help("Option that captures two values per occurrence")
                 .help_heading("Input")
                 .display_order(32)
                 .action(ArgAction::Append)
@@ -160,8 +160,8 @@ fn build_command() -> Command {
                 .value_names(["KEY", "VALUE"]),
         )
         .arg(
-            Arg::new("include")
-                .long("include")
+            Arg::new("terminated_paths")
+                .long("terminated-paths")
                 .help("Multi-value path list terminated by `;`")
                 .help_heading("Input")
                 .display_order(33)
@@ -171,36 +171,34 @@ fn build_command() -> Command {
                 .value_hint(ValueHint::AnyPath)
                 .value_terminator(";"),
         )
-        // Subcommands with aliases, subcommand flags, and their own parser rules.
         .subcommand(
-            Command::new("serve")
-                .about("Serve a directory over HTTP")
-                .visible_alias("http")
+            Command::new("required-args")
+                .about("Required positional arguments plus defaults and repeated values")
                 .display_order(1)
                 .arg(
-                    Arg::new("document_root")
-                        .help("Directory to serve")
+                    Arg::new("required_path")
+                        .help("Required positional path")
                         .required(true)
                         .index(1)
                         .value_hint(ValueHint::DirPath),
                 )
                 .arg(
-                    Arg::new("host")
-                        .long("host")
-                        .help("Bind address")
+                    Arg::new("defaulted_host")
+                        .long("defaulted-host")
+                        .help("Option with a default value")
                         .default_value("127.0.0.1"),
                 )
                 .arg(
-                    Arg::new("port")
-                        .long("port")
-                        .help("Bind port")
+                    Arg::new("defaulted_port")
+                        .long("defaulted-port")
+                        .help("Option with a default value parser")
                         .default_value("8080")
                         .value_parser(value_parser!(u16)),
                 )
                 .arg(
-                    Arg::new("feature")
-                        .long("feature")
-                        .help("Server features; supports repeated and comma-delimited input")
+                    Arg::new("repeated_value_enum")
+                        .long("repeated-value-enum")
+                        .help("Repeated value enum input with comma-delimited values")
                         .action(ArgAction::Append)
                         .num_args(1..)
                         .value_delimiter(',')
@@ -208,22 +206,22 @@ fn build_command() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("sync")
-                .about("Synchronize artifacts")
-                .short_flag('S')
-                .long_flag("sync")
-                .visible_alias("mirror")
+            Command::new("repeated-values")
+                .about("Repeated positional values plus a trailing `last(true)` argument")
+                .short_flag('R')
+                .long_flag("repeated-values")
+                .visible_alias("repeated-values-alias")
                 .display_order(2)
                 .arg(
-                    Arg::new("target")
-                        .long("target")
-                        .help("Sync target")
+                    Arg::new("required_target")
+                        .long("required-target")
+                        .help("Required enumerated option")
                         .required(true)
                         .value_parser(["local", "s3", "gcs"]),
                 )
                 .arg(
-                    Arg::new("path")
-                        .help("Input paths to synchronize")
+                    Arg::new("repeated_paths")
+                        .help("Required repeated positional values")
                         .required(true)
                         .index(1)
                         .action(ArgAction::Append)
@@ -231,7 +229,7 @@ fn build_command() -> Command {
                         .value_hint(ValueHint::AnyPath),
                 )
                 .arg(
-                    Arg::new("filter")
+                    Arg::new("last_filters")
                         .help("Additional filter expressions after `--`")
                         .index(2)
                         .last(true)
@@ -241,36 +239,36 @@ fn build_command() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("exec")
-                .about("Run a program with trailing raw arguments")
-                .visible_aliases(["spawn", "run-raw"])
+            Command::new("trailing-var-args")
+                .about("Trailing raw arguments, command hints, and repeated env pairs")
+                .visible_aliases(["spawn-alias", "run-raw-alias"])
                 .display_order(3)
                 .arg_required_else_help(true)
                 .arg(
-                    Arg::new("cwd")
-                        .long("cwd")
-                        .help("Working directory")
+                    Arg::new("optional_cwd")
+                        .long("optional-cwd")
+                        .help("Optional working directory")
                         .value_hint(ValueHint::DirPath),
                 )
                 .arg(
-                    Arg::new("env_pair")
-                        .long("env")
-                        .help("Environment pairs; supports repeated and comma-delimited input")
+                    Arg::new("repeated_env_pair")
+                        .long("repeated-env-pair")
+                        .help("Repeated option with comma-delimited KEY=VALUE items")
                         .action(ArgAction::Append)
                         .num_args(1..)
                         .value_name("KEY=VALUE")
                         .value_delimiter(','),
                 )
                 .arg(
-                    Arg::new("program")
-                        .help("Program to run")
+                    Arg::new("required_program")
+                        .help("Required command name")
                         .required(true)
                         .index(1)
                         .value_hint(ValueHint::CommandName),
                 )
                 .arg(
-                    Arg::new("argv")
-                        .help("Raw trailing command arguments")
+                    Arg::new("raw_argv")
+                        .help("Trailing raw command arguments")
                         .index(2)
                         .action(ArgAction::Append)
                         .num_args(1..)
@@ -280,15 +278,15 @@ fn build_command() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("workflow")
-                .about("Command-level subcommand interaction rules")
+            Command::new("args-conflict-with-subcommands")
+                .about("args_conflicts_with_subcommands and subcommand_negates_reqs coverage")
                 .display_order(4)
                 .arg_required_else_help(true)
                 .subcommand_negates_reqs(true)
                 .args_conflicts_with_subcommands(true)
                 .arg(
-                    Arg::new("template")
-                        .long("template")
+                    Arg::new("required_template")
+                        .long("required-template")
                         .help("Required unless a subcommand is chosen")
                         .required(true)
                         .value_name("NAME"),
@@ -297,8 +295,8 @@ fn build_command() -> Command {
                 .subcommand(Command::new("apply").about("Execute the workflow")),
         )
         .subcommand(
-            Command::new("admin")
-                .about("Nested command that requires a subcommand")
+            Command::new("nested-subcommands")
+                .about("Nested subcommands with subcommand_required")
                 .display_order(5)
                 .arg_required_else_help(true)
                 .subcommand_required(true)
@@ -310,8 +308,8 @@ fn build_command() -> Command {
                         .subcommand_required(true)
                         .subcommand(
                             Command::new("list").about("List known users").arg(
-                                Arg::new("status")
-                                    .long("status")
+                                Arg::new("user_status")
+                                    .long("user-status")
                                     .help("Filter users by account state")
                                     .value_parser(["active", "disabled", "pending"]),
                             ),
@@ -320,8 +318,8 @@ fn build_command() -> Command {
                             Command::new("sessions")
                                 .about("Inspect active user sessions")
                                 .arg(
-                                    Arg::new("user")
-                                        .long("user")
+                                    Arg::new("session_user")
+                                        .long("session-user")
                                         .help("Only show sessions for this user")
                                         .value_name("USER"),
                                 ),
@@ -329,9 +327,9 @@ fn build_command() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("inspect")
-                .about("Read-only inspection helpers")
-                .visible_alias("show")
+            Command::new("exclusive-flag")
+                .about("Exclusive flag coverage")
+                .visible_alias("exclusive-flag-alias")
                 .display_order(6)
                 .arg(
                     Arg::new("dump_defaults")
@@ -341,7 +339,7 @@ fn build_command() -> Command {
                         .exclusive(true),
                 )
                 .arg(
-                    Arg::new("item")
+                    Arg::new("optional_item")
                         .help("Optional item to inspect")
                         .index(1)
                         .value_parser(["config", "cache", "state"]),

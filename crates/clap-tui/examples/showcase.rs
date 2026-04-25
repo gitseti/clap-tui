@@ -1,150 +1,132 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_tui::Tui;
-use std::str::FromStr;
-use std::time::Duration;
+use std::path::PathBuf;
 
 #[derive(Debug, Parser, PartialEq, Eq)]
 #[command(
     name = "showcase",
-    about = "Compact showcase for nested commands, dropdowns, and text input",
+    about = "A realistic clap-tui showcase CLI",
     version = "0.1.0"
 )]
 enum Command {
     /// Launch the interactive TUI
     Tui,
-    /// Deploy an application target
-    Deploy {
-        /// Shared deployment profile
-        #[arg(long, value_enum, default_value_t = Profile::Preview, global = true)]
-        profile: Profile,
-
-        /// Team or project name
-        #[arg(long, default_value = "checkout", global = true)]
-        team: String,
-
+    /// Build the application bundle
+    Build(BuildArgs),
+    /// Run the local development server
+    Serve(ServeArgs),
+    /// Deploy a build to an environment
+    Deploy(DeployArgs),
+    /// Show or update persisted configuration
+    Config {
         #[command(subcommand)]
-        target: DeployTarget,
+        command: ConfigCommand,
     },
-    /// Inspect logs for a running target
-    Logs {
-        /// Shared deployment profile
-        #[arg(long, value_enum, default_value_t = Profile::Preview, global = true)]
-        profile: Profile,
-
-        /// Team or project name
-        #[arg(long, default_value = "checkout", global = true)]
-        team: String,
-
-        #[command(subcommand)]
-        target: LogsTarget,
-    },
-}
-
-#[derive(Debug, Subcommand, PartialEq, Eq)]
-enum DeployTarget {
-    /// Deploy the web application
-    Web(ReleaseOptions),
-    /// Deploy the background worker
-    Worker(ReleaseOptions),
-}
-
-#[derive(Debug, Subcommand, PartialEq, Eq)]
-enum LogsTarget {
-    /// Inspect web logs
-    Web(LogOptions),
-    /// Inspect worker logs
-    Worker(LogOptions),
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
-struct ReleaseOptions {
+struct BuildArgs {
+    /// Emit an optimized production bundle
+    #[arg(short, long)]
+    release: bool,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t = BuildFormat::Binary)]
+    format: BuildFormat,
+
+    /// Output directory
+    #[arg(long, default_value = "dist")]
+    output: String,
+
+    /// Source directory to build
+    #[arg(value_hint = clap::ValueHint::DirPath)]
+    source: PathBuf,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+struct ServeArgs {
+    /// Host interface to bind
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
+    /// Port to listen on
+    #[arg(long, default_value_t = 3000)]
+    port: u16,
+
+    /// Rebuild automatically when files change
+    #[arg(short, long)]
+    watch: bool,
+
+    /// Optional config file
+    #[arg(long, value_hint = clap::ValueHint::FilePath)]
+    config: Option<PathBuf>,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+struct DeployArgs {
     /// Deployment environment
-    #[arg(long, value_enum, default_value_t = Environment::Staging)]
+    #[arg(long, value_enum)]
     environment: Environment,
 
-    /// Cloud region
-    #[arg(long, value_enum, default_value_t = Region::EuCentral1)]
-    region: Region,
+    /// Deployment target
+    #[arg(value_enum)]
+    target: DeployTarget,
 
-    /// Image tag to deploy
-    #[arg(long, default_value = "2026.04.1")]
-    image_tag: String,
+    /// Preview actions without applying changes
+    #[arg(short = 'n', long)]
+    dry_run: bool,
 
-    /// Number of replicas
-    #[arg(long, default_value_t = 2)]
-    replicas: u16,
+    /// Repeatable release tags
+    #[arg(long = "tag", short = 't')]
+    tags: Vec<String>,
+}
 
-    /// Roll out as a canary release first
-    #[arg(long)]
-    canary: bool,
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+enum ConfigCommand {
+    /// Print the effective configuration
+    Show,
+    /// Set a configuration value
+    Set(ConfigSetArgs),
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
-struct LogOptions {
-    /// Environment to inspect
-    #[arg(long, value_enum, default_value_t = Environment::Staging)]
-    environment: Environment,
+struct ConfigSetArgs {
+    /// Config key to update
+    key: String,
 
-    /// Cloud region
-    #[arg(long, value_enum, default_value_t = Region::EuCentral1)]
-    region: Region,
+    /// Config value to store
+    value: String,
 
-    #[arg(long, default_value = "15m")]
-    since: Since,
-
-    /// Keep streaming new log lines
-    #[arg(long)]
-    follow: bool,
+    /// Where the setting should be written
+    #[arg(long, value_enum, default_value_t = ConfigScope::Local)]
+    scope: ConfigScope,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
-enum Profile {
-    Preview,
-    Team,
-    Production,
+enum BuildFormat {
+    Binary,
+    Tarball,
+    Docker,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 enum Environment {
-    Dev,
     Staging,
     Production,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
-enum Region {
-    UsEast1,
-    EuCentral1,
-    ApSouth1,
+enum DeployTarget {
+    Web,
+    Worker,
+    Jobs,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Since(pub Duration);
-
-impl FromStr for Since {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() < 2 {
-            return Err("must be like 15m or 1h".into());
-        }
-
-        let (num_part, unit_part) = s.split_at(s.len() - 1);
-
-        let value: u64 = num_part
-            .parse()
-            .map_err(|_| "must start with a number (e.g. 15m)")?;
-
-        let duration = match unit_part {
-            "s" => Duration::from_secs(value),
-            "m" => Duration::from_secs(value * 60),
-            "h" => Duration::from_secs(value * 60 * 60),
-            "d" => Duration::from_secs(value * 60 * 60 * 24),
-            _ => return Err("unit must be one of: s, m, h, d".into()),
-        };
-
-        Ok(Since(duration))
-    }
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+enum ConfigScope {
+    Local,
+    Shared,
+    Global,
 }
 
 fn dispatch(command: Command) {

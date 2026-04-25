@@ -775,10 +775,10 @@ mod tests {
         let root = crate::spec::CommandSpec::from_command(
             &Command::new("tool")
                 .arg(Arg::new("config").long("config").help("Config file"))
-                .subcommand(Command::new("kitchen-sink").subcommand(Command::new("child"))),
+                .subcommand(Command::new("clap-features").subcommand(Command::new("child"))),
         );
         let selected_path =
-            CommandPath::from(vec!["kitchen-sink".to_string(), "child".to_string()]);
+            CommandPath::from(vec!["clap-features".to_string(), "child".to_string()]);
         let active_args = visible_args_for_path(&root, &selected_path, ActiveTab::Inputs);
         let ui = UiState {
             focus: Focus::Sidebar,

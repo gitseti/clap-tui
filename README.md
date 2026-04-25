@@ -94,17 +94,17 @@ Internal reducers, projections, render helpers, and other support modules are no
 ## Example guide
 
 - `simple` shows minimal `Command::Tui` setup with the entrypoint hidden from the rendered TUI.
-- `showcase` shows nested commands and common UI elements.
+- `showcase` shows a realistic, readable CLI with a small nested config area.
 - `subcommands` shows typed dispatch across command trees.
-- `kitchen_sink` shows the full `TuiApp::from_command(...)` surface.
-  It launches the TUI directly, expects an interactive terminal, and is not intended for
-  non-interactive `--help` usage.
+- `clap_features` is the diagnostic compatibility fixture for the full
+  `TuiApp::from_command(...)` surface. It launches the TUI directly, expects an interactive
+  terminal, and is not intended for non-interactive `--help` usage.
 
 ```bash
 cargo run -p clap-tui --example simple -- tui
 cargo run -p clap-tui --example showcase -- tui
 cargo run -p clap-tui --example subcommands -- tui
-cargo run -p clap-tui --example kitchen_sink
+cargo run -p clap-tui --example clap_features
 ```
 
 ## Release verification

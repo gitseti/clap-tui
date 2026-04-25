@@ -118,9 +118,9 @@
 //!
 //! The crate ships with four public examples:
 //! - `simple` for minimal `Command::Tui` setup
-//! - `showcase` for nested commands and common UI elements
+//! - `showcase` for a realistic, compact command tree
 //! - `subcommands` for typed dispatch across command trees
-//! - `kitchen_sink` for the full [`TuiApp`] surface
+//! - `clap_features` for the full [`TuiApp`] compatibility fixture
 
 mod app;
 mod argv_serializer;

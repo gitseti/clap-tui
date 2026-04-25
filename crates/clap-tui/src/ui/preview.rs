@@ -282,14 +282,14 @@ mod tests {
     fn preview_highlights_binary_name_and_flags() {
         let config = TuiConfig::default();
         let command = rendered_command(&[
-            ("kitchen-sink", RenderedShellTokenKind::EntryPoint),
+            ("clap-features", RenderedShellTokenKind::EntryPoint),
             ("serve", RenderedShellTokenKind::SubcommandName),
             ("--feature=gzip", RenderedShellTokenKind::OptionSpelling),
             ("-literal", RenderedShellTokenKind::Value),
         ]);
         let line = command_preview_line(&config, Some(&command), false);
 
-        assert_eq!(line.spans[1].content.as_ref(), "kitchen-sink");
+        assert_eq!(line.spans[1].content.as_ref(), "clap-features");
         assert_eq!(line.spans[1].style.fg, Some(config.theme.result_accent));
         assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
         assert_eq!(line.spans[3].content.as_ref(), "serve");

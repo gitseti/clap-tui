@@ -814,7 +814,7 @@ mod tests {
     #[test]
     fn rendered_command_text_is_joined_from_rendered_tokens() {
         let argv = os_vec(&[
-            "kitchen-sink",
+            "clap-features",
             "serve",
             "--feature=gzip",
             "-literal",
@@ -893,7 +893,7 @@ mod tests {
                 .map(|token| token.text.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                "kitchen-sink",
+                "clap-features",
                 "serve",
                 "--feature=gzip",
                 "-literal",
