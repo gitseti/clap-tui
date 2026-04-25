@@ -111,11 +111,10 @@ pub(crate) fn render(
         &vm,
         &frame_snapshot.layout,
     );
-    render_preview_band_background(frame, config, size, screen_layout.areas.preview);
     if screen_layout.areas.form.x > 0 {
         let divider_height = screen_layout
             .areas
-            .footer
+            .preview
             .y
             .saturating_sub(screen_layout.areas.sidebar.y);
         let divider_area = Rect::new(
@@ -155,22 +154,6 @@ pub(crate) fn render(
     );
     toast::render_toast(frame, state, config, size);
     frame_snapshot
-}
-
-fn render_preview_band_background(
-    frame: &mut Frame<'_>,
-    config: &TuiConfig,
-    size: Rect,
-    preview_area: Rect,
-) {
-    if preview_area.height == 0 {
-        return;
-    }
-    let band = Rect::new(0, preview_area.y, size.width, preview_area.height);
-    frame.render_widget(
-        Block::default().style(styles::surface(config, styles::Surface::Workspace)),
-        band,
-    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -655,6 +638,7 @@ mod tests {
         assert!(!preview.contains("--mode"));
     }
 
+    #[allow(clippy::too_many_lines)]
     #[test]
     fn sidebar_and_workspace_share_one_panel_fill_with_a_vertical_divider() {
         let mut state = AppState::from_command(
@@ -685,8 +669,8 @@ mod tests {
             "│"
         );
         assert_eq!(
-            cell_bg(&sidebar_backend, sidebar_area.x + 1, preview_area.y),
-            config.theme.workspace_bg
+            cell_bg(&sidebar_backend, preview_area.x + 1, preview_area.y),
+            config.theme.preview_bg
         );
         assert_eq!(
             cell_bg(
@@ -697,7 +681,23 @@ mod tests {
                     .saturating_sub(1),
                 preview_area.y
             ),
-            config.theme.header_bg
+            config.theme.preview_bg
+        );
+        assert_ne!(
+            sidebar_backend.buffer()[(form_area.x - 1, preview_area.y)].symbol(),
+            "│"
+        );
+        let footer_area = sidebar_snapshot.layout.footer.expect("footer area");
+        assert_eq!(
+            cell_bg(
+                &sidebar_backend,
+                footer_area
+                    .x
+                    .saturating_add(footer_area.width)
+                    .saturating_sub(1),
+                footer_area.y
+            ),
+            config.theme.shell_bg
         );
 
         state.ui.focus_form();
@@ -720,8 +720,8 @@ mod tests {
             "│"
         );
         assert_eq!(
-            cell_bg(&form_backend, sidebar_area.x + 1, preview_area.y),
-            config.theme.workspace_bg
+            cell_bg(&form_backend, preview_area.x + 1, preview_area.y),
+            config.theme.preview_bg
         );
         assert_eq!(
             cell_bg(
@@ -732,8 +732,42 @@ mod tests {
                     .saturating_sub(1),
                 preview_area.y
             ),
-            config.theme.header_bg
+            config.theme.preview_bg
         );
+        assert_ne!(
+            form_backend.buffer()[(form_area.x - 1, preview_area.y)].symbol(),
+            "│"
+        );
+        let footer_area = form_snapshot.layout.footer.expect("footer area");
+        assert_eq!(
+            cell_bg(
+                &form_backend,
+                footer_area
+                    .x
+                    .saturating_add(footer_area.width)
+                    .saturating_sub(1),
+                footer_area.y
+            ),
+            config.theme.shell_bg
+        );
+    }
+
+    #[test]
+    fn roomy_threshold_layout_keeps_preview_prominent_without_cramping_form() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .about("Run tool")
+                .arg(Arg::new("config").long("config"))
+                .arg(Arg::new("output").long("output")),
+        );
+
+        let (_, snapshot) = render_app_with_size(&mut state, 80, 20);
+        let preview_area = snapshot.layout.preview.expect("preview area");
+        let form_area = snapshot.layout.form.expect("form area");
+
+        assert_eq!(preview_area.height, 4);
+        assert_eq!(form_area.height, 12);
+        assert!(form_area.height > preview_area.height);
     }
 
     #[test]

@@ -58,7 +58,7 @@ impl Widget for FooterWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         Widget::render(
             Paragraph::new(Line::from(footer_spans(self.config, self.view)))
-                .style(Style::default().bg(self.config.theme.header_bg)),
+                .style(Style::default().bg(self.config.theme.shell_bg)),
             area,
             buf,
         );
@@ -141,9 +141,9 @@ fn build_chip(
 
 fn build_status_chip(ui: &UiState, chip: &str) -> FooterChip {
     FooterChip {
-        target: HoverTarget::Preview,
+        target: HoverTarget::FooterStatus,
         label: format!(" {chip} "),
-        hovered: matches!(ui.hover, Some(HoverTarget::Preview | HoverTarget::Run)),
+        hovered: ui.hover == Some(HoverTarget::FooterStatus),
         variant: FooterChipVariant::Status,
     }
 }
@@ -427,13 +427,13 @@ mod tests {
         );
 
         assert_eq!(view.hints[0].label, " Missing required argument: --name ");
-        assert_eq!(view.hints[0].target, HoverTarget::Preview);
+        assert_eq!(view.hints[0].target, HoverTarget::FooterStatus);
     }
 
     #[test]
-    fn footer_status_highlights_when_run_is_hovered() {
+    fn footer_status_does_not_highlight_when_preview_is_hovered() {
         let mut state = build_test_state();
-        state.ui.hover = Some(HoverTarget::Run);
+        state.ui.hover = Some(HoverTarget::Preview);
 
         let view = build_footer_view(
             &state.ui,
@@ -445,9 +445,8 @@ mod tests {
             },
         );
 
-        assert!(view.actions[0].hovered);
-        assert!(view.hints[0].hovered);
-        assert_eq!(view.hints[0].target, HoverTarget::Preview);
+        assert!(!view.hints[0].hovered);
+        assert_eq!(view.hints[0].target, HoverTarget::FooterStatus);
     }
 
     #[test]
@@ -464,7 +463,7 @@ mod tests {
         );
 
         assert_eq!(view.actions.len(), 2);
-        assert_eq!(view.hints[0].target, HoverTarget::Preview);
+        assert_eq!(view.hints[0].target, HoverTarget::FooterStatus);
         assert!(
             view.hints
                 .iter()

@@ -213,12 +213,9 @@ pub(crate) fn sidebar_row(config: &TuiConfig, state: SidebarRowState) -> Style {
 pub(crate) fn subtle_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
         .fg(config.theme.metadata)
-        .bg(config.theme.header_bg);
+        .bg(config.theme.shell_bg);
     if hovered {
-        style
-            .fg(config.theme.text)
-            .bg(config.theme.badge_bg)
-            .add_modifier(Modifier::BOLD)
+        style.fg(config.theme.text)
     } else {
         style
     }
@@ -227,10 +224,9 @@ pub(crate) fn subtle_chip(config: &TuiConfig, hovered: bool) -> Style {
 pub(crate) fn status_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
         .fg(config.theme.error)
-        .bg(config.theme.header_bg)
-        .add_modifier(Modifier::BOLD);
+        .bg(config.theme.shell_bg);
     if hovered {
-        style.fg(config.theme.shell_bg).bg(config.theme.error)
+        style.bg(config.theme.badge_bg)
     } else {
         style
     }
@@ -240,10 +236,9 @@ pub(crate) fn status_chip(config: &TuiConfig, hovered: bool) -> Style {
 pub(crate) fn success_chip(config: &TuiConfig, hovered: bool) -> Style {
     let style = Style::default()
         .fg(config.theme.success)
-        .bg(config.theme.header_bg)
-        .add_modifier(Modifier::BOLD);
+        .bg(config.theme.shell_bg);
     if hovered {
-        style.fg(config.theme.shell_bg).bg(config.theme.success)
+        style.bg(config.theme.badge_bg)
     } else {
         style
     }
@@ -252,13 +247,12 @@ pub(crate) fn success_chip(config: &TuiConfig, hovered: bool) -> Style {
 pub(crate) fn secondary_chip(config: &TuiConfig, hovered: bool) -> Style {
     if hovered {
         Style::default()
-            .fg(config.theme.secondary_action_fg)
-            .bg(config.theme.secondary_action_bg)
-            .add_modifier(Modifier::BOLD)
+            .fg(config.theme.text)
+            .bg(config.theme.shell_bg)
     } else {
         Style::default()
             .fg(config.theme.metadata)
-            .bg(config.theme.header_bg)
+            .bg(config.theme.shell_bg)
     }
 }
 
@@ -358,7 +352,7 @@ mod tests {
 
     use super::{
         MetadataKind, SidebarRowState, field_border, metadata_badge, panel_border, panel_surface,
-        primary_chip, secondary_chip, sidebar_row, success_chip,
+        primary_chip, secondary_chip, sidebar_row, status_chip, subtle_chip, success_chip,
     };
 
     #[test]
@@ -446,10 +440,10 @@ mod tests {
         assert_eq!(idle.fg, Some(config.theme.primary_action_fg));
         assert_ne!(idle.bg, secondary.bg);
         assert_ne!(idle.fg, secondary.fg);
-        assert_eq!(secondary.bg, Some(config.theme.header_bg));
+        assert_eq!(secondary.bg, Some(config.theme.shell_bg));
         assert_eq!(secondary.fg, Some(config.theme.metadata));
-        assert_eq!(secondary_hovered.bg, Some(config.theme.secondary_action_bg));
-        assert_eq!(secondary_hovered.fg, Some(config.theme.secondary_action_fg));
+        assert_eq!(secondary_hovered.bg, Some(config.theme.shell_bg));
+        assert_eq!(secondary_hovered.fg, Some(config.theme.text));
         assert_ne!(hovered.bg, Some(config.theme.primary_action_bg));
         assert_eq!(hovered.fg, Some(config.theme.primary_action_fg));
         assert!(!hovered.add_modifier.contains(Modifier::UNDERLINED));
@@ -458,6 +452,27 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::UNDERLINED)
         );
+        assert!(!secondary_hovered.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn footer_status_and_subtle_chips_stay_discoverable_without_filled_hover_states() {
+        let config = TuiConfig::default();
+
+        let subtle_idle = subtle_chip(&config, false);
+        let subtle_hover = subtle_chip(&config, true);
+        let status_idle = status_chip(&config, false);
+        let status_hover = status_chip(&config, true);
+
+        assert_eq!(subtle_idle.bg, Some(config.theme.shell_bg));
+        assert_eq!(subtle_hover.bg, Some(config.theme.shell_bg));
+        assert_eq!(subtle_idle.fg, Some(config.theme.metadata));
+        assert_eq!(subtle_hover.fg, Some(config.theme.text));
+        assert_eq!(status_idle.bg, Some(config.theme.shell_bg));
+        assert_eq!(status_hover.bg, Some(config.theme.badge_bg));
+        assert_eq!(status_idle.fg, Some(config.theme.error));
+        assert_eq!(status_hover.fg, Some(config.theme.error));
+        assert!(!status_idle.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]

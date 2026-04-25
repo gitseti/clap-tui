@@ -75,6 +75,7 @@ pub enum HoverTarget {
     Focus,
     Help,
     Preview,
+    FooterStatus,
 }
 
 #[derive(Debug, Clone)]

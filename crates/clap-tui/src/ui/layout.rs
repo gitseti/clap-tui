@@ -57,7 +57,7 @@ pub(crate) fn build_screen_layout(
     } else {
         sidebar_width.clamp(22, 30)
     };
-    let preview_height = if mode.is_compact() { 1 } else { 3 };
+    let preview_height = if mode.is_compact() { 2 } else { 4 };
 
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -89,15 +89,7 @@ pub(crate) fn build_screen_layout(
         horizontal: 1,
         vertical: 0,
     });
-    let preview_area = Rect::new(
-        main_inner.x,
-        preview_row_area.y,
-        preview_row_area
-            .x
-            .saturating_add(preview_row_area.width)
-            .saturating_sub(main_inner.x),
-        preview_row_area.height,
-    );
+    let preview_area = preview_row_area;
     let header_height = if super::header::has_header_content(vm.command) {
         super::header::header_height(vm.command, mode.is_compact())
     } else {
@@ -220,8 +212,8 @@ mod tests {
         );
 
         assert_eq!(layout.areas.header.height, 2);
-        assert_eq!(layout.areas.preview.height, 1);
-        assert_eq!(layout.areas.preview.x, layout.areas.form.x);
+        assert_eq!(layout.areas.preview.height, 2);
+        assert_eq!(layout.areas.preview.x, 0);
         assert_eq!(layout.areas.preview.x + layout.areas.preview.width, 70);
         assert_eq!(layout.areas.footer.height, 1);
     }
@@ -237,9 +229,26 @@ mod tests {
         );
 
         assert_eq!(layout.areas.header.height, 3);
-        assert_eq!(layout.areas.preview.height, 3);
-        assert_eq!(layout.areas.preview.x, layout.areas.form.x);
+        assert_eq!(layout.areas.preview.height, 4);
+        assert_eq!(layout.areas.preview.x, 0);
         assert_eq!(layout.areas.preview.x + layout.areas.preview.width, 100);
         assert_eq!(layout.areas.footer.height, 1);
+    }
+
+    #[test]
+    fn roomy_threshold_and_slightly_larger_sizes_keep_full_width_dock_geometry() {
+        for size in [Rect::new(0, 0, 80, 20), Rect::new(0, 0, 80, 21)] {
+            let layout = build_screen_layout(
+                &ui_state(),
+                &TuiConfig::default(),
+                size,
+                &view(&command(Some("Run the selected tool"))),
+            );
+
+            assert_eq!(LayoutMode::for_size(size), LayoutMode::Roomy);
+            assert_eq!(layout.areas.preview.height, 4);
+            assert_eq!(layout.areas.preview.x, 0);
+            assert_eq!(layout.areas.preview.width, size.width);
+        }
     }
 }

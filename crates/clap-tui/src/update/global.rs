@@ -110,13 +110,14 @@ fn apply_footer_click(
             navigation::toggle_help_tab(state);
             Effect::None
         }
-        HoverTarget::Preview => {
+        HoverTarget::FooterStatus => {
             let validation = state.derived_validation();
             if validation.summary.is_some() {
                 navigation::focus_first_invalid_field(state, frame_snapshot, &validation);
             }
             Effect::None
         }
+        HoverTarget::Preview => Effect::None,
     }
 }
 
@@ -444,7 +445,7 @@ mod tests {
         snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 6));
 
         let effect = apply_action(
-            &Action::ClickFooter(crate::input::HoverTarget::Preview),
+            &Action::ClickFooter(crate::input::HoverTarget::FooterStatus),
             &mut state,
             &snapshot,
         );
@@ -481,7 +482,7 @@ mod tests {
         snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 6));
 
         let effect = apply_action(
-            &Action::ClickFooter(crate::input::HoverTarget::Preview),
+            &Action::ClickFooter(crate::input::HoverTarget::FooterStatus),
             &mut state,
             &snapshot,
         );

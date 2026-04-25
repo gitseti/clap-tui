@@ -278,13 +278,13 @@ mod tests {
     }
 
     #[test]
-    fn preview_click_copies_preview() {
+    fn preview_click_copies_full_width_dock() {
         let state = AppState::new(command(Vec::new()));
         let mut frame_snapshot = FrameSnapshot::default();
-        frame_snapshot.layout.preview = Some(Rect::new(10, 18, 20, 3));
+        frame_snapshot.layout.preview = Some(Rect::new(0, 18, 80, 4));
 
         let action = handle_mouse_event(
-            click(12, 19),
+            click(72, 20),
             &state,
             &frame_snapshot,
             &TuiConfig::default(),
