@@ -204,11 +204,7 @@ impl SharedScriptState {
             return;
         };
 
-        loop {
-            let Some(step) = self.steps.front() else {
-                break;
-            };
-
+        while let Some(step) = self.steps.front() {
             match resolve_step(step, backend, frame) {
                 StepResolution::Satisfied => {
                     self.steps.pop_front();
