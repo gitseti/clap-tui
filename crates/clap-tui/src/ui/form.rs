@@ -341,7 +341,7 @@ fn render_fields(
                 textarea.set_placeholder_text(placeholder);
                 textarea.set_placeholder_style(styles::placeholder(config));
             }
-            frame.render_widget(textarea.widget(), field.input);
+            frame.render_widget(&textarea, field.input);
             place_textarea_cursor(frame, &textarea, field.input);
         } else {
             frame.render_widget(
@@ -584,7 +584,7 @@ fn render_repeated_row_textarea(
         if let Some(cursor_col) = cursor_col {
             textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_col));
         }
-        frame.render_widget(textarea.widget(), area);
+        frame.render_widget(&textarea, area);
         if place_cursor {
             place_textarea_cursor(frame, &textarea, area);
         }
@@ -779,7 +779,7 @@ fn render_textarea_field(
         textarea.set_placeholder_text(placeholder);
         textarea.set_placeholder_style(styles::placeholder(config));
     }
-    frame.render_widget(textarea.widget(), area);
+    frame.render_widget(&textarea, area);
     place_textarea_cursor(frame, &textarea, area);
 }
 
