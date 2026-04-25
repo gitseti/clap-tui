@@ -149,8 +149,11 @@ fn preview_title_style(config: &TuiConfig, hovered: bool) -> Style {
 }
 
 fn preview_hint_style(config: &TuiConfig, hovered: bool) -> Style {
-    let _ = hovered;
-    Style::default().fg(config.theme.shell_border)
+    if hovered {
+        Style::default().fg(config.theme.metadata)
+    } else {
+        Style::default().fg(config.theme.dim)
+    }
 }
 
 fn preview_rule_style(config: &TuiConfig, hovered: bool) -> Style {
@@ -224,9 +227,9 @@ fn preview_token_style(config: &TuiConfig, kind: RenderedShellTokenKind, hovered
             .add_modifier(Modifier::BOLD),
         RenderedShellTokenKind::SubcommandName
         | RenderedShellTokenKind::Value
-        | RenderedShellTokenKind::DelimiterJoinedValue => Style::default()
-            .fg(base_text)
-            .add_modifier(Modifier::BOLD),
+        | RenderedShellTokenKind::DelimiterJoinedValue => {
+            Style::default().fg(base_text).add_modifier(Modifier::BOLD)
+        }
         RenderedShellTokenKind::OptionSpelling => Style::default()
             .fg(config.theme.accent)
             .add_modifier(Modifier::BOLD),
@@ -324,7 +327,7 @@ mod tests {
         assert_eq!(line.spans[2].content.as_ref(), "Command Preview");
         assert_eq!(line.spans[2].style.fg, Some(config.theme.metadata));
         assert!(!line.spans[2].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(line.spans[6].style.fg, Some(config.theme.shell_border));
+        assert_eq!(line.spans[6].style.fg, Some(config.theme.dim));
         assert!(line.spans[6].content.as_ref().contains("copy"));
     }
 
@@ -354,7 +357,7 @@ mod tests {
         let line = preview_header_line(&config, true, 48);
 
         assert_eq!(line.spans[2].style.fg, Some(config.theme.metadata));
-        assert_eq!(line.spans[6].style.fg, Some(config.theme.shell_border));
+        assert_eq!(line.spans[6].style.fg, Some(config.theme.metadata));
     }
 
     #[test]
