@@ -169,16 +169,16 @@ fn footer_spans(config: &TuiConfig, view: &FooterView) -> Vec<Span<'static>> {
 
     append_zone(&mut spans, &mut cursor, 0, config, view.actions.as_slice());
 
-    if let Some(status_offset) = view.status_offset {
-        if let Some(status) = view.status.as_ref() {
-            append_zone(
-                &mut spans,
-                &mut cursor,
-                status_offset,
-                config,
-                std::slice::from_ref(status),
-            );
-        }
+    if let Some(status_offset) = view.status_offset
+        && let Some(status) = view.status.as_ref()
+    {
+        append_zone(
+            &mut spans,
+            &mut cursor,
+            status_offset,
+            config,
+            std::slice::from_ref(status),
+        );
     }
 
     if let Some(hints_offset) = view.hints_offset {

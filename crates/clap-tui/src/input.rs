@@ -201,11 +201,11 @@ impl DomainState {
             let default_input = Self::initial_input_state(&arg);
             let should_remove = {
                 let form = self.forms.entry(key.clone()).or_default();
-                if let Some(input) = default_input {
-                    if !form.inputs.contains_key(&arg.id) {
-                        form.inputs.insert(arg.id.clone(), input);
-                        changed = true;
-                    }
+                if let Some(input) = default_input
+                    && !form.inputs.contains_key(&arg.id)
+                {
+                    form.inputs.insert(arg.id.clone(), input);
+                    changed = true;
                 }
                 form.is_empty()
             };

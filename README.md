@@ -6,7 +6,7 @@ It reduces trial-and-error for complex CLIs by making commands, flags, and value
 
 This crate was heavily inspired by [Trogon](https://github.com/Textualize/trogon). `clap-tui` is a community crate and is not an official `clap` project.
 
-![clap-tui hero screenshot](docs/assets/hero.png)
+![clap-tui hero screenshot](https://raw.githubusercontent.com/gitseti/clap-tui/main/docs/assets/hero.png)
 
 ## Add `clap-tui` to your project
 
@@ -16,7 +16,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 clap-tui = "0.1.0"
 ```
 
-Minimum supported Rust version: `1.85`.
+Minimum supported Rust version: `1.88`.
 
 ## Quick start
 
@@ -97,6 +97,8 @@ Internal reducers, projections, render helpers, and other support modules are no
 - `showcase` shows nested commands and common UI elements.
 - `subcommands` shows typed dispatch across command trees.
 - `kitchen_sink` shows the full `TuiApp::from_command(...)` surface.
+  It launches the TUI directly, expects an interactive terminal, and is not intended for
+  non-interactive `--help` usage.
 
 ```bash
 cargo run -p clap-tui --example simple -- tui
@@ -107,7 +109,7 @@ cargo run -p clap-tui --example kitchen_sink
 
 ## Release verification
 
-Maintainers can run `./scripts/verify.sh` for the same formatting, linting, test, dependency-graph, and package-surface checks that the GitHub `verify` workflow enforces. See [docs/release-readiness.md](docs/release-readiness.md) for the routine release runbook, [docs/publishing-setup.md](docs/publishing-setup.md) for one-time publishing setup, and [docs/release-troubleshooting.md](docs/release-troubleshooting.md) for troubleshooting and local simulation notes.
+Maintainers can run `./scripts/verify.sh` for the same formatting, linting, test, and package-surface checks that the GitHub `verify` workflow enforces. See [docs/release-readiness.md](https://github.com/gitseti/clap-tui/blob/main/docs/release-readiness.md) for the routine release runbook, [docs/publishing-setup.md](https://github.com/gitseti/clap-tui/blob/main/docs/publishing-setup.md) for one-time publishing setup, and [docs/release-troubleshooting.md](https://github.com/gitseti/clap-tui/blob/main/docs/release-troubleshooting.md) for troubleshooting and local simulation notes.
 
 ## Theme presets
 

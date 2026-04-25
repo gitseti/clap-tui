@@ -35,20 +35,20 @@ pub(crate) fn handle_key_event(
     if matches!(state.ui.focus, Focus::Search) {
         return Some(Action::SearchInput(key));
     }
-    if let Some(active_choice) = state.ui.dropdown_open.as_ref() {
-        if matches!(
+    if let Some(active_choice) = state.ui.dropdown_open.as_ref()
+        && matches!(
             key.code,
             AppKeyCode::Up
                 | AppKeyCode::Down
                 | AppKeyCode::Esc
                 | AppKeyCode::Enter
                 | AppKeyCode::Char(' ')
-        ) {
-            return Some(Action::ChoiceInput {
-                arg_id: active_choice.clone(),
-                key,
-            });
-        }
+        )
+    {
+        return Some(Action::ChoiceInput {
+            arg_id: active_choice.clone(),
+            key,
+        });
     }
     if matches!(state.ui.focus, Focus::Form)
         && let Some(action) = handle_form_widget_key_event(key, state, config)
