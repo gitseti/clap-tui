@@ -119,7 +119,7 @@ pub(crate) fn build_screen_layout(
     snapshot.layout.footer = Some(footer_area);
     sidebar::populate_layout(sidebar_area, vm, &mut snapshot.layout);
     form::populate_layout(ui, areas.form, vm, &mut snapshot);
-    footer::populate_layout(ui, footer_area, &mut snapshot.layout);
+    footer::populate_layout(ui, footer_area, &vm.validation, &mut snapshot.layout);
 
     ScreenLayout { areas, snapshot }
 }
@@ -250,5 +250,32 @@ mod tests {
             assert_eq!(layout.areas.preview.x, 0);
             assert_eq!(layout.areas.preview.width, size.width);
         }
+    }
+
+    #[test]
+    fn layout_snapshot_uses_live_validation_for_footer_status_hit_targets() {
+        let command = command(Some("Run the selected tool"));
+        let mut screen_view = view(&command);
+        screen_view.validation = ValidationState {
+            is_valid: false,
+            summary: Some("Missing required argument: --name".to_string()),
+            field_errors: std::collections::BTreeMap::new(),
+        };
+
+        let layout = build_screen_layout(
+            &ui_state(),
+            &TuiConfig::default(),
+            Rect::new(0, 0, 100, 24),
+            &screen_view,
+        );
+
+        assert!(
+            layout
+                .snapshot
+                .layout
+                .footer_buttons
+                .iter()
+                .any(|button| button.target == crate::input::HoverTarget::FooterStatus)
+        );
     }
 }

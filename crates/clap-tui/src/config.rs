@@ -123,10 +123,10 @@ impl Theme {
                 selected_idle_fg: Color::Rgb(230, 243, 245),
                 pill_bg: Color::Rgb(12, 28, 32),
                 badge_bg: Color::Rgb(16, 39, 44),
-                primary_action_bg: Color::Rgb(110, 214, 154),
+                primary_action_bg: Color::Rgb(46, 126, 134),
                 primary_action_fg: Color::Rgb(5, 14, 17),
                 secondary_action_bg: Color::Rgb(16, 39, 44),
-                secondary_action_fg: Color::Rgb(230, 243, 245),
+                secondary_action_fg: Color::Rgb(188, 208, 212),
                 preview_bg: Color::Rgb(8, 20, 24),
                 overlay_bg: Color::Rgb(12, 26, 31),
                 divider: Color::Rgb(28, 58, 64),
@@ -159,10 +159,10 @@ impl Theme {
                 selected_idle_fg: Color::Rgb(245, 247, 250),
                 pill_bg: Color::Rgb(18, 26, 34),
                 badge_bg: Color::Rgb(23, 31, 40),
-                primary_action_bg: Color::Rgb(92, 214, 190),
+                primary_action_bg: Color::Rgb(74, 146, 158),
                 primary_action_fg: Color::Rgb(20, 26, 34),
                 secondary_action_bg: Color::Rgb(34, 45, 56),
-                secondary_action_fg: Color::Rgb(238, 242, 246),
+                secondary_action_fg: Color::Rgb(206, 216, 226),
                 preview_bg: Color::Rgb(14, 20, 26),
                 overlay_bg: Color::Rgb(18, 25, 33),
                 divider: Color::Rgb(72, 88, 102),
@@ -195,10 +195,10 @@ impl Theme {
                 selected_idle_fg: Color::Rgb(24, 32, 40),
                 pill_bg: Color::Rgb(235, 240, 245),
                 badge_bg: Color::Rgb(231, 237, 243),
-                primary_action_bg: Color::Rgb(34, 149, 132),
+                primary_action_bg: Color::Rgb(52, 138, 128),
                 primary_action_fg: Color::Rgb(248, 250, 252),
                 secondary_action_bg: Color::Rgb(226, 233, 239),
-                secondary_action_fg: Color::Rgb(24, 32, 40),
+                secondary_action_fg: Color::Rgb(56, 70, 84),
                 preview_bg: Color::Rgb(238, 242, 246),
                 overlay_bg: Color::Rgb(244, 247, 251),
                 divider: Color::Rgb(200, 208, 216),
@@ -236,6 +236,34 @@ mod tests {
         let theme = Theme::from_preset(ThemePreset::CalmDark);
 
         assert_ne!(theme.accent, theme.result_accent);
+    }
+
+    #[test]
+    fn presets_keep_primary_action_stronger_than_passive_hint_roles() {
+        for preset in [
+            ThemePreset::CalmDark,
+            ThemePreset::HighContrastDark,
+            ThemePreset::Light,
+        ] {
+            let theme = Theme::from_preset(preset);
+
+            assert_ne!(theme.primary_action_bg, theme.badge_bg);
+            assert_ne!(theme.primary_action_bg, theme.shell_bg);
+            assert_ne!(theme.secondary_action_fg, theme.dim);
+        }
+    }
+
+    #[test]
+    fn presets_keep_primary_action_distinct_from_success_feedback() {
+        for preset in [
+            ThemePreset::CalmDark,
+            ThemePreset::HighContrastDark,
+            ThemePreset::Light,
+        ] {
+            let theme = Theme::from_preset(preset);
+
+            assert_ne!(theme.primary_action_bg, theme.success);
+        }
     }
 }
 

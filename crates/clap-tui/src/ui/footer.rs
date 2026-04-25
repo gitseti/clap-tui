@@ -34,8 +34,10 @@ enum FooterChipVariant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FooterView {
     actions: Vec<FooterChip>,
+    status: Option<FooterChip>,
     hints: Vec<FooterChip>,
-    gap_width: u16,
+    status_offset: Option<u16>,
+    hints_offset: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +55,8 @@ struct FooterWidget<'a> {
     config: &'a TuiConfig,
     view: &'a FooterView,
 }
+
+const FOOTER_ZONE_GUTTER: u16 = 2;
 
 impl Widget for FooterWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -83,8 +87,13 @@ pub(crate) fn render_footer(
     );
 }
 
-pub(crate) fn populate_layout(ui: &UiState, area: Rect, frame_layout: &mut FrameLayout) {
-    let view = build_footer_view(ui, area, &ValidationState::default());
+pub(crate) fn populate_layout(
+    ui: &UiState,
+    area: Rect,
+    validation: &ValidationState,
+    frame_layout: &mut FrameLayout,
+) {
+    let view = build_footer_view(ui, area, validation);
     frame_layout.footer = Some(area);
     frame_layout.footer_buttons = layout_footer_buttons(area, &view);
 }
@@ -104,7 +113,7 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
             FooterChipVariant::Secondary,
         ),
     ];
-    let mut candidates = vec![
+    let candidates = vec![
         build_chip(
             ui,
             HoverTarget::Search,
@@ -114,13 +123,19 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
         build_chip(ui, HoverTarget::Focus, "Focus", FooterChipVariant::Subtle),
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
     ];
-    if let Some(summary) = validation.summary.as_ref() {
-        candidates.insert(0, build_status_chip(ui, summary));
-    }
-    let hints = fit_footer_hints(area, &actions, candidates);
+    let status = validation
+        .summary
+        .as_ref()
+        .map(|summary| build_status_chip(ui, summary));
+    let (status, hints) = fit_footer_zones(area, &actions, status, candidates);
+
     FooterView {
-        gap_width: footer_gap_width(area, &actions, &hints),
+        status_offset: status
+            .as_ref()
+            .map(|_| chips_width(&actions).saturating_add(zone_gutter(!actions.is_empty(), true))),
+        hints_offset: hint_zone_offset(area, &hints),
         actions,
+        status,
         hints,
     }
 }
@@ -148,29 +163,54 @@ fn build_status_chip(ui: &UiState, chip: &str) -> FooterChip {
     }
 }
 
-fn footer_gap_width(area: Rect, actions: &[FooterChip], hints: &[FooterChip]) -> u16 {
-    if hints.is_empty() {
-        return 0;
+fn footer_spans(config: &TuiConfig, view: &FooterView) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+
+    append_zone(&mut spans, &mut cursor, 0, config, view.actions.as_slice());
+
+    if let Some(status_offset) = view.status_offset {
+        if let Some(status) = view.status.as_ref() {
+            append_zone(
+                &mut spans,
+                &mut cursor,
+                status_offset,
+                config,
+                std::slice::from_ref(status),
+            );
+        }
     }
-    let action_width = chips_width(actions);
-    let hint_width = chips_width(hints);
-    let min_right_x = area
-        .x
-        .saturating_add(action_width)
-        .saturating_add(u16::from(action_width > 0));
-    let preferred_right_x = area.x.saturating_add(area.width.saturating_sub(hint_width));
-    preferred_right_x
-        .max(min_right_x)
-        .saturating_sub(area.x.saturating_add(action_width))
+
+    if let Some(hints_offset) = view.hints_offset {
+        append_zone(
+            &mut spans,
+            &mut cursor,
+            hints_offset,
+            config,
+            view.hints.as_slice(),
+        );
+    }
+
+    spans
 }
 
-fn footer_spans(config: &TuiConfig, view: &FooterView) -> Vec<Span<'static>> {
-    let mut spans = spans_for_chips(config, &view.actions);
-    if view.gap_width > 0 {
-        spans.push(Span::raw(" ".repeat(usize::from(view.gap_width))));
+fn append_zone(
+    spans: &mut Vec<Span<'static>>,
+    cursor: &mut u16,
+    zone_offset: u16,
+    config: &TuiConfig,
+    chips: &[FooterChip],
+) {
+    if chips.is_empty() {
+        return;
     }
-    spans.extend(spans_for_chips(config, &view.hints));
-    spans
+
+    let gap_width = zone_offset.saturating_sub(*cursor);
+    if gap_width > 0 {
+        spans.push(Span::raw(" ".repeat(usize::from(gap_width))));
+    }
+    spans.extend(spans_for_chips(config, chips));
+    *cursor = zone_offset.saturating_add(chips_width(chips));
 }
 
 fn spans_for_chips(config: &TuiConfig, chips: &[FooterChip]) -> Vec<Span<'static>> {
@@ -202,6 +242,16 @@ fn layout_footer_buttons(area: Rect, view: &FooterView) -> Vec<FooterButtonLayou
             })
             .collect(),
     };
+    let status_group = FooterButtonGroup {
+        chips: view
+            .status
+            .iter()
+            .map(|chip| FooterButtonSpec {
+                target: chip.target,
+                label: chip.label.clone(),
+            })
+            .collect(),
+    };
     let hint_group = FooterButtonGroup {
         chips: view
             .hints
@@ -213,13 +263,21 @@ fn layout_footer_buttons(area: Rect, view: &FooterView) -> Vec<FooterButtonLayou
             .collect(),
     };
 
-    let action_width = group_width(&action_group);
-    let hint_start_x = area
-        .x
-        .saturating_add(action_width)
-        .saturating_add(view.gap_width);
     let mut layouts = layout_group(area.x, area, &action_group);
-    layouts.extend(layout_group(hint_start_x, area, &hint_group));
+    if let Some(status_offset) = view.status_offset {
+        layouts.extend(layout_group(
+            area.x.saturating_add(status_offset),
+            area,
+            &status_group,
+        ));
+    }
+    if let Some(hints_offset) = view.hints_offset {
+        layouts.extend(layout_group(
+            area.x.saturating_add(hints_offset),
+            area,
+            &hint_group,
+        ));
+    }
     layouts
 }
 
@@ -240,16 +298,6 @@ fn layout_group(start_x: u16, area: Rect, group: &FooterButtonGroup) -> Vec<Foot
     layouts
 }
 
-fn group_width(group: &FooterButtonGroup) -> u16 {
-    let labels = group
-        .chips
-        .iter()
-        .map(|chip| chip_width(&chip.label))
-        .sum::<u16>();
-    let gaps = u16::try_from(group.chips.len().saturating_sub(1)).unwrap_or(0);
-    labels.saturating_add(gaps)
-}
-
 fn chips_width(chips: &[FooterChip]) -> u16 {
     let labels = chips
         .iter()
@@ -257,6 +305,76 @@ fn chips_width(chips: &[FooterChip]) -> u16 {
         .sum::<u16>();
     let gaps = u16::try_from(chips.len().saturating_sub(1)).unwrap_or(0);
     labels.saturating_add(gaps)
+}
+
+fn fit_footer_zones(
+    area: Rect,
+    actions: &[FooterChip],
+    status: Option<FooterChip>,
+    mut hints: Vec<FooterChip>,
+) -> (Option<FooterChip>, Vec<FooterChip>) {
+    let Some(status_chip) = status else {
+        while !zone_order_fits(area, actions, None, &hints) && !hints.is_empty() {
+            hints.pop();
+        }
+        return (None, hints);
+    };
+
+    while !zone_order_fits(area, actions, Some(&status_chip), &hints) && !hints.is_empty() {
+        hints.pop();
+    }
+
+    if zone_order_fits(area, actions, Some(&status_chip), &hints) {
+        return (Some(status_chip), hints);
+    }
+
+    let available_status_width = available_status_width(area, actions, &hints);
+    let truncated_status = truncate_chip(&status_chip, available_status_width);
+
+    (truncated_status, hints)
+}
+
+fn zone_order_fits(
+    area: Rect,
+    actions: &[FooterChip],
+    status: Option<&FooterChip>,
+    hints: &[FooterChip],
+) -> bool {
+    let action_width = chips_width(actions);
+    let status_width = status.map_or(0, |chip| chip_width(&chip.label));
+    let hint_width = chips_width(hints);
+    let total_width = action_width
+        .saturating_add(zone_gutter(!actions.is_empty(), status.is_some()))
+        .saturating_add(status_width)
+        .saturating_add(zone_gutter(status.is_some(), !hints.is_empty()))
+        .saturating_add(hint_width);
+
+    total_width <= area.width
+}
+
+fn available_status_width(area: Rect, actions: &[FooterChip], hints: &[FooterChip]) -> u16 {
+    let reserved_width = chips_width(actions)
+        .saturating_add(zone_gutter(!actions.is_empty(), true))
+        .saturating_add(zone_gutter(true, !hints.is_empty()))
+        .saturating_add(chips_width(hints));
+
+    area.width.saturating_sub(reserved_width)
+}
+
+fn hint_zone_offset(area: Rect, hints: &[FooterChip]) -> Option<u16> {
+    if hints.is_empty() {
+        None
+    } else {
+        Some(area.width.saturating_sub(chips_width(hints)))
+    }
+}
+
+fn zone_gutter(left_zone_present: bool, right_zone_present: bool) -> u16 {
+    if left_zone_present && right_zone_present {
+        FOOTER_ZONE_GUTTER
+    } else {
+        0
+    }
 }
 
 fn chip_width(label: &str) -> u16 {
@@ -278,36 +396,6 @@ fn chip_style(config: &TuiConfig, variant: FooterChipVariant, hovered: bool) -> 
             styles::footer_chip(config, styles::FooterChipKind::Subtle, hovered)
         }
     }
-}
-
-fn fit_footer_hints(
-    area: Rect,
-    actions: &[FooterChip],
-    candidates: Vec<FooterChip>,
-) -> Vec<FooterChip> {
-    let mut remaining = area.width.saturating_sub(chips_width(actions));
-    remaining = remaining.saturating_sub(u16::from(!candidates.is_empty()));
-    let mut hints = Vec::new();
-
-    for candidate in candidates {
-        let separator = u16::from(!hints.is_empty());
-        let width = chip_width(&candidate.label).saturating_add(separator);
-        if width <= remaining {
-            remaining = remaining.saturating_sub(width);
-            hints.push(candidate);
-            continue;
-        }
-
-        if matches!(candidate.variant, FooterChipVariant::Status) {
-            if let Some(truncated) = truncate_chip(&candidate, remaining.saturating_sub(separator))
-            {
-                hints.push(truncated);
-            }
-            break;
-        }
-    }
-
-    hints
 }
 
 fn truncate_chip(chip: &FooterChip, available_width: u16) -> Option<FooterChip> {
@@ -373,9 +461,14 @@ mod tests {
             layouts[0].rect.x + layouts[0].rect.width + 1,
             layouts[1].rect.x
         );
+        assert!(layouts[2].rect.x > layouts[1].rect.x + layouts[1].rect.width);
         assert_eq!(
             layouts[2].rect.x + layouts[2].rect.width + 1,
             layouts[3].rect.x
+        );
+        assert_eq!(
+            layouts[3].rect.x + layouts[3].rect.width + 1,
+            layouts[4].rect.x
         );
     }
 
@@ -392,6 +485,7 @@ mod tests {
 
         assert!(view.actions[0].hovered);
         assert!(!view.actions[1].hovered);
+        assert!(view.status.is_none());
         assert_eq!(view.hints.len(), 3);
     }
 
@@ -426,8 +520,14 @@ mod tests {
             },
         );
 
-        assert_eq!(view.hints[0].label, " Missing required argument: --name ");
-        assert_eq!(view.hints[0].target, HoverTarget::FooterStatus);
+        assert_eq!(
+            view.status.as_ref().map(|chip| chip.label.as_str()),
+            Some(" Missing required argument: --name ")
+        );
+        assert_eq!(
+            view.status.as_ref().map(|chip| chip.target),
+            Some(HoverTarget::FooterStatus)
+        );
     }
 
     #[test]
@@ -445,8 +545,11 @@ mod tests {
             },
         );
 
-        assert!(!view.hints[0].hovered);
-        assert_eq!(view.hints[0].target, HoverTarget::FooterStatus);
+        assert_eq!(view.status.as_ref().map(|chip| chip.hovered), Some(false));
+        assert_eq!(
+            view.status.as_ref().map(|chip| chip.target),
+            Some(HoverTarget::FooterStatus)
+        );
     }
 
     #[test]
@@ -463,11 +566,73 @@ mod tests {
         );
 
         assert_eq!(view.actions.len(), 2);
-        assert_eq!(view.hints[0].target, HoverTarget::FooterStatus);
+        assert_eq!(
+            view.status.as_ref().map(|chip| chip.target),
+            Some(HoverTarget::FooterStatus)
+        );
         assert!(
             view.hints
                 .iter()
                 .all(|hint| hint.target != HoverTarget::Help)
         );
+    }
+
+    #[test]
+    fn footer_view_anchors_status_in_middle_zone_not_screen_center() {
+        let state = build_test_state();
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 100, 1),
+            &ValidationState {
+                is_valid: false,
+                summary: Some("Invalid value".to_string()),
+                field_errors: std::collections::BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(view.status_offset, Some(28));
+        assert_eq!(view.hints_offset, Some(73));
+        assert!(view.status_offset.unwrap() < 50);
+    }
+
+    #[test]
+    fn footer_view_truncates_status_with_right_ellipsis_after_hints_yield() {
+        let state = build_test_state();
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 40, 1),
+            &ValidationState {
+                is_valid: false,
+                summary: Some("Missing required argument: --name".to_string()),
+                field_errors: std::collections::BTreeMap::new(),
+            },
+        );
+
+        assert!(view.hints.is_empty());
+        assert_eq!(
+            view.status.as_ref().map(|chip| chip.label.as_str()),
+            Some(" Missing r… ")
+        );
+    }
+
+    #[test]
+    fn footer_view_preserves_search_before_other_passive_hints() {
+        let state = build_test_state();
+        let view = build_footer_view(
+            &state.ui,
+            Rect::new(0, 0, 56, 1),
+            &ValidationState {
+                is_valid: false,
+                summary: Some("Invalid value".to_string()),
+                field_errors: std::collections::BTreeMap::new(),
+            },
+        );
+
+        let targets = view
+            .hints
+            .iter()
+            .map(|hint| hint.target)
+            .collect::<Vec<_>>();
+        assert_eq!(targets, vec![HoverTarget::Search]);
     }
 }
