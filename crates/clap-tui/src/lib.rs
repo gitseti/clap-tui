@@ -131,6 +131,7 @@ mod error;
 mod form_editor;
 mod frame_snapshot;
 mod input;
+mod layout;
 mod pipeline;
 mod query;
 mod repeated_field;
