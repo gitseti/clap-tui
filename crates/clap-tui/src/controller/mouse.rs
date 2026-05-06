@@ -180,12 +180,9 @@ mod tests {
         frame_snapshot
             .layout
             .form_fields
-            .push(crate::frame_snapshot::FormFieldLayout {
+            .push(crate::layout::form::FormFieldLayout {
                 arg_id: "verbose".to_string(),
                 heading: None,
-                section_rail: None,
-                section_right_rail: None,
-                section_cap: None,
                 label: Some(Rect::new(0, 0, 12, 1)),
                 input: Rect::new(13, 0, 12, 3),
                 input_clip_top: 0,

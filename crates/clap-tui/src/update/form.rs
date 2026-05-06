@@ -2,6 +2,7 @@ use crate::controller::navigation;
 use crate::form_editor::{self, EditResult, RepeatedRowEditResult};
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{AppState, MouseSelection};
+use crate::layout::form as form_layout;
 use crate::query::{
     form::{self, FieldWidget, OrderedArg},
     selectors,
@@ -512,7 +513,7 @@ fn form_click_hit<'a>(
 
     let content_y =
         frame_snapshot.form_content_y(event.row, state.ui.form_scroll(frame_snapshot))?;
-    let hit = form::hit_test_form_content_with_layout_overrides_and_semantics(
+    let hit = form_layout::hit_test_form_content_with_layout_overrides_and_semantics(
         args,
         content_y,
         field_errors,
@@ -620,7 +621,8 @@ mod tests {
 
     use super::super::{Action, Effect, apply_action};
     use super::*;
-    use crate::frame_snapshot::{FormFieldLayout, FrameSnapshot};
+    use crate::frame_snapshot::FrameSnapshot;
+    use crate::layout::form::FormFieldLayout;
     use crate::runtime::AppKeyModifiers;
 
     fn key(code: AppKeyCode) -> AppKeyEvent {
@@ -786,9 +788,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "fast".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 2, 10, 1)),
             input: ratatui::layout::Rect::new(12, 2, 20, 1),
             input_clip_top: 0,
@@ -826,9 +825,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "verbose".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 1),
             input_clip_top: 0,
@@ -892,9 +888,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
@@ -956,9 +949,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
@@ -1020,9 +1010,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 9),
             input_clip_top: 0,
@@ -1140,9 +1127,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 3),
             input_clip_top: REPEATED_ROW_HEIGHT,
@@ -1201,9 +1185,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
@@ -1252,9 +1233,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "tag".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 3),
             input_clip_top: 0,
@@ -1305,9 +1283,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 0, 9, 1)),
             input: ratatui::layout::Rect::new(10, 0, 30, 6),
             input_clip_top: 0,
@@ -1351,9 +1326,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
@@ -1405,9 +1377,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
@@ -1893,9 +1862,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 0, 9, 1)),
             input: ratatui::layout::Rect::new(10, 0, 30, 5),
             input_clip_top: 0,
@@ -1950,9 +1916,6 @@ mod tests {
         snapshot.layout.form_fields.push(FormFieldLayout {
             arg_id: "include".to_string(),
             heading: None,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
             label: Some(ratatui::layout::Rect::new(0, 2, 9, 1)),
             input: ratatui::layout::Rect::new(10, 2, 30, 5),
             input_clip_top: 0,

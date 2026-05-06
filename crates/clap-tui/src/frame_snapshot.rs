@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use ratatui::layout::{Margin, Rect};
 
 use crate::input::{ActiveTab, HoverTarget, UiState};
+use crate::layout::form as form_layout;
+use crate::layout::form::FormFieldLayout;
 use crate::pipeline::{FieldInstanceId, FieldSemantics, ValidationState};
-use crate::query::form::{self, FieldWidget, OrderedArg};
-use crate::repeated_field::project_repeated_field_with_input_height;
+use crate::query::form::OrderedArg;
 use crate::spec::CommandPath;
 
 pub(crate) const MAX_DROPDOWN_ROWS: u16 = 6;
@@ -264,7 +265,6 @@ pub(crate) fn dropdown_geometry(
     })
 }
 
-#[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn populate_form_layout(
     ui: &UiState,
@@ -278,14 +278,14 @@ pub(crate) fn populate_form_layout(
     frame_snapshot: &mut FrameSnapshot,
 ) {
     let content_area = area;
-    let content_height = form::measure_fields_height_with_layout_overrides_and_semantics(
+    let content_height = form_layout::measure_fields_height_with_layout_overrides_and_semantics(
         active_args,
         &validation.field_errors,
         input_height_overrides,
         label_height_overrides,
         field_semantics,
     );
-    let help_height = form::measure_help_height(help);
+    let help_height = form_layout::measure_help_height(help);
     let viewport_height = content_area.height;
     let help_viewport_height = help_overlay_content_rect(content_area).height;
     frame_snapshot.form_scroll_max = content_height.saturating_sub(viewport_height);
@@ -299,160 +299,37 @@ pub(crate) fn populate_form_layout(
     frame_layout.form_tabs.clear();
     frame_layout.invalid_field_ids.clear();
     frame_layout.form_view = Some(content_area);
-    let preferred_label_width =
-        form::preferred_label_column_width_with_semantics(active_args, field_semantics);
 
-    let mut y = i32::from(content_area.y) - i32::from(form_scroll);
-    let mut previous_heading = None;
-    for item in active_args {
-        let heading = form::field_heading(previous_heading, item);
-        let semantic_reason = field_semantics
-            .get(&FieldInstanceId::from_arg(item.arg))
-            .and_then(|semantics| semantics.reason.as_deref());
-        let show_description = form::field_has_description(
-            item.arg,
-            validation
-                .field_errors
-                .get(&item.arg.id)
-                .map(String::as_str)
-                .or(semantic_reason),
-        );
-        let metrics = form::field_metrics_with_description_and_layout_overrides(
-            item.arg,
-            show_description,
-            input_height_overrides.get(&item.arg.id).copied(),
-            label_height_overrides.get(&item.arg.id).copied(),
-        );
-        let item_bottom =
-            y + i32::from(u16::from(heading.is_some())) + i32::from(metrics.total_height);
-        if y >= i32::from(content_area.y) + i32::from(content_area.height) {
-            break;
+    let form_fields = form_layout::project_visible_form_fields(&form_layout::FormProjectionInput {
+        area,
+        content_area,
+        form_scroll,
+        active_args,
+        field_errors: &validation.field_errors,
+        input_height_overrides,
+        label_height_overrides,
+        field_semantics,
+    });
+    for field in form_fields {
+        frame_layout
+            .form_inputs
+            .insert(field.arg_id.clone(), field.input);
+        if validation.field_errors.contains_key(&field.arg_id) {
+            frame_layout.invalid_field_ids.push(field.arg_id.clone());
         }
-        if item_bottom <= i32::from(content_area.y) {
-            y += i32::from(u16::from(heading.is_some())) + i32::from(metrics.total_height);
-            previous_heading = item.section_heading.as_deref();
-            continue;
-        }
-        let heading = if heading.is_some() && y >= i32::from(content_area.y) {
-            let rect = clipped_rect(area.x, area.width, y, 1, content_area);
-            y += 1;
-            rect
-        } else if heading.is_some() {
-            y += 1;
-            None
-        } else {
-            None
-        };
-        let (label_x, label_width, input_x, input_width) =
-            field_content_geometry(area, form::field_is_in_section(item), preferred_label_width);
-        let label = if metrics.label_height > 0 {
-            clipped_rect(label_x, label_width, y, metrics.label_height, content_area)
-        } else {
-            None
-        };
-        let repeated_projection = matches!(item.widget, FieldWidget::RepeatedText).then(|| {
-            let field_top =
-                u16::try_from((y - i32::from(content_area.y) + i32::from(form_scroll)).max(0))
-                    .unwrap_or(u16::MAX);
-            project_repeated_field_with_input_height(
-                input_height_overrides
-                    .get(&item.arg.id)
-                    .copied()
-                    .unwrap_or(metrics.input_height),
-                field_top,
-                input_x,
-                input_width,
-                show_description,
-                metrics.label_height,
-            )
-        });
-        let description_anchor_visible = description_anchor_visible(y, content_area);
-        let (input_y, input, description) = if let Some(projection) = repeated_projection {
-            let input_y =
-                i32::from(content_area.y) + i32::from(projection.input.y) - i32::from(form_scroll);
-            let Some(input) = clipped_rect(
-                projection.input.x,
-                projection.input.width,
-                input_y,
-                projection.input.height,
-                content_area,
-            ) else {
-                y += i32::from(metrics.total_height);
-                previous_heading = item.section_heading.as_deref();
-                continue;
-            };
-            let description = description_anchor_visible
-                .then_some(())
-                .and(projection.description)
-                .and_then(|description| {
-                    let description_y = i32::from(content_area.y) + i32::from(description.y)
-                        - i32::from(form_scroll);
-                    clipped_rect(
-                        description.x,
-                        description.width,
-                        description_y,
-                        description.height,
-                        content_area,
-                    )
-                });
-            (input_y, input, description)
-        } else {
-            let input_y = y + i32::from(form::field_input_offset_with_description(
-                item.arg,
-                show_description,
-            ));
-            let Some(input) = clipped_rect(
-                input_x,
-                input_width,
-                input_y,
-                metrics.input_height,
-                content_area,
-            ) else {
-                y += i32::from(metrics.total_height);
-                previous_heading = item.section_heading.as_deref();
-                continue;
-            };
-            let description = form_description_rect(
-                item,
-                y,
-                area,
-                content_area,
-                description_anchor_visible,
-                show_description,
-                preferred_label_width,
-                input_height_overrides.get(&item.arg.id).copied(),
-                label_height_overrides.get(&item.arg.id).copied(),
-            );
-            (input_y, input, description)
-        };
 
-        frame_layout.form_inputs.insert(item.arg.id.clone(), input);
-        if validation.field_errors.contains_key(&item.arg.id) {
-            frame_layout.invalid_field_ids.push(item.arg.id.clone());
-        }
-        let input_clip_top =
-            u16::try_from((i32::from(input.y) - input_y).max(0)).unwrap_or(u16::MAX);
-        frame_layout.form_fields.push(FormFieldLayout {
-            arg_id: item.arg.id.clone(),
-            heading,
-            section_rail: None,
-            section_right_rail: None,
-            section_cap: None,
-            label,
-            input,
-            input_clip_top,
-            description,
-        });
-
-        if ui.dropdown_open.as_deref() == Some(&item.arg.id) {
+        if ui.dropdown_open.as_deref() == Some(&field.arg_id) {
+            let choice_count = active_args
+                .iter()
+                .find(|item| item.arg.id == field.arg_id)
+                .map_or(0, |item| item.arg.choices.len());
             frame_layout.dropdown = frame_layout
                 .form_view
-                .and_then(|form_view| dropdown_geometry(form_view, input, item.arg.choices.len()))
+                .and_then(|form_view| dropdown_geometry(form_view, field.input, choice_count))
                 .map(|geometry| geometry.rect);
         }
 
-        y += i32::from(metrics.total_height);
-        previous_heading = item.section_heading.as_deref();
+        frame_layout.form_fields.push(field);
     }
 }
 
@@ -473,112 +350,6 @@ pub(crate) fn help_overlay_content_rect(area: Rect) -> Rect {
         horizontal,
         vertical,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn form_description_rect(
-    item: &OrderedArg<'_>,
-    y: i32,
-    area: Rect,
-    content_area: Rect,
-    description_anchor_visible: bool,
-    show_description: bool,
-    preferred_label_width: u16,
-    input_height_override: Option<u16>,
-    label_height_override: Option<u16>,
-) -> Option<Rect> {
-    description_anchor_visible.then_some(())?;
-    show_description.then_some(())?;
-    let description_y = y + i32::from(form::field_description_offset_with_layout_overrides(
-        item.arg,
-        show_description,
-        input_height_override,
-        label_height_override,
-    )?);
-    let (_, _, input_x, input_width) =
-        field_content_geometry(area, form::field_is_in_section(item), preferred_label_width);
-    clipped_rect(
-        input_x,
-        input_width,
-        description_y,
-        form::field_metrics_with_description_and_layout_overrides(
-            item.arg,
-            show_description,
-            input_height_override,
-            label_height_override,
-        )
-        .description_height
-        .max(1),
-        content_area,
-    )
-}
-
-fn description_anchor_visible(field_top_y: i32, content_area: Rect) -> bool {
-    field_top_y >= i32::from(content_area.y)
-}
-
-pub(crate) fn field_content_geometry(
-    area: Rect,
-    in_section: bool,
-    preferred_label_width: u16,
-) -> (u16, u16, u16, u16) {
-    let content_x = if in_section && area.width > form::SECTION_FIELD_INDENT.saturating_add(1) {
-        area.x.saturating_add(form::SECTION_FIELD_INDENT)
-    } else {
-        area.x
-    };
-    let content_width = if in_section && area.width > form::SECTION_FIELD_INDENT.saturating_add(1) {
-        area.width.saturating_sub(form::SECTION_FIELD_INDENT)
-    } else {
-        area.width
-    };
-    let gap = form::COLUMN_GAP_WIDTH.min(content_width.saturating_sub(1));
-    let label_width = preferred_label_width
-        .min(content_width.saturating_sub(gap).saturating_sub(8))
-        .max(form::LABEL_COLUMN_MIN_WIDTH);
-    let input_x = content_x.saturating_add(label_width).saturating_add(gap);
-    let input_width = content_width
-        .saturating_sub(label_width)
-        .saturating_sub(gap);
-    (content_x, label_width, input_x, input_width)
-}
-
-fn intersect_rects(rect: Rect, bounds: Rect) -> Option<Rect> {
-    let left = rect.x.max(bounds.x);
-    let top = rect.y.max(bounds.y);
-    let right = rect
-        .x
-        .saturating_add(rect.width)
-        .min(bounds.x.saturating_add(bounds.width));
-    let bottom = rect
-        .y
-        .saturating_add(rect.height)
-        .min(bounds.y.saturating_add(bounds.height));
-
-    if left >= right || top >= bottom {
-        return None;
-    }
-
-    Some(Rect::new(
-        left,
-        top,
-        right.saturating_sub(left),
-        bottom.saturating_sub(top),
-    ))
-}
-
-fn clipped_rect(x: u16, width: u16, top: i32, height: u16, bounds: Rect) -> Option<Rect> {
-    let bounded_top = top.max(i32::from(bounds.y));
-    let bounded_bottom = top
-        .saturating_add(i32::from(height))
-        .min(i32::from(bounds.y.saturating_add(bounds.height)));
-    if bounded_top >= bounded_bottom {
-        return None;
-    }
-
-    let y = u16::try_from(bounded_top).ok()?;
-    let clipped_height = u16::try_from(bounded_bottom.saturating_sub(bounded_top)).ok()?;
-    intersect_rects(Rect::new(x, y, width, clipped_height), bounds)
 }
 
 fn contains(area: Rect, x: u16, y: u16) -> bool {
@@ -819,8 +590,6 @@ mod tests {
             .find(|field| field.arg_id == "config")
             .expect("inherited config field");
 
-        assert!(inherited.section_rail.is_none());
-        assert!(inherited.section_right_rail.is_none());
         assert_eq!(inherited.label.expect("label rect").x, 1);
         assert_eq!(
             inherited.description.expect("description rect").x,
@@ -847,20 +616,6 @@ pub struct SidebarItemLayout {
 pub struct TabButtonLayout {
     pub tab: ActiveTab,
     pub rect: Rect,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct FormFieldLayout {
-    pub arg_id: String,
-    pub heading: Option<Rect>,
-    pub section_rail: Option<Rect>,
-    pub section_right_rail: Option<Rect>,
-    pub section_cap: Option<Rect>,
-    pub label: Option<Rect>,
-    pub input: Rect,
-    pub input_clip_top: u16,
-    pub description: Option<Rect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

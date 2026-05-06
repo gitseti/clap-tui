@@ -1,6 +1,7 @@
 use crate::form_editor;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ActiveTab, AppState, ArgValue, Focus, UiState};
+use crate::layout::form as form_layout;
 use crate::query::{
     form::{self, FieldWidget, OrderedArg},
     selectors,
@@ -315,7 +316,7 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
     let derived = state.derived().clone();
     let Some((input_top, input_bottom)) =
-        form::field_content_bounds_with_layout_overrides_and_semantics(
+        form_layout::field_content_bounds_with_layout_overrides_and_semantics(
             &args,
             state.ui.selected_arg_index,
             &derived.validation.field_errors,
@@ -364,7 +365,7 @@ pub(crate) fn ensure_active_repeated_row_visible(
     let derived = state.derived().clone();
     let input_height_overrides = repeated_input_height_overrides(state, &args);
     let label_height_overrides = HashMap::new();
-    let content_height = form::measure_fields_height_with_layout_overrides_and_semantics(
+    let content_height = form_layout::measure_fields_height_with_layout_overrides_and_semantics(
         &args,
         &derived.validation.field_errors,
         &input_height_overrides,
@@ -395,8 +396,8 @@ pub(crate) fn ensure_active_repeated_row_visible(
         return;
     };
     let preferred_label_width =
-        form::preferred_label_column_width_with_semantics(&args, &derived.field_semantics);
-    let (_, _, input_x, input_width) = crate::frame_snapshot::field_content_geometry(
+        form_layout::preferred_label_column_width_with_semantics(&args, &derived.field_semantics);
+    let (_, _, input_x, input_width) = form_layout::field_content_geometry(
         frame_snapshot.layout.form.unwrap_or(form_view),
         form::field_is_in_section(item),
         preferred_label_width,
@@ -491,7 +492,7 @@ fn form_field_content_top(
                 .map(String::as_str)
                 .or(semantic_reason),
         );
-        let metrics = form::field_metrics_with_description_and_layout_overrides(
+        let metrics = form_layout::field_metrics_with_description_and_layout_overrides(
             item.arg,
             show_description,
             input_height_overrides.get(&item.arg.id).copied(),
