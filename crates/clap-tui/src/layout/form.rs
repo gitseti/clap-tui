@@ -7,10 +7,11 @@ use crate::query::form::{self, FieldWidget, OrderedArg};
 use crate::repeated_field::project_repeated_field_with_input_height;
 use crate::spec::ArgSpec;
 
-pub(crate) const SECTION_FIELD_INDENT: u16 = 1;
 pub(crate) const LABEL_COLUMN_MIN_WIDTH: u16 = 12;
 pub(crate) const LABEL_COLUMN_MAX_WIDTH: u16 = 24;
 pub(crate) const COLUMN_GAP_WIDTH: u16 = 1;
+pub(crate) const INPUT_RIGHT_PADDING: u16 = 2;
+const INPUT_MIN_WIDTH_BEFORE_RIGHT_PADDING: u16 = 27;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::struct_field_names)]
@@ -458,24 +459,40 @@ pub(crate) fn field_content_geometry(
     in_section: bool,
     preferred_label_width: u16,
 ) -> (u16, u16, u16, u16) {
-    let content_x = if in_section && area.width > SECTION_FIELD_INDENT.saturating_add(1) {
-        area.x.saturating_add(SECTION_FIELD_INDENT)
-    } else {
-        area.x
-    };
-    let content_width = if in_section && area.width > SECTION_FIELD_INDENT.saturating_add(1) {
-        area.width.saturating_sub(SECTION_FIELD_INDENT)
-    } else {
-        area.width
-    };
+    field_content_geometry_with_right_padding(area, in_section, preferred_label_width, true)
+}
+
+fn field_description_geometry(
+    area: Rect,
+    in_section: bool,
+    preferred_label_width: u16,
+) -> (u16, u16, u16, u16) {
+    field_content_geometry_with_right_padding(area, in_section, preferred_label_width, false)
+}
+
+fn field_content_geometry_with_right_padding(
+    area: Rect,
+    _in_section: bool,
+    preferred_label_width: u16,
+    reserve_right_padding: bool,
+) -> (u16, u16, u16, u16) {
+    let content_x = area.x;
+    let content_width = area.width;
     let gap = COLUMN_GAP_WIDTH.min(content_width.saturating_sub(1));
     let label_width = preferred_label_width
         .min(content_width.saturating_sub(gap).saturating_sub(8))
         .max(LABEL_COLUMN_MIN_WIDTH);
     let input_x = content_x.saturating_add(label_width).saturating_add(gap);
-    let input_width = content_width
+    let available_input_width = content_width
         .saturating_sub(label_width)
         .saturating_sub(gap);
+    let right_padding = if reserve_right_padding {
+        INPUT_RIGHT_PADDING
+            .min(available_input_width.saturating_sub(INPUT_MIN_WIDTH_BEFORE_RIGHT_PADDING))
+    } else {
+        0
+    };
+    let input_width = available_input_width.saturating_sub(right_padding);
     (content_x, label_width, input_x, input_width)
 }
 
@@ -585,9 +602,14 @@ pub(crate) fn project_visible_form_fields(
                 .and_then(|description| {
                     let description_y = i32::from(input.content_area.y) + i32::from(description.y)
                         - i32::from(input.form_scroll);
+                    let (_, _, description_x, description_width) = field_description_geometry(
+                        input.area,
+                        form::field_is_in_section(item),
+                        preferred_label_width,
+                    );
                     clipped_rect(
-                        description.x,
-                        description.width,
+                        description_x,
+                        description_width,
                         description_y,
                         description.height,
                         input.content_area,
@@ -663,7 +685,7 @@ fn form_description_rect(
         label_height_override,
     )?);
     let (_, _, input_x, input_width) =
-        field_content_geometry(area, form::field_is_in_section(item), preferred_label_width);
+        field_description_geometry(area, form::field_is_in_section(item), preferred_label_width);
     clipped_rect(
         input_x,
         input_width,
@@ -727,8 +749,9 @@ mod tests {
     use clap::Command;
 
     use super::{
-        FieldWidget, field_content_bounds, field_description_offset, field_input_offset,
-        field_metrics, hit_test_form_content, measure_fields_height,
+        FieldWidget, INPUT_RIGHT_PADDING, field_content_bounds, field_content_geometry,
+        field_description_offset, field_input_offset, field_metrics, hit_test_form_content,
+        measure_fields_height,
     };
     use crate::input::ActiveTab;
     use crate::query::form::{visible_args, widget_for};
@@ -895,5 +918,24 @@ mod tests {
         assert_eq!(measure_fields_height(&visible), 14);
         assert_eq!(field_content_bounds(&visible, 0), Some((1, 4)));
         assert_eq!(field_content_bounds(&visible, 2), Some((10, 13)));
+    }
+
+    #[test]
+    fn field_geometry_reserves_right_padding_after_input_column() {
+        let area = ratatui::layout::Rect::new(0, 0, 44, 10);
+        let (_, _, input_x, input_width) = field_content_geometry(area, false, 12);
+
+        assert_eq!(
+            input_x.saturating_add(input_width),
+            area.width - INPUT_RIGHT_PADDING
+        );
+    }
+
+    #[test]
+    fn narrow_field_geometry_keeps_input_width_before_right_padding() {
+        let area = ratatui::layout::Rect::new(0, 0, 20, 10);
+        let (_, _, _, input_width) = field_content_geometry(area, false, 12);
+
+        assert_eq!(input_width, 7);
     }
 }

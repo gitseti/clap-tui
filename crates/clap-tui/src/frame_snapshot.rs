@@ -535,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn inherited_section_descriptions_indent_with_the_section_content() {
+    fn inherited_section_descriptions_align_with_the_section_content() {
         use clap::{Arg, Command};
 
         use crate::input::{ActiveTab, Focus, UiState};
@@ -590,7 +590,7 @@ mod tests {
             .find(|field| field.arg_id == "config")
             .expect("inherited config field");
 
-        assert_eq!(inherited.label.expect("label rect").x, 1);
+        assert_eq!(inherited.label.expect("label rect").x, 0);
         assert_eq!(
             inherited.description.expect("description rect").x,
             inherited.input.x
