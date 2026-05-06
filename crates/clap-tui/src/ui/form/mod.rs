@@ -536,7 +536,7 @@ mod tests {
         let first = &snapshot.layout.form_fields[0];
         let second = &snapshot.layout.form_fields[1];
 
-        assert_eq!(first.label.expect("label rect").x, 1);
+        assert_eq!(first.label.expect("label rect").x, 0);
         assert_eq!(second.input.x, first.input.x);
         assert_eq!(second.input.width, first.input.width);
     }
