@@ -1,7 +1,7 @@
-use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Widget};
 
 use crate::config::TuiConfig;
 use crate::query::form::FieldWidget;
@@ -10,7 +10,7 @@ use super::fields::FieldRenderModel;
 use super::styles;
 
 pub(super) fn render_flag_toggle(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     config: &TuiConfig,
     area: Rect,
     model: &FieldRenderModel<'_>,
@@ -28,21 +28,19 @@ pub(super) fn render_flag_toggle(
         ),
     ];
     let line = Line::from(spans);
-    frame.render_widget(
-        Paragraph::new(line)
-            .block(
-                model
-                    .block
-                    .clone()
-                    .style(styles::input(config, model.selected)),
-            )
-            .style(styles::flag_toggle(config, model.selected)),
-        area,
-    );
+    Paragraph::new(line)
+        .block(
+            model
+                .block
+                .clone()
+                .style(styles::input(config, model.selected)),
+        )
+        .style(styles::flag_toggle(config, model.selected))
+        .render(area, buffer);
 }
 
 pub(super) fn render_compact_control(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     config: &TuiConfig,
     area: Rect,
     model: &FieldRenderModel<'_>,
@@ -52,7 +50,7 @@ pub(super) fn render_compact_control(
     } else {
         &model.value
     };
-    let input = Paragraph::new(compact_control_line(
+    Paragraph::new(compact_control_line(
         config,
         model.widget,
         display,
@@ -67,8 +65,8 @@ pub(super) fn render_compact_control(
             .clone()
             .style(styles::input(config, model.selected)),
     )
-    .style(styles::compact_control(config, model.selected));
-    frame.render_widget(input, area);
+    .style(styles::compact_control(config, model.selected))
+    .render(area, buffer);
 }
 
 fn compact_placeholder(widget: FieldWidget, required: bool) -> &'static str {

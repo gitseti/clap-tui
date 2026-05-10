@@ -1,8 +1,10 @@
 use crate::form_editor;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
+use crate::query::form::{self, FieldWidget};
 use crate::runtime::AppMouseEvent;
 
+use super::field_hit;
 use super::{Action, Effect};
 
 pub(crate) fn apply(
@@ -29,11 +31,45 @@ fn apply_mouse_selection(
     let Some(mut selection) = state.ui.mouse_select.take() else {
         return;
     };
-    if let Some((row, col)) =
-        frame_snapshot.input_position_from_point(&selection.arg_id, event.column, event.row, true)
-    {
-        let arg = state.domain.arg_for_input(&selection.arg_id).cloned();
-        if let Some(arg) = arg {
+    let arg = state.domain.arg_for_input(&selection.arg_id).cloned();
+    if let Some(arg) = arg {
+        let position = match form::widget_for(&arg) {
+            FieldWidget::RepeatedText => {
+                let total_rows = form_editor::editor_for_render(
+                    &state.ui,
+                    arg.owner_path(),
+                    &arg,
+                    &form_editor::displayed_text(state, &arg),
+                )
+                .row_count()
+                .max(1);
+                frame_snapshot
+                    .form_field_layout(&selection.arg_id)
+                    .and_then(|field| {
+                        field_hit::repeated_text_position_from_point(
+                            field,
+                            total_rows,
+                            event.column,
+                            event.row,
+                            true,
+                        )
+                    })
+            }
+            _ => frame_snapshot
+                .form_field_layout(&selection.arg_id)
+                .and_then(|field| {
+                    field_hit::text_input_position_from_point(field, event.column, event.row, true)
+                })
+                .or_else(|| {
+                    frame_snapshot.input_position_from_point(
+                        &selection.arg_id,
+                        event.column,
+                        event.row,
+                        true,
+                    )
+                }),
+        };
+        if let Some((row, col)) = position {
             if !selection.active {
                 form_editor::start_selection(
                     state,
@@ -61,11 +97,12 @@ fn apply_hover_update(state: &mut AppState, frame_snapshot: &FrameSnapshot, x: u
 
 #[cfg(test)]
 mod tests {
-    use clap::{Arg, Command};
+    use clap::{Arg, ArgAction, Command};
     use ratatui::layout::Rect;
 
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::MouseSelection;
+    use crate::layout::form::FormFieldLayout;
     use crate::runtime::{AppKeyModifiers, AppMouseButton, AppMouseEvent, AppMouseEventKind};
     use crate::spec::{
         ArgKind, ArgSpec, CommandSpec, EXTERNAL_SUBCOMMAND_NAME_ID, ValueCardinality,
@@ -236,6 +273,63 @@ mod tests {
         assert_eq!(
             editor.cursor(),
             crate::editor_state::TextPosition { row: 0, col: 3 }
+        );
+    }
+
+    #[test]
+    fn repeated_mouse_selection_uses_content_rows_when_partially_clipped() {
+        let mut state = crate::input::AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("include")
+                    .long("include")
+                    .action(ArgAction::Append)
+                    .num_args(1),
+            ),
+        );
+        state.domain.set_text_value("include", "alpha\nbeta\ngamma");
+        state.domain.mark_touched("include");
+        state.ui.set_mouse_selection(Some(MouseSelection {
+            arg_id: "include".to_string(),
+            anchor_row: 0,
+            anchor_col: 0,
+            active: false,
+        }));
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(Rect::new(0, 0, 80, 6));
+        snapshot.layout.form_view = Some(Rect::new(0, 0, 80, 6));
+        snapshot
+            .layout
+            .form_inputs
+            .insert("include".to_string(), Rect::new(10, 1, 30, 5));
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "include".to_string(),
+            heading: None,
+            label: Some(Rect::new(0, 1, 9, 1)),
+            input: Rect::new(10, 1, 30, 5),
+            input_clip_top: 2,
+            full_input_height: 7,
+            description: None,
+        });
+
+        let action = Action::UpdateMouseSelection(AppMouseEvent {
+            kind: AppMouseEventKind::Drag(AppMouseButton::Left),
+            column: 13,
+            row: 4,
+            modifiers: AppKeyModifiers::default(),
+        });
+        let effect = apply_action(&action, &mut state, &snapshot);
+
+        assert_eq!(effect, Effect::None);
+        let arg = state.domain.arg_for_input("include").expect("include arg");
+        let editor = crate::form_editor::editor_for_render(
+            &state.ui,
+            arg.owner_path(),
+            arg,
+            &crate::form_editor::displayed_text(&state, arg),
+        );
+        assert_eq!(
+            editor.cursor(),
+            crate::editor_state::TextPosition { row: 1, col: 2 }
         );
     }
 }

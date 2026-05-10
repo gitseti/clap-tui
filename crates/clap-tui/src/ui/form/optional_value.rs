@@ -1,8 +1,8 @@
-use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Widget};
 
 use crate::config::TuiConfig;
 use crate::input::{ArgInput, InputSource, UiState};
@@ -12,12 +12,12 @@ use super::fields::FieldRenderModel;
 use super::{styles, text};
 
 pub(super) fn render_optional_value(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     ui: &UiState,
     area: Rect,
     config: &TuiConfig,
     model: &FieldRenderModel<'_>,
-) {
+) -> Option<(u16, u16)> {
     match optional_value_visual_state(
         model.current_input,
         &model.value,
@@ -25,82 +25,77 @@ pub(super) fn render_optional_value(
         model.effective_value,
     ) {
         OptionalValueVisualState::Explicit if model.selected => {
-            text::render_textarea_field(frame, ui, model, None, area, config);
+            text::render_textarea_value(buffer, ui, model, &model.value, None, area, config)
         }
         OptionalValueVisualState::Explicit => {
-            frame.render_widget(
-                Paragraph::new(model.value.to_string())
-                    .block(
-                        model
-                            .block
-                            .clone()
-                            .style(styles::input(config, model.selected)),
-                    )
-                    .style(model.text_style),
-                area,
-            );
+            Paragraph::new(model.value.to_string())
+                .block(
+                    model
+                        .block
+                        .clone()
+                        .style(styles::input(config, model.selected)),
+                )
+                .style(model.text_style)
+                .render(area, buffer);
+            None
         }
         OptionalValueVisualState::Present { detail } if model.selected => {
             text::render_textarea_value(
-                frame,
+                buffer,
                 ui,
                 model,
                 "",
                 Some(format!("Present · {detail}")),
                 area,
                 config,
-            );
+            )
         }
         OptionalValueVisualState::Present { detail } => {
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        " Present ",
-                        styles::checkbox_chip(config, model.selected, true),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(detail, styles::placeholder(config)),
-                ]))
-                .block(
-                    model
-                        .block
-                        .clone()
-                        .style(styles::input(config, model.selected)),
-                )
-                .style(Style::default()),
-                area,
-            );
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " Present ",
+                    styles::checkbox_chip(config, model.selected, true),
+                ),
+                Span::raw(" "),
+                Span::styled(detail, styles::placeholder(config)),
+            ]))
+            .block(
+                model
+                    .block
+                    .clone()
+                    .style(styles::input(config, model.selected)),
+            )
+            .style(Style::default())
+            .render(area, buffer);
+            None
         }
-        OptionalValueVisualState::Off { detail } if model.selected => {
-            text::render_textarea_value(
-                frame,
-                ui,
-                model,
-                "",
-                Some(format!("Off · {detail}")),
-                area,
-                config,
-            );
-        }
+        OptionalValueVisualState::Off { detail } if model.selected => text::render_textarea_value(
+            buffer,
+            ui,
+            model,
+            "",
+            Some(format!("Off · {detail}")),
+            area,
+            config,
+        ),
         OptionalValueVisualState::Off { detail } => {
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        " Off ",
-                        styles::checkbox_chip(config, model.selected, false),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(detail, styles::placeholder(config)),
-                ]))
-                .block(
-                    model
-                        .block
-                        .clone()
-                        .style(styles::input(config, model.selected)),
-                )
-                .style(Style::default()),
-                area,
-            );
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " Off ",
+                    styles::checkbox_chip(config, model.selected, false),
+                ),
+                Span::raw(" "),
+                Span::styled(detail, styles::placeholder(config)),
+            ]))
+            .block(
+                model
+                    .block
+                    .clone()
+                    .style(styles::input(config, model.selected)),
+            )
+            .style(Style::default())
+            .render(area, buffer);
+            None
         }
     }
 }

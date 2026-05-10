@@ -7,12 +7,11 @@ use crate::query::{
     form::{self, FieldWidget, OrderedArg},
     selectors,
 };
-use crate::repeated_field::{
-    REPEATED_ROW_HEIGHT, repeated_add_rect, repeated_remove_rect, repeated_row_textarea_rect,
-};
+use crate::repeated_field::repeated_input_height;
 use crate::runtime::{AppKeyCode, AppKeyEvent, AppMouseEvent};
 use ratatui::layout::Rect;
 
+use super::field_hit::{self, RepeatedInputTarget};
 use super::{Action, Effect};
 
 pub(crate) fn apply(
@@ -255,15 +254,24 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
     let selected_path = state.domain.selected_path().clone();
     let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
     let derived = state.derived().clone();
+    let input_height_overrides = repeated_input_height_overrides(&args, state);
     if let Some(hit) = form_click_hit(
         &args,
         event,
         state,
         frame_snapshot,
         &derived.validation.field_errors,
+        &input_height_overrides,
         &derived.field_semantics,
     ) {
         state.ui.set_selected_arg_index(hit.item.order_index);
+        if !hit.in_input && !hit.in_label && hit.in_description {
+            // Orphan-description hit: the input is fully off-screen above the
+            // viewport but the description row is still visible. Selecting the
+            // field and scrolling it back into view is the contract.
+            navigation::ensure_form_visible(state, frame_snapshot);
+            return;
+        }
         let can_edit = state.field_can_edit(hit.item.arg);
         if !can_edit {
             navigation::ensure_form_visible(state, frame_snapshot);
@@ -296,7 +304,8 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
         {
             form_editor::clear_selection(state, &arg);
             state.ui.clear_mouse_selection();
-            if let Some((row, col)) = frame_snapshot.input_position_from_point(
+            if let Some((row, col)) = text_input_position_from_point(
+                frame_snapshot,
                 &hit.item.arg.id,
                 event.column,
                 event.row,
@@ -327,7 +336,6 @@ fn apply_repeated_text_click(
     let Some(field) = frame_snapshot.form_field_layout(arg_id) else {
         return RepeatedRowEditResult::Ignored;
     };
-    let input = field.input;
     let Some(arg) = state.domain.arg_for_input(arg_id).cloned() else {
         return RepeatedRowEditResult::Ignored;
     };
@@ -339,37 +347,15 @@ fn apply_repeated_text_click(
     );
     let active_row_before = editor.current_row();
     let total_rows = editor.row_count().max(1);
-    if total_rows <= 1 {
-        match repeated_control_click_target(event.column, event.row, input, true, true) {
-            Some(RepeatedControlClickTarget::Remove) => {
-                return RepeatedRowEditResult::HandledNoFocusChange;
-            }
-            Some(RepeatedControlClickTarget::Add) => {
-                return form_editor::insert_repeated_row(state, &arg);
-            }
-            None => return RepeatedRowEditResult::Ignored,
-        }
-    }
-    let visible_rows = usize::from(input.height / REPEATED_ROW_HEIGHT).min(total_rows);
-    if visible_rows == 0 {
-        return RepeatedRowEditResult::Ignored;
-    }
-    let start_row = repeated_visible_start_row(visible_rows, total_rows, field.input_clip_top);
-    let relative_y = event.row.saturating_sub(input.y);
-    let row_index = start_row + usize::from(relative_y / REPEATED_ROW_HEIGHT);
-    if row_index >= total_rows {
-        return RepeatedRowEditResult::Ignored;
-    }
-    let row = u16::try_from(row_index).unwrap_or(u16::MAX);
-    let row_rect = repeated_row_rect(input, row_index.saturating_sub(start_row));
-    let Some(row_rect) = row_rect else {
+    let Some(target) =
+        field_hit::repeated_input_target_from_point(field, total_rows, event.column, event.row)
+    else {
         return RepeatedRowEditResult::Ignored;
     };
     form_editor::clear_selection(state, &arg);
     state.ui.clear_mouse_selection();
-    let is_last_row = row_index + 1 == total_rows;
-    match repeated_control_click_target(event.column, event.row, row_rect, true, is_last_row) {
-        Some(RepeatedControlClickTarget::Remove) => {
+    match target {
+        RepeatedInputTarget::Remove { row } => {
             form_editor::set_cursor_from_click(state, &arg, row, 0);
             if total_rows > 1 {
                 form_editor::remove_repeated_row(state, &arg)
@@ -377,44 +363,40 @@ fn apply_repeated_text_click(
                 RepeatedRowEditResult::HandledNoFocusChange
             }
         }
-        Some(RepeatedControlClickTarget::Add) => {
+        RepeatedInputTarget::Add { row } => {
             form_editor::set_cursor_from_click(state, &arg, row, 0);
             form_editor::insert_repeated_row(state, &arg)
         }
-        None => {
-            let textarea_rect = repeated_row_textarea_rect(row_rect, true, is_last_row);
-            if let Some((_, col)) =
-                input_position_from_rect(textarea_rect, event.column, event.row, false)
-            {
-                state.ui.set_mouse_selection(Some(MouseSelection {
-                    arg_id: arg_id.to_string(),
-                    anchor_row: row,
-                    anchor_col: col,
-                    active: false,
-                }));
-                form_editor::set_cursor_from_click(state, &arg, row, col);
-                if row_index == active_row_before {
-                    RepeatedRowEditResult::HandledNoFocusChange
-                } else {
-                    RepeatedRowEditResult::Handled {
-                        focus_changed: true,
-                        structure_changed: false,
-                        active_row_index: Some(row_index),
-                    }
-                }
-            } else {
+        RepeatedInputTarget::Text { row, col } => {
+            let row_index = usize::from(row);
+            state.ui.set_mouse_selection(Some(MouseSelection {
+                arg_id: arg_id.to_string(),
+                anchor_row: row,
+                anchor_col: col,
+                active: false,
+            }));
+            form_editor::set_cursor_from_click(state, &arg, row, col);
+            if row_index == active_row_before {
                 RepeatedRowEditResult::HandledNoFocusChange
+            } else {
+                RepeatedRowEditResult::Handled {
+                    focus_changed: true,
+                    structure_changed: false,
+                    active_row_index: Some(row_index),
+                }
             }
         }
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RepeatedControlClickTarget {
     Remove,
     Add,
 }
 
+#[cfg(test)]
 fn repeated_control_click_target(
     x: u16,
     y: u16,
@@ -423,12 +405,13 @@ fn repeated_control_click_target(
     show_add: bool,
 ) -> Option<RepeatedControlClickTarget> {
     if show_remove
-        && let Some(remove) = repeated_remove_rect(row_rect, show_remove, show_add)
+        && let Some(remove) =
+            crate::repeated_field::repeated_remove_rect(row_rect, show_remove, show_add)
         && contains(remove, x, y)
     {
         Some(RepeatedControlClickTarget::Remove)
     } else if show_add
-        && let Some(add) = repeated_add_rect(row_rect)
+        && let Some(add) = crate::repeated_field::repeated_add_rect(row_rect)
         && contains(add, x, y)
     {
         Some(RepeatedControlClickTarget::Add)
@@ -443,11 +426,14 @@ fn apply_counter_click(
     frame_snapshot: &FrameSnapshot,
     arg_id: &str,
 ) {
-    let Some(input) = frame_snapshot.form_input_rect(arg_id) else {
+    let Some(field) = frame_snapshot.form_field_layout(arg_id) else {
         return;
     };
+    if !field_hit::compact_control_content_row_contains(field, event.row) {
+        return;
+    }
 
-    match counter_click_target(input, event.column) {
+    match counter_click_target(field.input, event.column) {
         Some(CounterClickTarget::Decrement) => state.domain.decrement_counter(arg_id),
         Some(CounterClickTarget::Increment) => state.domain.increment_counter(arg_id),
         None => {}
@@ -489,6 +475,7 @@ struct FormClickHit<'a> {
     item: &'a OrderedArg<'a>,
     in_input: bool,
     in_label: bool,
+    in_description: bool,
 }
 
 fn form_click_hit<'a>(
@@ -497,6 +484,7 @@ fn form_click_hit<'a>(
     state: &AppState,
     frame_snapshot: &FrameSnapshot,
     field_errors: &std::collections::BTreeMap<String, String>,
+    input_height_overrides: &std::collections::HashMap<String, u16>,
     field_semantics: &std::collections::BTreeMap<
         crate::pipeline::FieldInstanceId,
         crate::pipeline::FieldSemantics,
@@ -508,6 +496,7 @@ fn form_click_hit<'a>(
             item,
             in_input: hit.in_input,
             in_label: hit.in_label,
+            in_description: hit.in_description,
         });
     }
 
@@ -517,7 +506,7 @@ fn form_click_hit<'a>(
         args,
         content_y,
         field_errors,
-        &std::collections::HashMap::new(),
+        input_height_overrides,
         &std::collections::HashMap::new(),
         field_semantics,
     )?;
@@ -528,65 +517,45 @@ fn form_click_hit<'a>(
         item,
         in_input: hit.in_input,
         in_label: hit.in_label,
+        in_description: hit.in_description,
     })
 }
 
-fn repeated_row_rect(input: Rect, visible_index: usize) -> Option<Rect> {
-    let y = input.y.saturating_add(
-        u16::try_from(visible_index)
-            .ok()?
-            .saturating_mul(REPEATED_ROW_HEIGHT),
-    );
-    Some(Rect::new(input.x, y, input.width, REPEATED_ROW_HEIGHT))
+fn repeated_input_height_overrides(
+    args: &[OrderedArg<'_>],
+    state: &AppState,
+) -> std::collections::HashMap<String, u16> {
+    args.iter()
+        .filter(|item| matches!(item.widget, FieldWidget::RepeatedText))
+        .map(|item| {
+            let value = form_editor::displayed_text(state, item.arg);
+            (
+                item.arg.id.clone(),
+                repeated_input_height(&state.ui, item.arg, &value),
+            )
+        })
+        .collect()
 }
 
-fn repeated_visible_start_row(
-    visible_rows: usize,
-    total_rows: usize,
-    input_clip_top: u16,
-) -> usize {
-    let clipped_rows = usize::from(
-        input_clip_top.saturating_add(REPEATED_ROW_HEIGHT.saturating_sub(1)) / REPEATED_ROW_HEIGHT,
-    );
-    clipped_rows.min(total_rows.saturating_sub(visible_rows.min(total_rows)))
+fn text_input_position_from_point(
+    frame_snapshot: &FrameSnapshot,
+    arg_id: &str,
+    x: u16,
+    y: u16,
+    clamp: bool,
+) -> Option<(u16, u16)> {
+    frame_snapshot
+        .form_field_layout(arg_id)
+        .and_then(|field| field_hit::text_input_position_from_point(field, x, y, clamp))
+        .or_else(|| frame_snapshot.input_position_from_point(arg_id, x, y, clamp))
 }
 
+#[cfg(test)]
 fn contains(area: Rect, x: u16, y: u16) -> bool {
     x >= area.x
         && x < area.x.saturating_add(area.width)
         && y >= area.y
         && y < area.y.saturating_add(area.height)
-}
-
-fn input_position_from_rect(rect: Rect, x: u16, y: u16, clamp: bool) -> Option<(u16, u16)> {
-    let inner_x = rect.x.saturating_add(1);
-    let inner_y = rect.y.saturating_add(1);
-    let inner_w = rect.width.saturating_sub(2);
-    let inner_h = rect.height.saturating_sub(2);
-    if inner_w == 0 || inner_h == 0 {
-        return None;
-    }
-    if !clamp && (x < inner_x || y < inner_y || x >= inner_x + inner_w || y >= inner_y + inner_h) {
-        return None;
-    }
-    let clamped_x = if clamp {
-        x.clamp(inner_x, inner_x + inner_w - 1)
-    } else {
-        x
-    };
-    let clamped_y = if clamp {
-        y.clamp(inner_y, inner_y + inner_h - 1)
-    } else {
-        y
-    };
-    Some((
-        clamped_y
-            .saturating_sub(inner_y)
-            .min(inner_h.saturating_sub(1)),
-        clamped_x
-            .saturating_sub(inner_x)
-            .min(inner_w.saturating_sub(1)),
-    ))
 }
 
 fn apply_dropdown_click(
@@ -623,6 +592,7 @@ mod tests {
     use super::*;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::layout::form::FormFieldLayout;
+    use crate::repeated_field::{REPEATED_ROW_HEIGHT, repeated_add_rect, repeated_remove_rect};
     use crate::runtime::AppKeyModifiers;
 
     fn key(code: AppKeyCode) -> AppKeyEvent {
@@ -757,6 +727,40 @@ mod tests {
     }
 
     #[test]
+    fn fallback_form_hit_testing_uses_dynamic_repeated_heights() {
+        let mut state = AppState::from_command(
+            &Command::new("tool")
+                .arg(Arg::new("prefix").long("prefix"))
+                .arg(
+                    Arg::new("include")
+                        .long("include")
+                        .action(ArgAction::Append)
+                        .num_args(1),
+                )
+                .arg(Arg::new("suffix").long("suffix")),
+        );
+        state.domain.set_text_value("include", "alpha\nbeta\ngamma");
+        state.domain.mark_touched("include");
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 80, 20));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 80, 20));
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 1,
+                row: 11,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(state.ui.selected_arg_index, 1);
+    }
+
+    #[test]
     fn form_clicks_use_visible_snapshot_geometry_for_scrolled_error_fields() {
         let mut state = AppState::from_command(
             &Command::new("tool")
@@ -791,6 +795,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 2, 10, 1)),
             input: ratatui::layout::Rect::new(12, 2, 20, 1),
             input_clip_top: 0,
+            full_input_height: 1,
             description: Some(ratatui::layout::Rect::new(12, 3, 40, 1)),
         });
 
@@ -820,6 +825,63 @@ mod tests {
         snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 80, 6));
         snapshot.layout.form_inputs.insert(
             "verbose".to_string(),
+            ratatui::layout::Rect::new(10, 1, 30, 3),
+        );
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "verbose".to_string(),
+            heading: None,
+            label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
+            input: ratatui::layout::Rect::new(10, 1, 30, 3),
+            input_clip_top: 0,
+            full_input_height: 3,
+            description: None,
+        });
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 38,
+                row: 2,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(
+            crate::pipeline::build_authoritative_command_line(&state),
+            vec!["tool".to_string(), "-v".to_string()]
+        );
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 34,
+                row: 2,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(
+            crate::pipeline::build_authoritative_command_line(&state),
+            vec!["tool".to_string()]
+        );
+    }
+
+    #[test]
+    fn clipped_counter_border_only_click_does_not_change_value() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("verbose").short('v').action(ArgAction::Count)),
+        );
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 80, 3));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 80, 3));
+        snapshot.layout.form_inputs.insert(
+            "verbose".to_string(),
             ratatui::layout::Rect::new(10, 1, 30, 1),
         );
         snapshot.layout.form_fields.push(FormFieldLayout {
@@ -828,6 +890,47 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 1),
             input_clip_top: 0,
+            full_input_height: 1,
+            description: None,
+        });
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 38,
+                row: 1,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(
+            crate::pipeline::build_authoritative_command_line(&state),
+            vec!["tool".to_string()]
+        );
+    }
+
+    #[test]
+    fn top_clipped_counter_content_row_still_clicks_visible_controls() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("verbose").short('v').action(ArgAction::Count)),
+        );
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 80, 3));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 80, 3));
+        snapshot.layout.form_inputs.insert(
+            "verbose".to_string(),
+            ratatui::layout::Rect::new(10, 1, 30, 2),
+        );
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "verbose".to_string(),
+            heading: None,
+            label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
+            input: ratatui::layout::Rect::new(10, 1, 30, 2),
+            input_clip_top: 1,
+            full_input_height: 3,
             description: None,
         });
 
@@ -846,23 +949,6 @@ mod tests {
         assert_eq!(
             crate::pipeline::build_authoritative_command_line(&state),
             vec!["tool".to_string(), "-v".to_string()]
-        );
-
-        let effect = apply_action(
-            &Action::ClickForm(AppMouseEvent {
-                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
-                column: 34,
-                row: 1,
-                modifiers: AppKeyModifiers::default(),
-            }),
-            &mut state,
-            &snapshot,
-        );
-
-        assert_eq!(effect, Effect::None);
-        assert_eq!(
-            crate::pipeline::build_authoritative_command_line(&state),
-            vec!["tool".to_string()]
         );
     }
 
@@ -891,6 +977,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            full_input_height: 6,
             description: None,
         });
 
@@ -952,6 +1039,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            full_input_height: 6,
             description: None,
         });
 
@@ -1013,6 +1101,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 9),
             input_clip_top: 0,
+            full_input_height: 9,
             description: None,
         });
         let arg = state
@@ -1130,6 +1219,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 3),
             input_clip_top: REPEATED_ROW_HEIGHT,
+            full_input_height: REPEATED_ROW_HEIGHT + 3,
             description: None,
         });
         let arg = state
@@ -1164,6 +1254,65 @@ mod tests {
     }
 
     #[test]
+    fn repeated_text_clicks_use_content_rows_when_partially_clipped() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("include")
+                    .long("include")
+                    .action(ArgAction::Append)
+                    .num_args(1),
+            ),
+        );
+        state.domain.set_text_value("include", "alpha\nbeta\ngamma");
+        state.domain.mark_touched("include");
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 80, 5));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 80, 5));
+        snapshot.layout.form_inputs.insert(
+            "include".to_string(),
+            ratatui::layout::Rect::new(10, 1, 30, 3),
+        );
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "include".to_string(),
+            heading: None,
+            label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
+            input: ratatui::layout::Rect::new(10, 1, 30, 3),
+            input_clip_top: 1,
+            full_input_height: 4,
+            description: None,
+        });
+        let arg = state
+            .domain
+            .arg_for_input("include")
+            .cloned()
+            .expect("include arg");
+        crate::form_editor::set_cursor_from_click(&mut state, &arg, 2, 0);
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 35,
+                row: 1,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(
+            crate::pipeline::build_authoritative_command_line(&state),
+            vec![
+                "tool".to_string(),
+                "--include".to_string(),
+                "beta".to_string(),
+                "--include".to_string(),
+                "gamma".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn repeated_text_add_chip_creates_another_editor_row() {
         let mut state = AppState::from_command(
             &Command::new("tool").arg(
@@ -1188,6 +1337,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            full_input_height: 6,
             description: None,
         });
 
@@ -1236,6 +1386,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 3),
             input_clip_top: 0,
+            full_input_height: 3,
             description: None,
         });
 
@@ -1286,6 +1437,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 0, 9, 1)),
             input: ratatui::layout::Rect::new(10, 0, 30, 6),
             input_clip_top: 0,
+            full_input_height: 6,
             description: None,
         });
 
@@ -1329,6 +1481,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            full_input_height: 6,
             description: None,
         });
 
@@ -1380,6 +1533,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            full_input_height: 6,
             description: None,
         });
 
@@ -1465,6 +1619,162 @@ mod tests {
                 .as_ref()
                 .map(|selection| (selection.anchor_row, selection.anchor_col)),
             Some((0, 0))
+        );
+    }
+
+    #[test]
+    fn top_clipped_text_input_click_maps_to_visible_content_row() {
+        let mut state =
+            AppState::from_command(&Command::new("tool").arg(Arg::new("config").long("config")));
+        state.domain.set_text_value("config", "abcdef");
+        state.domain.mark_touched("config");
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 40, 3));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 3));
+        snapshot.layout.form_inputs.insert(
+            "config".to_string(),
+            ratatui::layout::Rect::new(10, 1, 20, 2),
+        );
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "config".to_string(),
+            heading: None,
+            label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
+            input: ratatui::layout::Rect::new(10, 1, 20, 2),
+            input_clip_top: 1,
+            full_input_height: 3,
+            description: None,
+        });
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 13,
+                row: 1,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        let arg = state.domain.arg_for_input("config").expect("config arg");
+        let editor = crate::form_editor::editor_for_render(
+            &state.ui,
+            arg.owner_path(),
+            arg,
+            &crate::form_editor::displayed_text(&state, arg),
+        );
+        assert_eq!(
+            editor.cursor(),
+            crate::editor_state::TextPosition { row: 0, col: 2 }
+        );
+    }
+
+    #[test]
+    fn top_clipped_optional_value_text_click_maps_to_visible_content_row() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("color")
+                    .long("color")
+                    .action(ArgAction::Set)
+                    .num_args(0..=1),
+            ),
+        );
+        state.domain.set_text_value("color", "blue");
+        state.domain.mark_touched("color");
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 40, 3));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 3));
+        snapshot.layout.form_inputs.insert(
+            "color".to_string(),
+            ratatui::layout::Rect::new(10, 1, 20, 2),
+        );
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "color".to_string(),
+            heading: None,
+            label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
+            input: ratatui::layout::Rect::new(10, 1, 20, 2),
+            input_clip_top: 1,
+            full_input_height: 3,
+            description: None,
+        });
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 13,
+                row: 1,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        let arg = state.domain.arg_for_input("color").expect("color arg");
+        let editor = crate::form_editor::editor_for_render(
+            &state.ui,
+            arg.owner_path(),
+            arg,
+            &crate::form_editor::displayed_text(&state, arg),
+        );
+        assert_eq!(
+            editor.cursor(),
+            crate::editor_state::TextPosition { row: 0, col: 2 }
+        );
+    }
+
+    #[test]
+    fn bottom_clipped_text_border_click_does_not_start_text_selection() {
+        let mut state =
+            AppState::from_command(&Command::new("tool").arg(Arg::new("config").long("config")));
+        state.domain.set_text_value("config", "abcdef");
+        state.domain.mark_touched("config");
+        let arg = state
+            .domain
+            .arg_for_input("config")
+            .cloned()
+            .expect("config arg");
+        crate::form_editor::set_cursor_from_click(&mut state, &arg, 0, 0);
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.form = Some(ratatui::layout::Rect::new(0, 0, 40, 3));
+        snapshot.layout.form_view = Some(ratatui::layout::Rect::new(0, 0, 40, 3));
+        snapshot.layout.form_inputs.insert(
+            "config".to_string(),
+            ratatui::layout::Rect::new(10, 1, 20, 1),
+        );
+        snapshot.layout.form_fields.push(FormFieldLayout {
+            arg_id: "config".to_string(),
+            heading: None,
+            label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
+            input: ratatui::layout::Rect::new(10, 1, 20, 1),
+            input_clip_top: 2,
+            full_input_height: 3,
+            description: None,
+        });
+
+        let effect = apply_action(
+            &Action::ClickForm(AppMouseEvent {
+                kind: crate::runtime::AppMouseEventKind::Down(crate::runtime::AppMouseButton::Left),
+                column: 13,
+                row: 1,
+                modifiers: AppKeyModifiers::default(),
+            }),
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.mouse_select.is_none());
+        let editor = crate::form_editor::editor_for_render(
+            &state.ui,
+            arg.owner_path(),
+            &arg,
+            &crate::form_editor::displayed_text(&state, &arg),
+        );
+        assert_eq!(
+            editor.cursor(),
+            crate::editor_state::TextPosition { row: 0, col: 0 }
         );
     }
 
@@ -1865,6 +2175,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 0, 9, 1)),
             input: ratatui::layout::Rect::new(10, 0, 30, 5),
             input_clip_top: 0,
+            full_input_height: 5,
             description: None,
         });
 
@@ -1919,6 +2230,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 2, 9, 1)),
             input: ratatui::layout::Rect::new(10, 2, 30, 5),
             input_clip_top: 0,
+            full_input_height: 5,
             description: None,
         });
 

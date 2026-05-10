@@ -98,8 +98,19 @@ impl TextEditor {
         &self.lines
     }
 
+    pub(crate) fn line(&self, index: usize) -> Option<&str> {
+        self.lines.get(index).map(String::as_str)
+    }
+
     pub(crate) fn selection_anchor(&self) -> Option<TextPosition> {
         self.selection_anchor
+    }
+
+    pub(crate) fn matches_displayed(&self, displayed: &str) -> bool {
+        self.lines
+            .iter()
+            .map(String::as_str)
+            .eq(displayed.split('\n'))
     }
 
     pub(crate) fn cancel_selection(&mut self) {

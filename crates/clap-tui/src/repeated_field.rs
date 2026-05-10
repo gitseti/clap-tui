@@ -25,7 +25,7 @@ impl RepeatedFieldProjection {
 }
 
 pub(crate) fn repeated_input_height(ui: &UiState, arg: &ArgSpec, value: &str) -> u16 {
-    let editor = form_editor::editor_for_render(ui, arg.owner_path(), arg, value);
+    let editor = form_editor::editor_view_for_render(ui, arg.owner_path(), arg, value);
     let rows = editor.row_count().max(1);
     if rows <= 1 {
         REPEATED_ROW_HEIGHT

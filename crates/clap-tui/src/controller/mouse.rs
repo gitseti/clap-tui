@@ -186,6 +186,7 @@ mod tests {
                 label: Some(Rect::new(0, 0, 12, 1)),
                 input: Rect::new(13, 0, 12, 3),
                 input_clip_top: 0,
+                full_input_height: 3,
                 description: Some(Rect::new(13, 3, 12, 1)),
             });
 

@@ -1,14 +1,15 @@
-use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::config::TuiConfig;
 use crate::form_editor;
 use crate::input::UiState;
+use crate::layout::form::FormFieldLayout;
 use crate::query::form::FieldWidget;
 use crate::repeated_field::{
-    project_repeated_field, repeated_add_rect, repeated_remove_rect, repeated_row_textarea_rect,
+    REPEATED_ROW_HEIGHT, repeated_add_rect, repeated_remove_rect, repeated_row_textarea_rect,
 };
 
 use super::fields::FieldRenderModel;
@@ -18,115 +19,117 @@ const REPEATED_CONTROL_REMOVE: &str = " - ";
 const REPEATED_CONTROL_ADD: &str = " + ";
 
 pub(super) fn render_repeated_text_field(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     ui: &UiState,
-    area: Rect,
-    input_clip_top: u16,
+    field: &FormFieldLayout,
     config: &TuiConfig,
     model: &FieldRenderModel<'_>,
-) {
+) -> Option<(u16, u16)> {
     let editor =
-        form_editor::editor_for_render(ui, model.arg.owner_path(), model.arg, &model.value);
+        form_editor::editor_view_for_render(ui, model.arg.owner_path(), model.arg, &model.value);
     let total_rows = editor.row_count().max(1);
     let current_row = editor.current_row();
-    if total_rows <= 1 {
-        let textarea_rect = repeated_row_textarea_rect(area, true, true);
-        let placeholder = (model.field_error.is_none() && model.value.is_empty())
-            .then(|| {
-                help::required_empty_prompt(model.arg, FieldWidget::RepeatedText, model.required)
-            })
-            .flatten();
-        let cursor_col =
-            (current_row == 0).then_some(u16::try_from(editor.cursor().col).unwrap_or(u16::MAX));
-        render_repeated_row_textarea(
-            frame,
-            config,
-            textarea_rect,
-            &model.value,
-            placeholder,
-            model.text_style,
-            model.selected,
-            model.selected,
-            cursor_col,
-        );
-        render_repeated_row_controls(config, frame, area, model.selected, false, true, true);
-        return;
-    }
-    let projection =
-        project_repeated_field(ui, model.arg, &model.value, 0, area.x, area.width, false, 1);
-    let visible_rows =
-        usize::from(area.height / crate::repeated_field::REPEATED_ROW_HEIGHT).min(total_rows);
-    if visible_rows == 0 {
-        return;
-    }
-    let start_row = repeated_visible_start_row(visible_rows, projection.rows.len(), input_clip_top);
+    let visible = field.input;
+    let clip_top = field.input_clip_top;
+    let clip_bottom = clip_top.saturating_add(visible.height);
+    let start_row = usize::from(clip_top / REPEATED_ROW_HEIGHT);
+    let end_row =
+        usize::from(clip_bottom.saturating_add(REPEATED_ROW_HEIGHT - 1) / REPEATED_ROW_HEIGHT)
+            .min(total_rows);
 
-    for visible_index in 0..visible_rows {
-        let row_index = start_row + visible_index;
-        let Some(row) = projection.row(row_index) else {
-            continue;
-        };
-        let row_rect = Rect::new(
-            area.x,
-            area.y.saturating_add(
-                u16::try_from(visible_index)
-                    .unwrap_or(u16::MAX)
-                    .saturating_mul(crate::repeated_field::REPEATED_ROW_HEIGHT),
-            ),
-            row.width,
-            row.height,
-        );
-        let is_last_row = row_index + 1 == total_rows;
-        let textarea_rect = repeated_row_textarea_rect(row_rect, true, is_last_row);
-        let active_row = model.selected && row_index == current_row;
-        let line = editor.lines().get(row_index).cloned().unwrap_or_default();
+    // The renderer reads `full_input_height` from layout. If the value layout
+    // computed disagrees with what the row count implies, the slow path would
+    // silently render a different geometry — catch that in debug builds.
+    debug_assert_eq!(
+        field.full_input_height,
+        u16::try_from(total_rows)
+            .unwrap_or(u16::MAX)
+            .saturating_mul(REPEATED_ROW_HEIGHT),
+        "layout/render disagree on repeated field height for {}",
+        field.arg_id,
+    );
+
+    let row_local = Rect::new(visible.x, 0, visible.width, REPEATED_ROW_HEIGHT);
+    let mut row_buffer = Buffer::empty(row_local);
+    let surface_style = styles::surface(config, styles::Surface::Workspace);
+
+    let mut cursor = None;
+    for row_index in start_row..end_row {
+        let row_top = u16::try_from(row_index)
+            .unwrap_or(u16::MAX)
+            .saturating_mul(REPEATED_ROW_HEIGHT);
+        let is_last = row_index + 1 == total_rows;
+        let active = model.selected && row_index == current_row;
+        row_buffer.reset();
+        row_buffer.set_style(row_local, surface_style);
+
+        let line = editor.line(row_index);
         let placeholder = (model.field_error.is_none() && row_index == 0 && line.is_empty())
             .then(|| {
                 help::required_empty_prompt(model.arg, FieldWidget::RepeatedText, model.required)
             })
             .flatten();
-
-        render_repeated_row_textarea(
-            frame,
+        let row_cursor = render_repeated_row_textarea(
+            &mut row_buffer,
             config,
-            textarea_rect,
-            line.as_str(),
+            repeated_row_textarea_rect(row_local, true, is_last),
+            line.as_ref(),
             placeholder,
             model.text_style,
-            active_row,
-            active_row && model.selected,
-            active_row.then_some(u16::try_from(editor.cursor().col).unwrap_or(u16::MAX)),
+            active.then_some(u16::try_from(editor.cursor().col).unwrap_or(u16::MAX)),
         );
-
         render_repeated_row_controls(
             config,
-            frame,
-            row_rect,
-            active_row,
+            &mut row_buffer,
+            row_local,
+            active,
             total_rows > 1,
-            true,
-            is_last_row,
+            is_last,
         );
+
+        // Map the row's full-input y-range onto the visible viewport.
+        let local_skip = clip_top.saturating_sub(row_top);
+        let frame_y = visible.y.saturating_add(row_top.saturating_sub(clip_top));
+        let copy_height = REPEATED_ROW_HEIGHT.saturating_sub(local_skip).min(
+            visible
+                .y
+                .saturating_add(visible.height)
+                .saturating_sub(frame_y),
+        );
+        super::blit(
+            buffer,
+            &row_buffer,
+            (visible.x, local_skip),
+            (visible.x, frame_y),
+            (visible.width, copy_height),
+        );
+
+        if cursor.is_none()
+            && let Some((cx, cy)) = row_cursor
+            && cy >= local_skip
+            && cy < local_skip.saturating_add(copy_height)
+        {
+            cursor = Some((cx, frame_y.saturating_add(cy.saturating_sub(local_skip))));
+        }
     }
+    cursor
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_repeated_row_textarea(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     config: &TuiConfig,
     area: Rect,
     value: &str,
     placeholder: Option<String>,
     text_style: Style,
-    selected_row: bool,
-    place_cursor: bool,
-    cursor_col: Option<u16>,
-) {
+    active_cursor_col: Option<u16>,
+) -> Option<(u16, u16)> {
+    let active = active_cursor_col.is_some();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(styles::field_border(config, selected_row, false));
-    if selected_row {
+        .border_style(styles::field_border(config, active, false));
+    if let Some(cursor_col) = active_cursor_col {
         let mut textarea = tui_textarea::TextArea::new(vec![value.to_string()]);
         textarea.set_block(block.style(styles::input(config, true)));
         let base_style = Style::default()
@@ -148,67 +151,44 @@ fn render_repeated_row_textarea(
             textarea.set_placeholder_text(placeholder);
             textarea.set_placeholder_style(styles::placeholder(config));
         }
-        if let Some(cursor_col) = cursor_col {
-            textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_col));
-        }
-        frame.render_widget(&textarea, area);
-        if place_cursor {
-            text::place_textarea_cursor(frame, &textarea, area);
-        }
+        textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_col));
+        (&textarea).render(area, buffer);
+        text::textarea_cursor_position(&textarea, area)
     } else {
-        frame.render_widget(
-            Paragraph::new(if value.is_empty() {
-                placeholder.unwrap_or_default()
-            } else {
-                value.to_string()
-            })
-            .block(block.style(styles::input(config, false)))
-            .style(if value.is_empty() {
-                styles::placeholder(config)
-            } else {
-                text_style
-            }),
-            area,
-        );
+        Paragraph::new(if value.is_empty() {
+            placeholder.unwrap_or_default()
+        } else {
+            value.to_string()
+        })
+        .block(block.style(styles::input(config, false)))
+        .style(if value.is_empty() {
+            styles::placeholder(config)
+        } else {
+            text_style
+        })
+        .render(area, buffer);
+        None
     }
 }
 
-#[allow(clippy::fn_params_excessive_bools)]
 fn render_repeated_row_controls(
     config: &TuiConfig,
-    frame: &mut Frame<'_>,
-    row_rect: Rect,
+    buffer: &mut Buffer,
+    row: Rect,
     active: bool,
     can_remove: bool,
-    show_remove: bool,
     show_add: bool,
 ) {
-    if show_remove && let Some(remove_rect) = repeated_remove_rect(row_rect, show_remove, show_add)
-    {
-        frame.render_widget(
-            Paragraph::new(REPEATED_CONTROL_REMOVE).style(styles::compact_control_affordance(
+    if let Some(remove_rect) = repeated_remove_rect(row, true, show_add) {
+        Paragraph::new(REPEATED_CONTROL_REMOVE)
+            .style(styles::compact_control_affordance(
                 config, active, can_remove,
-            )),
-            remove_rect,
-        );
+            ))
+            .render(remove_rect, buffer);
     }
-    if show_add && let Some(add_rect) = repeated_add_rect(row_rect) {
-        frame.render_widget(
-            Paragraph::new(REPEATED_CONTROL_ADD)
-                .style(styles::compact_control_affordance(config, active, true)),
-            add_rect,
-        );
+    if show_add && let Some(add_rect) = repeated_add_rect(row) {
+        Paragraph::new(REPEATED_CONTROL_ADD)
+            .style(styles::compact_control_affordance(config, active, true))
+            .render(add_rect, buffer);
     }
-}
-
-fn repeated_visible_start_row(
-    visible_rows: usize,
-    total_rows: usize,
-    input_clip_top: u16,
-) -> usize {
-    let clipped_rows = usize::from(
-        input_clip_top.saturating_add(crate::repeated_field::REPEATED_ROW_HEIGHT.saturating_sub(1))
-            / crate::repeated_field::REPEATED_ROW_HEIGHT,
-    );
-    clipped_rows.min(total_rows.saturating_sub(visible_rows.min(total_rows)))
 }

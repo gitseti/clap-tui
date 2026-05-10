@@ -1,4 +1,6 @@
-use crate::editor_state::TextEditor;
+use std::borrow::Cow;
+
+use crate::editor_state::{TextEditor, TextPosition};
 use crate::input::{
     AppState, ArgInput, ArgValue, InputSource, InputValueOccurrence, UiState,
     render_occurrence_text, split_occurrence_values,
@@ -55,6 +57,44 @@ enum RowEditorMode {
     GroupedValues,
 }
 
+pub(crate) enum RenderEditor<'a> {
+    Stored(&'a TextEditor),
+    Displayed(&'a str),
+}
+
+impl<'a> RenderEditor<'a> {
+    pub(crate) fn row_count(&self) -> usize {
+        match self {
+            Self::Stored(editor) => editor.row_count(),
+            Self::Displayed(displayed) => displayed.split('\n').count(),
+        }
+    }
+
+    pub(crate) fn current_row(&self) -> usize {
+        match self {
+            Self::Stored(editor) => editor.current_row(),
+            Self::Displayed(_) => 0,
+        }
+    }
+
+    pub(crate) fn cursor(&self) -> TextPosition {
+        match self {
+            Self::Stored(editor) => editor.cursor(),
+            Self::Displayed(_) => TextPosition::default(),
+        }
+    }
+
+    pub(crate) fn line(&self, index: usize) -> Cow<'a, str> {
+        match self {
+            Self::Stored(editor) => editor.line(index).map_or(Cow::Borrowed(""), Cow::Borrowed),
+            Self::Displayed(displayed) => displayed
+                .split('\n')
+                .nth(index)
+                .map_or(Cow::Borrowed(""), Cow::Borrowed),
+        }
+    }
+}
+
 pub(crate) fn displayed_text(state: &AppState, arg: &ArgModel) -> String {
     if uses_row_editor(arg)
         && let Some(text) = row_editor_displayed_text(state, arg)
@@ -91,11 +131,22 @@ pub(crate) fn editor_for_render(
     arg: &ArgModel,
     displayed: &str,
 ) -> TextEditor {
+    match editor_view_for_render(ui, command_key, arg, displayed) {
+        RenderEditor::Stored(editor) => editor.clone(),
+        RenderEditor::Displayed(displayed) => TextEditor::from_displayed(displayed),
+    }
+}
+
+pub(crate) fn editor_view_for_render<'a>(
+    ui: &'a UiState,
+    command_key: &CommandPath,
+    arg: &ArgModel,
+    displayed: &'a str,
+) -> RenderEditor<'a> {
     ui.editors
         .editor(command_key, &arg.id)
         .filter(|editor| editor_matches_displayed(arg, editor, displayed))
-        .cloned()
-        .unwrap_or_else(|| TextEditor::from_displayed(displayed))
+        .map_or(RenderEditor::Displayed(displayed), RenderEditor::Stored)
 }
 
 pub(crate) fn ensure_editor<'a>(
@@ -111,19 +162,16 @@ pub(crate) fn ensure_editor<'a>(
 }
 
 fn editor_matches_displayed(arg: &ArgModel, editor: &TextEditor, displayed: &str) -> bool {
-    if editor.text() == displayed {
+    if editor.matches_displayed(displayed) {
         return true;
     }
 
-    uses_row_editor(arg) && normalize_row_editor_text(arg, &editor.text()) == displayed
+    uses_row_editor(arg)
+        && normalize_row_editor_rows(arg, editor.lines().iter().map(String::as_str)) == displayed
 }
 
-fn normalize_row_editor_text(arg: &ArgModel, text: &str) -> String {
-    let rows = text
-        .lines()
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-
+fn normalize_row_editor_rows<'a>(arg: &ArgModel, rows: impl Iterator<Item = &'a str>) -> String {
+    let rows = rows.filter(|value| !value.is_empty()).collect::<Vec<_>>();
     match row_editor_mode(arg) {
         Some(RowEditorMode::Occurrence) => rows
             .into_iter()
