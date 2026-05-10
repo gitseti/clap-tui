@@ -831,6 +831,31 @@ mod tests {
     }
 
     #[test]
+    fn selected_multiline_text_input_places_cursor_on_scrolled_visible_row() {
+        let mut state =
+            AppState::from_command(&Command::new("tool").arg(Arg::new("config").long("config")));
+        state.ui.focus_form();
+        state.domain.set_text_value("config", "alpha\nbeta\ngamma");
+        state.domain.mark_touched("config");
+        let arg = state
+            .domain
+            .arg_for_input("config")
+            .cloned()
+            .expect("config arg");
+        crate::form_editor::set_cursor_from_click(&mut state, &arg, 2, 2);
+
+        let (mut backend, snapshot) = render_app(&mut state);
+        let input = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("config field")
+            .input;
+
+        backend.assert_cursor_position(Position::new(input.x + 3, input.y + 1));
+    }
+
+    #[test]
     fn inherited_text_input_keeps_cursor_position_when_rendered_from_descendant_command() {
         let mut state = AppState::from_command(
             &Command::new("tool")

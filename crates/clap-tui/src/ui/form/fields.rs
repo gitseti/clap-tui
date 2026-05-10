@@ -1,12 +1,12 @@
 use std::borrow::Cow;
 
-use ratatui::Frame;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::config::TuiConfig;
-use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{ArgInput, ArgInputState, ArgValue, Focus, InputSource, UiState};
 use crate::layout::form::FormFieldLayout;
 use crate::pipeline::{EffectiveArgValue, EffectiveValueSource};
@@ -30,7 +30,6 @@ pub(super) struct FieldRenderModel<'a> {
     pub(super) source_badge: Option<EffectiveValueSource>,
     pub(super) required: bool,
     pub(super) semantic_reason: Option<&'a str>,
-    pub(super) input_is_truncated: bool,
     pub(super) shows_choice_placeholder: bool,
     pub(super) is_default: bool,
     pub(super) uses_muted_non_user_value: bool,
@@ -41,13 +40,15 @@ pub(super) struct FieldRenderModel<'a> {
 }
 
 pub(super) fn render_fields<'a>(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     ui: &UiState,
     config: &TuiConfig,
     vm: &'a ScreenView<'a>,
-    frame_snapshot: &FrameSnapshot,
-) {
-    for field in &frame_snapshot.layout.form_fields {
+    fields: &[FormFieldLayout],
+    first_invalid_field_id: Option<&str>,
+) -> Option<(u16, u16)> {
+    let mut cursor = None;
+    for field in fields {
         let Some(item) = vm
             .active_args
             .iter()
@@ -55,13 +56,13 @@ pub(super) fn render_fields<'a>(
         else {
             continue;
         };
-        let model = FieldRenderModel::new(item, field, ui, config, vm, frame_snapshot);
+        let model = FieldRenderModel::new(item, ui, config, vm, first_invalid_field_id);
 
-        render_heading(frame, config, field, item.section_heading.as_deref());
-        render_label(frame, config, field, &model);
-        dispatch_widget(frame, ui, config, field, &model);
+        render_heading(buffer, config, field, item.section_heading.as_deref());
+        render_label(buffer, config, field, &model);
+        cursor = render_clipped_widget(buffer, ui, config, field, &model).or(cursor);
         help::render_field_help(
-            frame,
+            buffer,
             config,
             field.description,
             vm.root,
@@ -69,16 +70,66 @@ pub(super) fn render_fields<'a>(
             &model,
         );
     }
+    cursor
+}
+
+fn render_clipped_widget(
+    buffer: &mut Buffer,
+    ui: &UiState,
+    config: &TuiConfig,
+    field: &FormFieldLayout,
+    model: &FieldRenderModel<'_>,
+) -> Option<(u16, u16)> {
+    if field.input.width == 0 || field.input.height == 0 {
+        return None;
+    }
+
+    if matches!(model.widget, FieldWidget::RepeatedText) {
+        return repeated::render_repeated_text_field(buffer, ui, field, config, model);
+    }
+
+    let unclipped = field.input_clip_top == 0 && field.input.height == field.full_input_height;
+    if unclipped {
+        return dispatch_fixed_widget(buffer, ui, config, field.input, model);
+    }
+
+    let full_area = Rect::new(0, 0, field.input.width, field.full_input_height);
+    let mut local_buffer = Buffer::empty(full_area);
+    let cursor = dispatch_fixed_widget(&mut local_buffer, ui, config, full_area, model);
+    super::blit(
+        buffer,
+        &local_buffer,
+        (0, field.input_clip_top),
+        (field.input.x, field.input.y),
+        (field.input.width, field.input.height),
+    );
+    cursor.and_then(|cursor| clipped_cursor_position(cursor, field))
+}
+
+fn clipped_cursor_position(cursor: (u16, u16), field: &FormFieldLayout) -> Option<(u16, u16)> {
+    let (x, y) = cursor;
+    if x >= field.input.width || y >= field.full_input_height {
+        return None;
+    }
+    if y < field.input_clip_top || y >= field.input_clip_top.saturating_add(field.input.height) {
+        return None;
+    }
+    Some((
+        field.input.x.saturating_add(x),
+        field
+            .input
+            .y
+            .saturating_add(y.saturating_sub(field.input_clip_top)),
+    ))
 }
 
 impl<'a> FieldRenderModel<'a> {
     fn new(
         item: &crate::query::form::OrderedArg<'a>,
-        field: &FormFieldLayout,
         ui: &UiState,
         config: &TuiConfig,
         vm: &'a ScreenView<'a>,
-        frame_snapshot: &FrameSnapshot,
+        first_invalid_field_id: Option<&str>,
     ) -> Self {
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
         let field_error = vm
@@ -86,8 +137,7 @@ impl<'a> FieldRenderModel<'a> {
             .field_errors
             .get(&item.arg.id)
             .map(String::as_str);
-        let is_primary_invalid =
-            frame_snapshot.first_invalid_field_id() == Some(item.arg.id.as_str());
+        let is_primary_invalid = first_invalid_field_id == Some(item.arg.id.as_str());
         let source_badge = effective_source_badge(vm, item.arg);
         let required = vm.field_required(item.arg);
         let can_edit = vm.field_can_edit(item.arg);
@@ -108,8 +158,6 @@ impl<'a> FieldRenderModel<'a> {
             current_input,
             vm.effective_values.get(&item.arg.id),
         );
-        let expected_input_height = expected_input_height(ui, item.arg, item.widget, &value);
-        let input_is_truncated = field.input.height < expected_input_height;
         let shows_choice_placeholder = matches!(
             item.widget,
             FieldWidget::SingleChoice | FieldWidget::MultiChoice
@@ -164,7 +212,6 @@ impl<'a> FieldRenderModel<'a> {
             source_badge,
             required,
             semantic_reason,
-            input_is_truncated,
             shows_choice_placeholder,
             is_default,
             uses_muted_non_user_value,
@@ -226,7 +273,7 @@ fn text_style(config: &TuiConfig, tone: RenderTone) -> Style {
 }
 
 fn render_heading(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     config: &TuiConfig,
     field: &FormFieldLayout,
     heading: Option<&str>,
@@ -234,19 +281,17 @@ fn render_heading(
     if let Some(heading_rect) = field.heading
         && let Some(heading) = heading
     {
-        frame.render_widget(
-            Paragraph::new(help::section_heading_line(
-                config,
-                heading,
-                heading_rect.width,
-            )),
-            heading_rect,
-        );
+        Paragraph::new(help::section_heading_line(
+            config,
+            heading,
+            heading_rect.width,
+        ))
+        .render(heading_rect, buffer);
     }
 }
 
 fn render_label(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     config: &TuiConfig,
     field: &FormFieldLayout,
     model: &FieldRenderModel<'_>,
@@ -273,33 +318,32 @@ fn render_label(
         spans.push(Span::raw(" "));
         spans.push(Span::styled("*", styles::required_prompt(config)));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), label_rect);
+    Paragraph::new(Line::from(spans)).render(label_rect, buffer);
 }
 
-fn dispatch_widget(
-    frame: &mut Frame<'_>,
+fn dispatch_fixed_widget(
+    buffer: &mut Buffer,
     ui: &UiState,
     config: &TuiConfig,
-    field: &FormFieldLayout,
+    area: Rect,
     model: &FieldRenderModel<'_>,
-) {
+) -> Option<(u16, u16)> {
     match model.widget {
-        FieldWidget::Toggle => compact::render_flag_toggle(frame, config, field.input, model),
+        FieldWidget::Toggle => {
+            compact::render_flag_toggle(buffer, config, area, model);
+            None
+        }
         FieldWidget::SingleChoice | FieldWidget::MultiChoice | FieldWidget::Counter => {
-            compact::render_compact_control(frame, config, field.input, model);
+            compact::render_compact_control(buffer, config, area, model);
+            None
         }
         FieldWidget::OptionalValue => {
-            optional_value::render_optional_value(frame, ui, field.input, config, model);
+            optional_value::render_optional_value(buffer, ui, area, config, model)
         }
-        FieldWidget::RepeatedText => repeated::render_repeated_text_field(
-            frame,
-            ui,
-            field.input,
-            field.input_clip_top,
-            config,
-            model,
-        ),
-        FieldWidget::SingleText => text::render_text_field(frame, ui, field.input, config, model),
+        FieldWidget::SingleText => text::render_text_field(buffer, ui, area, config, model),
+        FieldWidget::RepeatedText => {
+            unreachable!("RepeatedText is dispatched directly to render_repeated_text_field")
+        }
     }
 }
 
@@ -468,13 +512,6 @@ fn render_values<'a>(arg: &ArgSpec, values: &'a [String]) -> Cow<'a, str> {
         [] => Cow::Borrowed(""),
         [single] => Cow::Borrowed(single.as_str()),
         many => Cow::Owned(crate::input::render_occurrence_text(arg, many)),
-    }
-}
-
-fn expected_input_height(ui: &UiState, arg: &ArgSpec, widget: FieldWidget, value: &str) -> u16 {
-    match widget {
-        FieldWidget::RepeatedText => crate::repeated_field::repeated_input_height(ui, arg, value),
-        _ => crate::layout::form::field_metrics(arg).input_height,
     }
 }
 

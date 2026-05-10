@@ -10,6 +10,7 @@ mod test_support;
 mod text;
 
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 
@@ -83,7 +84,19 @@ pub(crate) fn render_form(
         return;
     }
 
-    fields::render_fields(frame, ui, config, vm, frame_snapshot);
+    if content_area.width > 0 && viewport_height > 0 {
+        let cursor = fields::render_fields(
+            frame.buffer_mut(),
+            ui,
+            config,
+            vm,
+            &frame_snapshot.layout.form_fields,
+            frame_snapshot.first_invalid_field_id(),
+        );
+        if let Some(cursor) = cursor {
+            frame.set_cursor_position(cursor);
+        }
+    }
 
     if content_height > viewport_height {
         let scroll_steps = usize::from(frame_snapshot.form_scroll_max.saturating_add(1));
@@ -137,9 +150,34 @@ fn label_height_overrides(_: &ScreenView<'_>) -> HashMap<String, u16> {
     HashMap::new()
 }
 
+pub(super) fn blit(
+    target: &mut Buffer,
+    source: &Buffer,
+    source_origin: (u16, u16),
+    target_origin: (u16, u16),
+    size: (u16, u16),
+) {
+    for dy in 0..size.1 {
+        for dx in 0..size.0 {
+            let Some(cell) = source.cell((
+                source_origin.0.saturating_add(dx),
+                source_origin.1.saturating_add(dy),
+            )) else {
+                continue;
+            };
+            if let Some(slot) = target.cell_mut((
+                target_origin.0.saturating_add(dx),
+                target_origin.1.saturating_add(dy),
+            )) {
+                *slot = cell.clone();
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use clap::{Arg, ArgAction, Command};
+    use clap::{Arg, ArgAction, Command, value_parser};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -150,7 +188,6 @@ mod tests {
     use crate::TuiConfig;
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{ActiveTab, AppState, Focus};
-    use crate::layout::form::FormFieldLayout;
     use crate::query::form::{visible_args, visible_args_for_path, widget_for};
     use crate::spec::{CommandSpec, ValueCardinality};
     use crate::ui::form::render_form;
@@ -669,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn clipped_text_inputs_keep_their_bordered_rendering() {
+    fn bottom_clipped_text_inputs_keep_their_visible_border_row() {
         let command = CommandSpec {
             name: "tool".to_string(),
             version: None,
@@ -721,7 +758,7 @@ mod tests {
 
         assert_eq!(
             terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
-            " "
+            "╭"
         );
     }
 
@@ -780,7 +817,111 @@ mod tests {
     }
 
     #[test]
-    fn descriptions_do_not_render_when_the_field_top_row_is_scrolled_offscreen() {
+    fn bottom_clipped_compact_controls_render_visible_rows_without_overflow() {
+        let command = CommandSpec::from_command(
+            &Command::new("tool").arg(Arg::new("debug").long("debug").action(ArgAction::SetTrue)),
+        );
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: Vec::new(),
+            rendered_command: None,
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(&ui, Rect::new(0, 0, 40, 1), &vm, &mut snapshot);
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("clipped compact field layout");
+        assert_eq!(field.input.height, 1);
+        assert_eq!(field.input_clip_top, 0);
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 3)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(!rendered.contains("Disabled"));
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
+            "╭"
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y + 1)].symbol(),
+            " "
+        );
+    }
+
+    #[test]
+    fn bottom_clipped_text_inputs_render_border_without_overflow() {
+        let command = CommandSpec::from_command(
+            &Command::new("tool").arg(
+                Arg::new("allow_negative_integer")
+                    .long("allow-negative-integer")
+                    .default_value("0")
+                    .allow_negative_numbers(true)
+                    .value_parser(value_parser!(i32)),
+            ),
+        );
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: Vec::new(),
+            rendered_command: None,
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(&ui, Rect::new(0, 0, 50, 1), &vm, &mut snapshot);
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("clipped text field layout");
+        assert_eq!(field.input.height, 1);
+        assert_eq!(field.input_clip_top, 0);
+
+        let mut terminal = Terminal::new(TestBackend::new(50, 3)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
+            "╭"
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y + 1)].symbol(),
+            " "
+        );
+    }
+
+    #[test]
+    fn descriptions_render_when_their_content_row_enters_the_viewport() {
         let mut define = option_arg("define", "--define");
         define.help = Some("Key/value pairs".to_string());
         let mut include = option_arg("include", "--include");
@@ -826,7 +967,12 @@ mod tests {
             .expect("visible field layout");
         assert_eq!(field.arg_id, "include");
         assert!(field.label.is_none());
-        assert!(field.description.is_none());
+        let description = field.description.expect("visible description hit target");
+        assert!(
+            snapshot
+                .form_field_at(description.x, description.y)
+                .is_some_and(|hit| hit.arg_id == "include" && hit.in_description)
+        );
 
         let mut terminal = Terminal::new(TestBackend::new(40, 4)).expect("terminal");
         terminal
@@ -836,7 +982,141 @@ mod tests {
             .expect("draw");
 
         let rendered = buffer_text(terminal.backend());
-        assert!(!rendered.contains("Multi-value path list"));
+        assert!(rendered.contains("Multi-value path list"));
+    }
+
+    #[test]
+    fn descriptions_render_when_input_is_fully_above_viewport() {
+        let mut define = option_arg("define", "--define");
+        define.help = Some("Key/value pairs".to_string());
+        let mut include = option_arg("include", "--include");
+        include.help = Some("Multi-value path list".to_string());
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![define, include],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: Vec::new(),
+            rendered_command: None,
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.form_scroll = 8;
+
+        populate_layout(&ui, Rect::new(0, 0, 40, 2), &vm, &mut snapshot);
+
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("description-only field layout");
+        assert_eq!(field.arg_id, "include");
+        assert_eq!(field.input.height, 0);
+        let description = field.description.expect("visible description");
+        assert!(
+            snapshot
+                .form_field_at(description.x, description.y)
+                .is_some_and(|hit| {
+                    hit.arg_id == "include" && hit.in_description && !hit.in_input
+                })
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 2)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("Multi-value path list"));
+    }
+
+    #[test]
+    fn orphan_description_renders_adjacent_to_next_field_label() {
+        let mut define = option_arg("define", "--define");
+        define.help = Some("Key/value pairs".to_string());
+        let mut include = option_arg("include", "--include");
+        include.help = Some("Multi-value path list".to_string());
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![define, include],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: Vec::new(),
+            rendered_command: None,
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let mut ui = ui_state();
+        ui.form_scroll = 3;
+
+        populate_layout(&ui, Rect::new(0, 0, 40, 6), &vm, &mut snapshot);
+
+        let define_layout = snapshot
+            .layout
+            .form_fields
+            .iter()
+            .find(|field| field.arg_id == "define")
+            .expect("orphan description field layout");
+        let include_layout = snapshot
+            .layout
+            .form_fields
+            .iter()
+            .find(|field| field.arg_id == "include")
+            .expect("next visible field layout");
+        let define_description = define_layout
+            .description
+            .expect("orphan description rect for define");
+        let include_label = include_layout
+            .label
+            .expect("visible label rect for include");
+        assert_eq!(define_layout.input.height, 0);
+        assert!(
+            define_description.y < include_label.y
+                || define_description.y >= include_label.y + include_label.height,
+            "orphan description should not overlap the next field's label row"
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(rendered.contains("Key/value pairs"));
+        assert!(rendered.contains("include"));
     }
 
     #[test]
@@ -1194,6 +1474,21 @@ mod tests {
         assert!(!rendered.contains("Remove"));
         assert!(rendered.contains(" - "));
         assert!(rendered.contains(" + "));
+
+        let field = snapshot.layout.form_fields.first().expect("field layout");
+        let first_row = Rect::new(field.input.x, field.input.y, field.input.width, 3);
+        let second_row = Rect::new(field.input.x, field.input.y + 3, field.input.width, 3);
+        let first_remove =
+            repeated_remove_rect(first_row, true, false).expect("first remove control");
+        let last_add = repeated_add_rect(second_row).expect("last add control");
+        assert_eq!(
+            cell_bg(terminal.backend(), first_remove.x, first_remove.y),
+            TuiConfig::default().theme.accent
+        );
+        assert_eq!(
+            cell_bg(terminal.backend(), last_add.x, last_add.y),
+            TuiConfig::default().theme.accent
+        );
     }
 
     #[test]
@@ -1225,6 +1520,63 @@ mod tests {
 
         assert_eq!(repeated_remove_rect(row_rect, true, true), None);
         assert_eq!(repeated_add_rect(row_rect), None);
+    }
+
+    #[test]
+    fn bottom_clipped_repeated_text_field_renders_only_visible_border_row() {
+        let mut multi = option_arg("terminated-paths", "--terminated-paths");
+        multi.value_cardinality = ValueCardinality::Many;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: Vec::new(),
+            rendered_command: None,
+            validation: crate::pipeline::ValidationState::default(),
+            effective_values: std::collections::BTreeMap::new(),
+            field_semantics: std::collections::BTreeMap::new(),
+            inputs: None,
+        };
+        let mut snapshot = FrameSnapshot::default();
+        let ui = ui_state();
+
+        populate_layout(&ui, Rect::new(0, 0, 60, 1), &vm, &mut snapshot);
+        let field = snapshot
+            .layout
+            .form_fields
+            .first()
+            .expect("clipped repeated field layout");
+        assert_eq!(field.input.height, 1);
+        assert_eq!(field.input_clip_top, 0);
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 3)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y)].symbol(),
+            "╭"
+        );
+        assert!(!buffer_text(terminal.backend()).contains(" + "));
+        assert_eq!(
+            terminal.backend().buffer()[(field.input.x, field.input.y + 1)].symbol(),
+            " "
+        );
     }
 
     #[test]
@@ -1289,6 +1641,193 @@ mod tests {
     }
 
     #[test]
+    fn repeated_text_cursor_on_clipped_row_is_not_placed_on_screen() {
+        let mut multi = option_arg("include", "--include");
+        multi.value_cardinality = ValueCardinality::Many;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let mut state = AppState::new(command.clone());
+        state.domain.set_text_value("include", "a\nb\nc");
+        state.domain.mark_touched("include");
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "include")
+            .cloned()
+            .expect("include arg");
+        crate::form_editor::set_cursor_from_click(&mut state, &arg, 0, 1);
+        let mut ui = ui_state();
+        ui.editors = std::mem::take(&mut state.ui.editors);
+        ui.form_scroll = 2;
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: derived.authoritative_argv,
+            rendered_command: None,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        populate_layout(&ui, Rect::new(0, 0, 60, 3), &vm, &mut snapshot);
+        let field = snapshot.layout.form_fields.first().expect("field layout");
+        assert_eq!(field.input_clip_top, 2);
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 3)).expect("terminal");
+        // Park the cursor outside the viewport so a "cursor never placed"
+        // outcome is distinguishable from a "placed at (0, 0)" outcome.
+        let sentinel = ratatui::layout::Position::new(59, 2);
+        terminal.set_cursor_position(sentinel).expect("park cursor");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let cursor = terminal.get_cursor_position().expect("cursor query");
+        assert_eq!(
+            cursor, sentinel,
+            "cursor on a clipped repeated row must not be re-placed by the form renderer"
+        );
+        let _ = field;
+    }
+
+    #[test]
+    fn repeated_text_cursor_on_visible_row_after_clip_lands_inside_viewport() {
+        let mut multi = option_arg("include", "--include");
+        multi.value_cardinality = ValueCardinality::Many;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let mut state = AppState::new(command.clone());
+        state.domain.set_text_value("include", "a\nb\nc");
+        state.domain.mark_touched("include");
+        let arg = state
+            .domain
+            .current_command()
+            .args
+            .iter()
+            .find(|arg| arg.id == "include")
+            .cloned()
+            .expect("include arg");
+        // Cursor on row 1 (the row whose content sits inside the viewport).
+        crate::form_editor::set_cursor_from_click(&mut state, &arg, 1, 0);
+        let mut ui = ui_state();
+        ui.editors = std::mem::take(&mut state.ui.editors);
+        ui.form_scroll = 2;
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: derived.authoritative_argv,
+            rendered_command: None,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        populate_layout(&ui, Rect::new(0, 0, 60, 3), &vm, &mut snapshot);
+        let field = snapshot.layout.form_fields.first().expect("field layout");
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 3)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let cursor = terminal.get_cursor_position().expect("cursor placed");
+        assert!(
+            cursor.y >= field.input.y && cursor.y < field.input.y + field.input.height,
+            "cursor for a visible row must land inside the viewport, got {cursor:?}"
+        );
+    }
+
+    #[test]
+    fn middle_clipped_repeated_text_renders_only_intersecting_rows() {
+        let mut multi = option_arg("include", "--include");
+        multi.value_cardinality = ValueCardinality::Many;
+        let command = CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: vec![multi],
+            subcommands: Vec::new(),
+            ..CommandSpec::default()
+        };
+        let mut state = AppState::new(command.clone());
+        state
+            .domain
+            .set_text_value("include", "alpha\nbeta\ngamma\ndelta\nepsilon");
+        state.domain.mark_touched("include");
+        let mut ui = ui_state();
+        ui.editors = std::mem::take(&mut state.ui.editors);
+        // start_row > 0 (clip_top above row boundary) and end_row < total_rows
+        // (visible.bottom inside an interior row): partial clips on both ends.
+        ui.form_scroll = 4;
+        let derived = crate::pipeline::derive(&state);
+        let vm = ScreenView {
+            command: &command,
+            root: &command,
+            selected_path: crate::spec::CommandPath::default(),
+            tree_rows: Vec::new(),
+            sidebar_scroll: 0,
+            active_args: visible_args(&command, ActiveTab::Inputs),
+            authoritative_argv: derived.authoritative_argv,
+            rendered_command: None,
+            validation: derived.validation,
+            effective_values: derived.effective_values,
+            field_semantics: derived.field_semantics,
+            inputs: state.domain.current_form(),
+        };
+        let mut snapshot = FrameSnapshot::default();
+        populate_layout(&ui, Rect::new(0, 0, 60, 5), &vm, &mut snapshot);
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 5)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
+            })
+            .expect("draw");
+
+        let rendered = buffer_text(terminal.backend());
+        assert!(
+            !rendered.contains("alpha"),
+            "row above viewport must be clipped"
+        );
+        assert!(rendered.contains("beta"));
+        assert!(rendered.contains("gamma"));
+        assert!(!rendered.contains("delta") || !rendered.contains("epsilon"));
+    }
+
+    #[test]
     fn clipped_repeated_text_fields_follow_outer_scroll_order_instead_of_cursor() {
         let mut multi = option_arg("include", "--include");
         multi.value_cardinality = ValueCardinality::Many;
@@ -1331,22 +1870,10 @@ mod tests {
             inputs: state.domain.current_form(),
         };
         let mut snapshot = FrameSnapshot::default();
-        snapshot.layout.form = Some(Rect::new(0, 0, 60, 5));
-        snapshot.layout.form_view = Some(Rect::new(0, 0, 60, 5));
-        snapshot
-            .layout
-            .form_inputs
-            .insert("include".to_string(), Rect::new(10, 1, 30, 3));
-        snapshot.layout.form_fields.push(FormFieldLayout {
-            arg_id: "include".to_string(),
-            heading: None,
-            label: Some(Rect::new(0, 1, 9, 1)),
-            input: Rect::new(10, 1, 30, 3),
-            input_clip_top: 3,
-            description: None,
-        });
+        ui.form_scroll = 3;
+        populate_layout(&ui, Rect::new(0, 0, 60, 3), &vm, &mut snapshot);
 
-        let mut terminal = Terminal::new(TestBackend::new(60, 5)).expect("terminal");
+        let mut terminal = Terminal::new(TestBackend::new(60, 3)).expect("terminal");
         terminal
             .draw(|frame| {
                 render_form(frame, &ui, &TuiConfig::default(), &vm, &snapshot);
@@ -1354,6 +1881,7 @@ mod tests {
             .expect("draw");
 
         let rendered = buffer_text(terminal.backend());
+        assert!(!rendered.contains("alpha"));
         assert!(rendered.contains("beta"));
         assert!(!rendered.contains("gamma"));
     }

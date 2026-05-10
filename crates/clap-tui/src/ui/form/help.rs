@@ -1,9 +1,10 @@
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget,
 };
 
 use crate::config::TuiConfig;
@@ -67,7 +68,7 @@ pub(super) fn render_help_overlay(
 }
 
 pub(super) fn render_field_help(
-    frame: &mut Frame<'_>,
+    buffer: &mut Buffer,
     config: &TuiConfig,
     description: Option<Rect>,
     root: &CommandSpec,
@@ -80,14 +81,13 @@ pub(super) fn render_field_help(
     let Some(help) = field_help_text(root, selected_path, model) else {
         return;
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::raw(help))).style(if model.field_error.is_some() {
+    Paragraph::new(Line::from(Span::raw(help)))
+        .style(if model.field_error.is_some() {
             Style::default().fg(config.theme.error)
         } else {
             styles::help(config)
-        }),
-        help_rect,
-    );
+        })
+        .render(help_rect, buffer);
 }
 
 fn field_help_text(

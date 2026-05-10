@@ -41,6 +41,7 @@ pub struct FormFieldLayout {
     pub label: Option<Rect>,
     pub input: Rect,
     pub input_clip_top: u16,
+    pub full_input_height: u16,
     pub description: Option<Rect>,
 }
 
@@ -76,10 +77,12 @@ pub(crate) fn preferred_label_column_width_with_semantics(
     widest_label.clamp(LABEL_COLUMN_MIN_WIDTH, LABEL_COLUMN_MAX_WIDTH)
 }
 
+#[cfg(test)]
 pub(crate) fn field_metrics(arg: &ArgSpec) -> FieldMetrics {
     field_metrics_with_description(arg, form::field_has_description(arg, None))
 }
 
+#[cfg(test)]
 pub(crate) fn field_metrics_with_description(
     arg: &ArgSpec,
     show_description: bool,
@@ -87,6 +90,7 @@ pub(crate) fn field_metrics_with_description(
     field_metrics_with_description_and_input_height(arg, show_description, None)
 }
 
+#[cfg(test)]
 pub(crate) fn field_metrics_with_description_and_input_height(
     arg: &ArgSpec,
     show_description: bool,
@@ -581,69 +585,77 @@ pub(crate) fn project_visible_form_fields(
                 metrics.label_height,
             )
         });
-        let description_anchor_visible = description_anchor_visible(y, input.content_area);
-        let (input_y, field_input, description) = if let Some(projection) = repeated_projection {
+        let (input_y, field_input, full_input_height, description) = if let Some(projection) =
+            repeated_projection
+        {
             let input_y = i32::from(input.content_area.y) + i32::from(projection.input.y)
                 - i32::from(input.form_scroll);
-            let Some(field_input) = clipped_rect(
+            let description = projection.description.and_then(|description| {
+                let description_y = i32::from(input.content_area.y) + i32::from(description.y)
+                    - i32::from(input.form_scroll);
+                let (_, _, description_x, description_width) = field_description_geometry(
+                    input.area,
+                    form::field_is_in_section(item),
+                    preferred_label_width,
+                );
+                clipped_rect(
+                    description_x,
+                    description_width,
+                    description_y,
+                    description.height,
+                    input.content_area,
+                )
+            });
+            let field_input = clipped_rect(
                 projection.input.x,
                 projection.input.width,
                 input_y,
                 projection.input.height,
                 input.content_area,
-            ) else {
+            )
+            .or_else(|| {
+                description.map(|_| {
+                    hidden_input_rect(projection.input.x, input_width, input_y, input.content_area)
+                })
+            });
+            let Some(field_input) = field_input else {
                 y += i32::from(metrics.total_height);
                 previous_heading = item.section_heading.as_deref();
                 continue;
             };
-            let description = description_anchor_visible
-                .then_some(())
-                .and(projection.description)
-                .and_then(|description| {
-                    let description_y = i32::from(input.content_area.y) + i32::from(description.y)
-                        - i32::from(input.form_scroll);
-                    let (_, _, description_x, description_width) = field_description_geometry(
-                        input.area,
-                        form::field_is_in_section(item),
-                        preferred_label_width,
-                    );
-                    clipped_rect(
-                        description_x,
-                        description_width,
-                        description_y,
-                        description.height,
-                        input.content_area,
-                    )
-                });
-            (input_y, field_input, description)
+            (input_y, field_input, projection.input.height, description)
         } else {
             let input_y = y + i32::from(field_input_offset_with_description(
                 item.arg,
                 show_description,
             ));
-            let Some(field_input) = clipped_rect(
-                input_x,
-                input_width,
-                input_y,
-                metrics.input_height,
-                input.content_area,
-            ) else {
-                y += i32::from(metrics.total_height);
-                previous_heading = item.section_heading.as_deref();
-                continue;
-            };
             let description = form_description_rect(
                 item,
                 y,
                 input.area,
                 input.content_area,
-                description_anchor_visible,
                 show_description,
                 preferred_label_width,
                 input.input_height_overrides.get(&item.arg.id).copied(),
                 input.label_height_overrides.get(&item.arg.id).copied(),
             );
-            (input_y, field_input, description)
+            let field_input = clipped_rect(
+                input_x,
+                input_width,
+                input_y,
+                metrics.input_height,
+                input.content_area,
+            )
+            .or_else(|| {
+                description
+                    .map(|_| hidden_input_rect(input_x, input_width, input_y, input.content_area))
+            });
+            let Some(field_input) = field_input else {
+                y += i32::from(metrics.total_height);
+                previous_heading = item.section_heading.as_deref();
+                continue;
+            };
+            (input_y, field_input, metrics.input_height, description)
         };
 
         let input_clip_top =
@@ -654,6 +666,7 @@ pub(crate) fn project_visible_form_fields(
             label,
             input: field_input,
             input_clip_top,
+            full_input_height,
             description,
         });
 
@@ -664,19 +677,25 @@ pub(crate) fn project_visible_form_fields(
     fields
 }
 
+fn hidden_input_rect(x: u16, width: u16, input_y: i32, bounds: Rect) -> Rect {
+    let top = input_y.clamp(
+        i32::from(bounds.y),
+        i32::from(bounds.y.saturating_add(bounds.height)),
+    );
+    Rect::new(x, u16::try_from(top).unwrap_or(u16::MAX), width, 0)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn form_description_rect(
     item: &OrderedArg<'_>,
     y: i32,
     area: Rect,
     content_area: Rect,
-    description_anchor_visible: bool,
     show_description: bool,
     preferred_label_width: u16,
     input_height_override: Option<u16>,
     label_height_override: Option<u16>,
 ) -> Option<Rect> {
-    description_anchor_visible.then_some(())?;
     show_description.then_some(())?;
     let description_y = y + i32::from(field_description_offset_with_layout_overrides(
         item.arg,
@@ -700,10 +719,6 @@ fn form_description_rect(
         .max(1),
         content_area,
     )
-}
-
-fn description_anchor_visible(field_top_y: i32, content_area: Rect) -> bool {
-    field_top_y >= i32::from(content_area.y)
 }
 
 fn intersect_rects(rect: Rect, bounds: Rect) -> Option<Rect> {
