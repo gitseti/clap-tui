@@ -50,17 +50,9 @@ pub(crate) fn populate_layout(area: Rect, vm: &ScreenView<'_>, frame_layout: &mu
         };
         let row_y = content_y.saturating_add(u16::try_from(index).unwrap_or(list_area.height));
         let row_rect = Rect::new(content_x, row_y, list_area.width, 1);
-        let caret = sidebar_caret_offset(item).map(|offset| {
-            let caret_x = content_x
-                .saturating_add(1)
-                .saturating_add(offset)
-                .min(row_rect.x.saturating_add(row_rect.width.saturating_sub(1)));
-            Rect::new(caret_x, row_y, 1, 1)
-        });
         frame_layout.sidebar_items.push(SidebarItemLayout {
             path: item.path.clone(),
             row: row_rect,
-            caret,
             has_children: item.has_children,
         });
     }
@@ -318,16 +310,6 @@ fn sidebar_heading_line(config: &TuiConfig, title: &str, indent: usize) -> Line<
                 .add_modifier(Modifier::BOLD),
         ),
     ])
-}
-
-fn sidebar_caret_offset(item: &TreeItem) -> Option<u16> {
-    item.has_children.then(|| {
-        item.prefix()
-            .chars()
-            .position(|ch| matches!(ch, '+' | '-'))
-            .and_then(|offset| u16::try_from(offset).ok())
-            .unwrap_or(0)
-    })
 }
 
 fn sidebar_title(
@@ -789,50 +771,6 @@ mod tests {
             layout.sidebar_items[2].path.as_slice(),
             &["delta".to_string()]
         );
-    }
-
-    #[test]
-    fn populate_layout_places_caret_hit_target_on_rendered_branch_prefix() {
-        let root = root_spec();
-        let vm = ScreenView {
-            command: &root,
-            root: &root,
-            selected_path: CommandPath::default(),
-            tree_rows: vec![
-                TreeRow::Item(TreeItem {
-                    name: "build".to_string(),
-                    display_label: "build".to_string(),
-                    version: None,
-                    path: CommandPath::from(vec!["build".to_string()]),
-                    has_children: true,
-                    indent: 0,
-                    expanded: false,
-                }),
-                TreeRow::Item(TreeItem {
-                    name: "release".to_string(),
-                    display_label: "release".to_string(),
-                    version: None,
-                    path: CommandPath::from(vec!["build".to_string(), "release".to_string()]),
-                    has_children: true,
-                    indent: 2,
-                    expanded: false,
-                }),
-            ],
-            sidebar_scroll: 0,
-            active_args: Vec::new(),
-            authoritative_argv: Vec::new(),
-            rendered_command: None,
-            validation: crate::pipeline::ValidationState::default(),
-            effective_values: std::collections::BTreeMap::new(),
-            field_semantics: std::collections::BTreeMap::new(),
-            inputs: None,
-        };
-        let mut layout = FrameLayout::default();
-
-        populate_layout(Rect::new(0, 0, 20, 7), &vm, &mut layout);
-
-        assert_eq!(layout.sidebar_items[0].caret.expect("root caret").x, 1);
-        assert_eq!(layout.sidebar_items[1].caret.expect("child caret").x, 3);
     }
 
     #[test]
