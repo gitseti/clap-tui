@@ -12,7 +12,7 @@ This crate was heavily inspired by [Trogon](https://github.com/Textualize/trogon
 
 ```toml
 [dependencies]
-clap = { version = "4.6.1", features = ["derive", "env"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 clap-tui = "0.1.3"
 ```
 
