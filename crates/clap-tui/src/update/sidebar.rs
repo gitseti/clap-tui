@@ -33,13 +33,10 @@ fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &Fr
         return;
     }
 
-    let Some((path, caret_hit, has_children)) = frame_snapshot.sidebar_item_at(x, y).map(|item| {
-        (
-            item.path.clone(),
-            FrameSnapshot::sidebar_caret_contains(item, x, y),
-            item.has_children,
-        )
-    }) else {
+    let Some((path, has_children)) = frame_snapshot
+        .sidebar_item_at(x, y)
+        .map(|item| (item.path.clone(), item.has_children))
+    else {
         return;
     };
 
@@ -51,7 +48,7 @@ fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &Fr
             .ui
             .focus_first_tab(&selectors::visible_form_arg_pairs(&args));
     }
-    if caret_hit && has_children {
+    if has_children {
         let items = selectors::visible_sidebar_items(
             &state.domain.root,
             &state.domain.expanded,

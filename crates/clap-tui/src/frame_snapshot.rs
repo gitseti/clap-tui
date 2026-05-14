@@ -78,10 +78,6 @@ impl FrameSnapshot {
             .find(|item| contains(item.row, x, y))
     }
 
-    pub fn sidebar_caret_contains(item: &SidebarItemLayout, x: u16, y: u16) -> bool {
-        item.caret.is_some_and(|caret| contains(caret, x, y))
-    }
-
     pub fn form_input_rect(&self, arg_id: &str) -> Option<Rect> {
         self.layout.form_inputs.get(arg_id).copied()
     }
@@ -379,7 +375,6 @@ mod tests {
         snapshot.layout.sidebar_items = vec![SidebarItemLayout {
             path: vec!["build".to_string()].into(),
             row: Rect::new(0, 2, 20, 1),
-            caret: None,
             has_children: true,
         }];
 
@@ -608,7 +603,6 @@ pub struct FooterButtonLayout {
 pub struct SidebarItemLayout {
     pub path: CommandPath,
     pub row: Rect,
-    pub caret: Option<Rect>,
     pub has_children: bool,
 }
 

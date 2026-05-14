@@ -553,7 +553,6 @@ mod tests {
         frame_snapshot.layout.sidebar_items = vec![SidebarItemLayout {
             path: vec!["build".to_string()].into(),
             row: Rect::new(0, 1, 20, 1),
-            caret: None,
             has_children: false,
         }];
 
@@ -607,12 +606,61 @@ mod tests {
         frame_snapshot.layout.sidebar_items = vec![SidebarItemLayout {
             path: vec!["build".to_string()].into(),
             row: Rect::new(0, 1, 20, 1),
-            caret: Some(Rect::new(2, 1, 1, 1)),
             has_children: true,
         }];
 
         let action =
             handle_mouse_event(click(2, 1), &state, &frame_snapshot, &TuiConfig::default())
+                .expect("sidebar action");
+        let effect = apply_action(&action, &mut state, &frame_snapshot);
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(
+            state.domain.selected_path().as_slice(),
+            &["build".to_string()]
+        );
+        assert!(state.domain.expanded.contains("tool::build"));
+        assert!(matches!(state.ui.focus, Focus::Sidebar));
+    }
+
+    #[test]
+    fn sidebar_row_click_selects_command_and_expands_item() {
+        let mut state = AppState::new(CommandSpec {
+            name: "tool".to_string(),
+            version: None,
+            about: None,
+            help: String::new(),
+            args: Vec::new(),
+            subcommands: vec![CommandSpec {
+                name: "build".to_string(),
+                version: None,
+                about: None,
+                help: String::new(),
+                args: Vec::new(),
+                subcommands: vec![CommandSpec {
+                    name: "release".to_string(),
+                    version: None,
+                    about: None,
+                    help: String::new(),
+                    args: Vec::new(),
+                    subcommands: Vec::new(),
+                    ..CommandSpec::default()
+                }],
+                ..CommandSpec::default()
+            }],
+            ..CommandSpec::default()
+        });
+        state.domain.expanded.remove("tool::build");
+        let mut frame_snapshot = FrameSnapshot::default();
+        frame_snapshot.layout.sidebar = Some(Rect::new(0, 0, 20, 10));
+        frame_snapshot.layout.sidebar_items = vec![SidebarItemLayout {
+            path: vec!["build".to_string()].into(),
+            row: Rect::new(0, 1, 20, 1),
+            has_children: true,
+        }];
+
+        let action =
+            handle_mouse_event(click(8, 1), &state, &frame_snapshot, &TuiConfig::default())
                 .expect("sidebar action");
         let effect = apply_action(&action, &mut state, &frame_snapshot);
 
