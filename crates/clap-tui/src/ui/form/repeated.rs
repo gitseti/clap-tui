@@ -130,7 +130,7 @@ fn render_repeated_row_textarea(
         .border_type(BorderType::Rounded)
         .border_style(styles::field_border(config, active, false));
     if let Some(cursor_col) = active_cursor_col {
-        let mut textarea = tui_textarea::TextArea::new(vec![value.to_string()]);
+        let mut textarea = ratatui_textarea::TextArea::new(vec![value.to_string()]);
         textarea.set_block(block.style(styles::input(config, true)));
         let base_style = Style::default()
             .fg(text_style.fg.unwrap_or(config.theme.text))
@@ -151,7 +151,7 @@ fn render_repeated_row_textarea(
             textarea.set_placeholder_text(placeholder);
             textarea.set_placeholder_style(styles::placeholder(config));
         }
-        textarea.move_cursor(tui_textarea::CursorMove::Jump(0, cursor_col));
+        textarea.move_cursor(ratatui_textarea::CursorMove::Jump(0, cursor_col));
         (&textarea).render(area, buffer);
         text::textarea_cursor_position(&textarea, area)
     } else {

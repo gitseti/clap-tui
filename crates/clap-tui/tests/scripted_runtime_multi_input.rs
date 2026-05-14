@@ -26,7 +26,8 @@ impl Runtime for ScriptedRuntime {
     type Backend = TestBackend;
 
     fn init_terminal(&mut self) -> Result<Terminal<Self::Backend>, TuiError> {
-        Terminal::new(TestBackend::new(80, 24)).map_err(TuiError::from)
+        let Ok(terminal) = Terminal::new(TestBackend::new(80, 24));
+        Ok(terminal)
     }
 
     fn restore_terminal(&mut self, _terminal: &mut Terminal<Self::Backend>) {}

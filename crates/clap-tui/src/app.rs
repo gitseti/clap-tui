@@ -485,7 +485,7 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
             .expect("terminal session is active")
             .draw(draw_fn)
             .map(|_| ())
-            .map_err(TuiError::from)
+            .map_err(|e| TuiError::Terminal(std::io::Error::other(e.to_string())))
     }
 
     fn backend(&self) -> &R::Backend {
@@ -569,7 +569,8 @@ mod tests {
         type Backend = TestBackend;
 
         fn init_terminal(&mut self) -> Result<Terminal<Self::Backend>, TuiError> {
-            Terminal::new(TestBackend::new(80, 24)).map_err(TuiError::from)
+            let Ok(terminal) = Terminal::new(TestBackend::new(80, 24));
+            Ok(terminal)
         }
 
         fn restore_terminal(&mut self, _terminal: &mut Terminal<Self::Backend>) {}
