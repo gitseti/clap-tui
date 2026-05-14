@@ -224,7 +224,8 @@ fn infer_field_errors(
         | ErrorKind::NoEquals
         | ErrorKind::TooFewValues
         | ErrorKind::TooManyValues
-        | ErrorKind::WrongNumberOfValues => {
+        | ErrorKind::WrongNumberOfValues
+        | ErrorKind::ValueValidation => {
             let referenced = referenced_arg_ids(state, error, Some(&summary));
             if referenced.len() == 1 {
                 field_errors.insert(referenced[0].clone(), summary);

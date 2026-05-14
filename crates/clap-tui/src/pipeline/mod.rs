@@ -1119,6 +1119,38 @@ mod tests {
     }
 
     #[test]
+    fn value_validation_error_attaches_to_referenced_field() {
+        let state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("port")
+                    .long("port")
+                    .value_parser(clap::value_parser!(u16)),
+            ),
+        );
+        let argv = vec![
+            "tool".to_string(),
+            "--port".to_string(),
+            "1000000".to_string(),
+        ];
+
+        let validation = super::validate_argv(&state, &argv);
+
+        assert!(!validation.is_valid);
+        let summary = validation
+            .summary
+            .as_deref()
+            .expect("value validation should produce a summary");
+        assert!(summary.contains("--port"));
+        assert!(summary.contains("1000000"));
+
+        let field_error = validation
+            .field_errors
+            .get("port")
+            .expect("value validation should attach to the port field");
+        assert_eq!(field_error, summary);
+    }
+
+    #[test]
     fn no_equals_summary_uses_option_specific_message() {
         let state = AppState::from_command(
             &Command::new("tool").arg(
