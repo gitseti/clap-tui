@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tui_textarea::{CursorMove, Input, Key, TextArea};
+use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 
 use crate::runtime::{AppKeyCode, AppKeyEvent};
 use crate::spec::CommandPath;

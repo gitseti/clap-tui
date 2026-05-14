@@ -69,7 +69,7 @@ fn textarea_value(
     value: &str,
     placeholder: Option<String>,
     config: &TuiConfig,
-) -> tui_textarea::TextArea<'static> {
+) -> ratatui_textarea::TextArea<'static> {
     let editor = form_editor::editor_for_render(ui, model.arg.owner_path(), model.arg, value);
     let mut textarea = editor.to_textarea(editor.selection_anchor());
     textarea.set_block(model.block.clone().style(styles::input(config, true)));
@@ -109,13 +109,14 @@ pub(super) fn display_lines(model: &FieldRenderModel<'_>) -> Vec<Line<'static>> 
 }
 
 pub(super) fn textarea_cursor_position(
-    textarea: &tui_textarea::TextArea<'_>,
+    textarea: &ratatui_textarea::TextArea<'_>,
     area: Rect,
 ) -> Option<(u16, u16)> {
     if area.width < 3 || area.height < 3 {
         return None;
     }
-    let (row, col) = textarea.cursor();
+    let cursor = textarea.cursor();
+    let (row, col) = (cursor.0, cursor.1);
     let inner_w = area.width.saturating_sub(2);
     let inner_h = area.height.saturating_sub(2);
     if inner_w == 0 || inner_h == 0 {
