@@ -12,3 +12,5 @@
 - [x] 3.1 Document the richer typed API in rustdoc and README with an argv-inspection example
 - [x] 3.2 Run formatting, clippy, tests, rustdoc, and package verification
 - [x] 3.3 Add a compile-checked hello-world example for `run_with_argv()`
+- [x] 3.4 Bump package metadata and user-facing dependency documentation to 0.2.0
+- [x] 3.5 Re-run release verification for the 0.2.0 package

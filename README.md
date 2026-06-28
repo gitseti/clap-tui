@@ -13,7 +13,7 @@ This crate was heavily inspired by [Trogon](https://github.com/Textualize/trogon
 ```toml
 [dependencies]
 clap = { version = "4.5", features = ["derive", "env"] }
-clap-tui = "0.1.3"
+clap-tui = "0.2.0"
 ```
 
 Minimum supported Rust version: `1.88`.
@@ -22,7 +22,7 @@ Minimum supported Rust version: `1.88`.
 
 Add a `Tui` subcommand and delegate to `Tui::run()`.
 
-The recommended 0.1.3 integration model is an explicit `Command::Tui` dispatch branch that calls `Tui::<Command>::hide_entrypoint("tui")?.run()`.
+The recommended 0.2.0 integration model is an explicit `Command::Tui` dispatch branch that calls `Tui::<Command>::hide_entrypoint("tui")?.run()`.
 
 ```rust
 use clap::Parser;

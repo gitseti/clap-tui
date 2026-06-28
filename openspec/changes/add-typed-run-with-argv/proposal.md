@@ -8,6 +8,7 @@ The typed `Tui::run()` API returns the parsed clap value but discards the canoni
 - Add `Tui::run_with_argv()` as an opt-in typed API returning the richer submission.
 - Keep `Tui::run()` as the primary typed shortcut with unchanged behavior and signature.
 - Document that returned argv includes the executable token and is not shell-rendered command text.
+- Bump the crate version to 0.2.0 for the new public API release.
 
 ## Capabilities
 
@@ -22,4 +23,4 @@ None.
 
 ## Impact
 
-The public `clap-tui` API gains one exported result type and one additive method. The typed runner implementation, crate documentation, README, tests, and two existing specifications are affected. No dependency, runtime, cancellation, rendering, or error behavior changes.
+The public `clap-tui` API gains one exported result type and one additive method, and the crate version advances to 0.2.0. The typed runner implementation, package metadata, crate documentation, README, tests, and two existing specifications are affected. No dependency, runtime, cancellation, rendering, or error behavior changes.

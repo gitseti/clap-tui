@@ -65,6 +65,8 @@
 //! Use [`Tui`] (recommended).
 //!
 //! - Use [`Tui::<T>::run()`][Tui::run] when you want typed results from a derive-based parser.
+//! - Use [`Tui::<T>::run_with_argv()`][Tui::run_with_argv] when you also need the canonical argv
+//!   used for typed reparsing.
 //! - Use [`TuiApp`] when you are working directly with a hand-built [`clap::Command`] or need a
 //!   lower-level integration surface.
 //!
