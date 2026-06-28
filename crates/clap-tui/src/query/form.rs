@@ -38,7 +38,12 @@ pub(crate) fn single_choice_has_clear_row(
     widget: FieldWidget,
     required: bool,
 ) -> bool {
-    matches!(widget, FieldWidget::SingleChoice) && !required && !arg.choices.is_empty()
+    matches!(widget, FieldWidget::SingleChoice)
+        && !required
+        && !arg.choices.is_empty()
+        && arg.default_values.is_empty()
+        && arg.metadata.defaults.env.is_none()
+        && !arg.has_conditional_defaults()
 }
 
 pub(crate) fn widget_for(arg: &ArgSpec) -> FieldWidget {
@@ -209,7 +214,8 @@ mod tests {
     use clap::{Arg, Command};
 
     use super::{
-        FieldWidget, field_heading, ordered_args, visible_args, visible_args_for_path, widget_for,
+        FieldWidget, field_heading, ordered_args, single_choice_has_clear_row, visible_args,
+        visible_args_for_path, widget_for,
     };
     use crate::input::ActiveTab;
     use crate::spec::{ArgKind, ArgSpec, CommandPath, CommandSpec};
@@ -240,6 +246,40 @@ mod tests {
             subcommands: Vec::new(),
             ..CommandSpec::default()
         }
+    }
+
+    #[test]
+    fn clear_row_is_only_available_without_default_sources() {
+        let mut choice = arg("mode", "--mode", ArgKind::Enum);
+        choice.choices = vec!["fast".to_string(), "safe".to_string()];
+        assert!(single_choice_has_clear_row(
+            &choice,
+            FieldWidget::SingleChoice,
+            false
+        ));
+
+        choice.default_values = vec!["fast".to_string()];
+        assert!(!single_choice_has_clear_row(
+            &choice,
+            FieldWidget::SingleChoice,
+            false
+        ));
+
+        choice.default_values.clear();
+        choice.metadata.defaults.env = Some("TOOL_MODE".to_string());
+        assert!(!single_choice_has_clear_row(
+            &choice,
+            FieldWidget::SingleChoice,
+            false
+        ));
+
+        choice.metadata.defaults.env = None;
+        choice.metadata.defaults.has_conditional_defaults = true;
+        assert!(!single_choice_has_clear_row(
+            &choice,
+            FieldWidget::SingleChoice,
+            false
+        ));
     }
 
     #[test]

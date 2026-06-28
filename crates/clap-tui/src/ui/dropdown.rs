@@ -403,7 +403,6 @@ mod tests {
             &Command::new("tool").arg(
                 Arg::new("mode")
                     .long("mode")
-                    .required(true)
                     .default_value("fast")
                     .value_parser(["fast", "safe"]),
             ),
@@ -419,6 +418,7 @@ mod tests {
         let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &config, &vm)
             .expect("dropdown view");
 
+        assert_eq!(view.total_rows, 2);
         assert_eq!(
             view.items[0].line.spans[0].style.fg,
             Some(config.theme.selection_fg)
