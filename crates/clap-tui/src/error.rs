@@ -15,8 +15,8 @@ pub enum TuiError {
     Runner(Box<dyn std::error::Error + Send + Sync>),
     /// Lower-level TUI flow exited without running.
     ///
-    /// Higher-level entry points such as `TuiApp::run`, `Tui::run`, and `run_with_matches`
-    /// normalize this into `Ok(None)` or let callers decide what cancellation means.
+    /// Higher-level entry points such as `TuiApp::run`, `Tui::run`, `Tui::run_with_argv`, and
+    /// `run_with_matches` normalize this into a normal non-error outcome.
     #[error("cancelled")]
     Cancelled,
     /// Requested entrypoint subcommand does not exist on the top-level render command.

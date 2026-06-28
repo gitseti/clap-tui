@@ -35,6 +35,16 @@ pub struct Tui<T, R: Runtime = CrosstermRuntime> {
     _parser: PhantomData<fn() -> T>,
 }
 
+/// A typed command invocation together with the canonical argv that produced it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TuiInvocation<T> {
+    /// The command value parsed from [`Self::argv`].
+    pub command: T,
+    /// Canonical argv, with the program name as its first element.
+    pub argv: Vec<OsString>,
+}
+
 impl TuiApp<CrosstermRuntime> {
     /// Create a TUI from a hand-built [`clap::Command`].
     #[must_use]
@@ -67,9 +77,9 @@ impl<R: Runtime> TuiApp<R> {
 
     /// Run the TUI and return the selected canonical argv.
     ///
-    /// The returned argv is the executable token sequence. Preview and clipboard text are
-    /// rendered separately from these tokens, using POSIX shell quoting on Unix platforms and
-    /// `PowerShell` quoting on Windows.
+    /// The returned argv includes the program name as its first element. Preview and clipboard
+    /// text are rendered separately, using POSIX shell quoting on Unix platforms and `PowerShell`
+    /// quoting on Windows.
     ///
     /// Returns `Ok(Some(argv))` when the user runs a valid command and `Ok(None)` when the
     /// user exits without running. Validation stays inside the TUI flow, so invalid form
@@ -192,10 +202,28 @@ where
     /// Returns an error when terminal setup, rendering, runtime integration, or clap reparsing
     /// fails.
     pub fn run(self) -> Result<Option<T>, TuiError> {
+        self.run_with_argv()
+            .map(|invocation| invocation.map(|invocation| invocation.command))
+    }
+
+    /// Run the TUI and return the parsed command together with its canonical argv.
+    ///
+    /// Returns `Ok(Some(invocation))` when the user submits a valid command and `Ok(None)` when
+    /// the user exits without submitting. [`TuiInvocation::argv`] is the exact token sequence used
+    /// for clap reparsing.
+    ///
+    /// Use [`Self::run`] when only the parsed command is needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when terminal setup, rendering, runtime integration, or clap reparsing
+    /// fails.
+    pub fn run_with_argv(self) -> Result<Option<TuiInvocation<T>>, TuiError> {
         let Some(argv) = self.inner.run()? else {
             return Ok(None);
         };
-        parse_result(T::try_parse_from(argv)).map(Some)
+        let command = parse_result(T::try_parse_from(&argv))?;
+        Ok(Some(TuiInvocation { command, argv }))
     }
 
     /// Drop down to the untyped app surface when only argv or `ArgMatches` execution is needed.
@@ -801,6 +829,38 @@ mod tests {
     }
 
     #[test]
+    fn tui_run_with_argv_returns_typed_value_and_exact_canonical_argv() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        struct Cli {
+            #[arg(long, default_value = "world")]
+            name: String,
+        }
+
+        let runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('r'),
+            AppKeyModifiers {
+                control: true,
+                ..AppKeyModifiers::default()
+            },
+        ))]);
+
+        let invocation = super::Tui::<Cli, _>::new()
+            .with_runtime(runtime)
+            .run_with_argv()
+            .expect("typed run should succeed")
+            .expect("run should produce an invocation");
+
+        assert_eq!(
+            invocation.command,
+            Cli {
+                name: "world".to_string()
+            }
+        );
+        assert_eq!(invocation.argv, os_vec(&["tool"]));
+    }
+
+    #[test]
     fn hide_entrypoint_hides_a_matching_top_level_subcommand_from_the_render_tree() {
         #[derive(Debug, clap::Parser, PartialEq, Eq)]
         #[command(name = "tool")]
@@ -924,6 +984,27 @@ mod tests {
     }
 
     #[test]
+    fn tui_run_with_argv_returns_none_on_cancel() {
+        #[derive(Debug, clap::Parser, PartialEq, Eq)]
+        #[command(name = "tool")]
+        struct Cli;
+
+        let runtime = TestRuntime::with_events([AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('c'),
+            AppKeyModifiers {
+                control: true,
+                ..AppKeyModifiers::default()
+            },
+        ))]);
+
+        let result = super::Tui::<Cli, _>::new()
+            .with_runtime(runtime)
+            .run_with_argv();
+
+        assert_eq!(result.expect("cancel should map to None"), None);
+    }
+
+    #[test]
     fn tui_run_returns_clap_display_errors_without_printing() {
         #[derive(Debug, clap::Parser, PartialEq, Eq)]
         #[command(name = "tool", version = "1.2.3")]
@@ -937,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn tui_run_reparses_selected_command_after_hiding_entrypoint() {
+    fn tui_run_with_argv_reparses_selected_command_after_hiding_entrypoint() {
         #[derive(Debug, clap::Parser, PartialEq, Eq)]
         #[command(name = "tool")]
         enum Cli {
@@ -966,18 +1047,22 @@ mod tests {
             .expect("entrypoint should exist")
             .with_config(config)
             .with_runtime(runtime)
-            .run();
+            .run_with_argv();
 
+        let invocation = result
+            .expect("typed run should succeed")
+            .expect("run should produce an invocation");
         assert_eq!(
-            result.expect("typed run should succeed"),
-            Some(Cli::Hello {
+            invocation.command,
+            Cli::Hello {
                 name: "world".to_string()
-            })
+            }
         );
+        assert_eq!(invocation.argv, os_vec(&["tool", "hello"]));
     }
 
     #[test]
-    fn tui_run_propagates_runtime_failures() {
+    fn tui_run_with_argv_propagates_runtime_failures() {
         #[derive(Debug, clap::Parser, PartialEq, Eq)]
         #[command(name = "tool")]
         struct Cli;
@@ -1009,7 +1094,7 @@ mod tests {
 
         let error = super::Tui::<Cli, _>::new()
             .with_runtime(FailingRuntime)
-            .run()
+            .run_with_argv()
             .expect_err("runtime failure should propagate");
 
         assert!(matches!(error, TuiError::Terminal(_)));

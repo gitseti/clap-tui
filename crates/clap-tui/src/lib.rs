@@ -65,6 +65,8 @@
 //! Use [`Tui`] (recommended).
 //!
 //! - Use [`Tui::<T>::run()`][Tui::run] when you want typed results from a derive-based parser.
+//! - Use [`Tui::<T>::run_with_argv()`][Tui::run_with_argv] when you also need the canonical argv
+//!   used for typed reparsing.
 //! - Use [`TuiApp`] when you are working directly with a hand-built [`clap::Command`] or need a
 //!   lower-level integration surface.
 //!
@@ -98,6 +100,32 @@
 //!
 //! See [`TuiError`] for the detailed error taxonomy.
 //!
+//! # Retaining Canonical Argv
+//!
+//! Use [`Tui::run_with_argv`] when the application also needs canonical argv:
+//!
+//! ```no_run
+//! use clap::Parser;
+//! use clap_tui::Tui;
+//!
+//! #[derive(Debug, Parser)]
+//! #[command(name = "tool")]
+//! struct Cli {
+//!     #[arg(long, default_value = "world")]
+//!     name: String,
+//! }
+//!
+//! fn main() -> Result<(), clap_tui::TuiError> {
+//!     if let Some(invocation) = Tui::<Cli>::new().run_with_argv()? {
+//!         eprintln!("Running argv: {:?}", invocation.argv);
+//!         println!("Hello, {}!", invocation.command.name);
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! [`TuiInvocation::argv`] is canonical argv with the program name as its first element.
+//!
 //! # Feature Flags
 //!
 //! - The default `mouse` feature enables mouse capture and mouse-driven controls.
@@ -116,8 +144,9 @@
 //!
 //! # Examples
 //!
-//! The crate ships with four public examples:
+//! The crate ships with five public examples:
 //! - `simple` for minimal `Command::Tui` setup
+//! - `run_with_argv` for a minimal typed invocation with canonical argv
 //! - `showcase` for a realistic, compact command tree
 //! - `subcommands` for typed dispatch across command trees
 //! - `clap_features` for the full [`TuiApp`] compatibility fixture
@@ -140,8 +169,8 @@ mod spec;
 mod ui;
 mod update;
 
-/// TUI application entry points.
-pub use app::{Tui, TuiApp};
+/// TUI application entry points and typed invocation result.
+pub use app::{Tui, TuiApp, TuiInvocation};
 /// Public configuration and theming types.
 pub use config::{Keymap, LayoutConfig, Theme, ThemePreset, TuiConfig};
 /// Error type returned by public `clap-tui` operations.
