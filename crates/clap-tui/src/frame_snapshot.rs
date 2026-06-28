@@ -318,7 +318,18 @@ pub(crate) fn populate_form_layout(
             let choice_count = active_args
                 .iter()
                 .find(|item| item.arg.id == field.arg_id)
-                .map_or(0, |item| item.arg.choices.len());
+                .map_or(0, |item| {
+                    let required = field_semantics
+                        .get(&FieldInstanceId::from_arg(item.arg))
+                        .map_or(item.arg.required, |semantics| semantics.required_badge);
+                    let clear_offset =
+                        usize::from(crate::query::form::single_choice_has_clear_row(
+                            item.arg,
+                            item.widget,
+                            required,
+                        ));
+                    item.arg.choices.len().saturating_add(clear_offset)
+                });
             frame_layout.dropdown = frame_layout
                 .form_view
                 .and_then(|form_view| dropdown_geometry(form_view, field.input, choice_count))

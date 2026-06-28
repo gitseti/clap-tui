@@ -182,8 +182,12 @@ fn apply_choice_input(
         state.ui.close_dropdown();
         return;
     }
-    let len = arg.choices.len();
-    let is_multi = matches!(form::widget_for(&arg), FieldWidget::MultiChoice);
+    let widget = form::widget_for(&arg);
+    let required = state.field_required(&arg);
+    let has_clear_row = form::single_choice_has_clear_row(&arg, widget, required);
+    let clear_offset = usize::from(has_clear_row);
+    let len = arg.choices.len().saturating_add(clear_offset);
+    let is_multi = matches!(widget, FieldWidget::MultiChoice);
 
     match key.code {
         AppKeyCode::Up => {
@@ -205,8 +209,13 @@ fn apply_choice_input(
             navigation::ensure_enum_visible(state, frame_snapshot, next, len);
         }
         AppKeyCode::Char(' ') => {
-            let index = state.ui.dropdown_cursor(len);
-            let Some(choice) = arg.choices.get(index) else {
+            let row = state.ui.dropdown_cursor(len);
+            if has_clear_row && row == 0 {
+                state.domain.clear_value_and_untouch(&arg.id);
+                state.ui.close_dropdown();
+                return;
+            }
+            let Some(choice) = arg.choices.get(row - clear_offset) else {
                 return;
             };
             if is_multi {
@@ -222,8 +231,10 @@ fn apply_choice_input(
             if is_multi {
                 state.ui.close_dropdown();
             } else {
-                let index = state.ui.dropdown_cursor(len);
-                if let Some(choice) = arg.choices.get(index) {
+                let row = state.ui.dropdown_cursor(len);
+                if has_clear_row && row == 0 {
+                    state.domain.clear_value_and_untouch(&arg.id);
+                } else if let Some(choice) = arg.choices.get(row - clear_offset) {
                     state
                         .domain
                         .set_choice_value_touched(&arg.id, choice.clone());
@@ -567,20 +578,35 @@ fn apply_dropdown_click(
     let Some(arg) = state.domain.arg_for_input(arg_id).cloned() else {
         return;
     };
+    let widget = form::widget_for(&arg);
+    let required = state.field_required(&arg);
+    let has_clear_row = form::single_choice_has_clear_row(&arg, widget, required);
+    let clear_offset = usize::from(has_clear_row);
+    let total_rows = arg.choices.len().saturating_add(clear_offset);
     let visible_rows = frame_snapshot.dropdown_visible_rows().unwrap_or(0);
-    let scroll = state.ui.dropdown_scroll(arg.choices.len(), visible_rows);
-    if let Some(index) = frame_snapshot.dropdown_choice_index(row, scroll)
-        && let Some(choice) = arg.choices.get(index)
-    {
-        state.ui.set_dropdown_cursor(index);
-        if matches!(form::widget_for(&arg), FieldWidget::MultiChoice) {
-            state.domain.toggle_choice_value_touched(&arg.id, choice);
-        } else {
-            state
-                .domain
-                .set_choice_value_touched(&arg.id, choice.clone());
-            state.ui.close_dropdown();
-        }
+    let scroll = state.ui.dropdown_scroll(total_rows, visible_rows);
+    let Some(index) = frame_snapshot.dropdown_choice_index(row, scroll) else {
+        return;
+    };
+    if index >= total_rows {
+        return;
+    }
+    state.ui.set_dropdown_cursor(index);
+    if has_clear_row && index == 0 {
+        state.domain.clear_value_and_untouch(&arg.id);
+        state.ui.close_dropdown();
+        return;
+    }
+    let Some(choice) = arg.choices.get(index - clear_offset) else {
+        return;
+    };
+    if matches!(widget, FieldWidget::MultiChoice) {
+        state.domain.toggle_choice_value_touched(&arg.id, choice);
+    } else {
+        state
+            .domain
+            .set_choice_value_touched(&arg.id, choice.clone());
+        state.ui.close_dropdown();
     }
 }
 
@@ -675,7 +701,9 @@ mod tests {
             .select_command_path(&["admin".to_string()])
             .expect("valid path");
         state.ui.dropdown_open = Some("color".to_string());
-        state.ui.dropdown_cursor = 1;
+        // Row 0 is the synthetic "(none)" entry for non-required choices.
+        // "red" -> 1, "green" -> 2, "blue" -> 3.
+        state.ui.dropdown_cursor = 2;
 
         let effect = apply_action(
             &Action::ChoiceInput {
@@ -2337,5 +2365,123 @@ mod tests {
             .find(|field| field.arg_id == "define");
         assert!(define.is_none_or(|field| field.description.is_none()));
         assert!(define.is_none_or(|field| field.label.is_none()));
+    }
+
+    #[test]
+    fn single_choice_clear_row_resets_value_via_space() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("mode").long("mode").value_parser(["fast", "safe"])),
+        );
+        state
+            .domain
+            .set_choice_value_touched("mode", "fast".to_string());
+        state.ui.dropdown_open = Some("mode".to_string());
+        state.ui.dropdown_cursor = 0;
+
+        let effect = apply_action(
+            &Action::ChoiceInput {
+                arg_id: "mode".to_string(),
+                key: key(AppKeyCode::Char(' ')),
+            },
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.dropdown_open.is_none());
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
+        assert_eq!(argv, vec!["tool".to_string()]);
+    }
+
+    #[test]
+    fn single_choice_clear_row_offsets_real_choice_selection() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("mode").long("mode").value_parser(["fast", "safe"])),
+        );
+        state.ui.dropdown_open = Some("mode".to_string());
+        // Row 0 is "(none)", row 1 is "fast", row 2 is "safe".
+        state.ui.dropdown_cursor = 1;
+
+        let effect = apply_action(
+            &Action::ChoiceInput {
+                arg_id: "mode".to_string(),
+                key: key(AppKeyCode::Char(' ')),
+            },
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+
+        assert_eq!(effect, Effect::None);
+        let arg = state.domain.arg_for_input("mode").expect("mode arg");
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .map(|form| form.selected_values(arg))
+                .unwrap_or_default(),
+            vec!["fast".to_string()]
+        );
+    }
+
+    #[test]
+    fn single_choice_required_field_has_no_clear_row_offset() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(
+                Arg::new("mode")
+                    .long("mode")
+                    .required(true)
+                    .value_parser(["fast", "safe"]),
+            ),
+        );
+        state.ui.dropdown_open = Some("mode".to_string());
+        state.ui.dropdown_cursor = 0;
+
+        let effect = apply_action(
+            &Action::ChoiceInput {
+                arg_id: "mode".to_string(),
+                key: key(AppKeyCode::Enter),
+            },
+            &mut state,
+            &FrameSnapshot::default(),
+        );
+
+        assert_eq!(effect, Effect::None);
+        let arg = state.domain.arg_for_input("mode").expect("mode arg");
+        assert_eq!(
+            state
+                .domain
+                .current_form()
+                .map(|form| form.selected_values(arg))
+                .unwrap_or_default(),
+            vec!["fast".to_string()]
+        );
+    }
+
+    #[test]
+    fn clicking_clear_row_resets_single_choice() {
+        let mut state = AppState::from_command(
+            &Command::new("tool").arg(Arg::new("mode").long("mode").value_parser(["fast", "safe"])),
+        );
+        state
+            .domain
+            .set_choice_value_touched("mode", "fast".to_string());
+        state.ui.dropdown_open = Some("mode".to_string());
+        let mut snapshot = FrameSnapshot::default();
+        snapshot.layout.dropdown = Some(ratatui::layout::Rect::new(0, 0, 20, 5));
+
+        // Click the first content row (just inside the border).
+        let effect = apply_action(
+            &Action::ClickDropdownChoice {
+                arg_id: "mode".to_string(),
+                row: 1,
+            },
+            &mut state,
+            &snapshot,
+        );
+
+        assert_eq!(effect, Effect::None);
+        assert!(state.ui.dropdown_open.is_none());
+        let argv = crate::pipeline::build_authoritative_command_line(&state);
+        assert_eq!(argv, vec!["tool".to_string()]);
     }
 }

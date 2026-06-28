@@ -148,6 +148,9 @@ fn happy_path_scripted_flow_mixes_navigation_editing_and_run() {
             ScriptedStep::key(AppKeyCode::Down),
             ScriptedStep::key(AppKeyCode::Enter),
             ScriptedStep::key(AppKeyCode::Down),
+            // Non-required choice dropdowns now lead with a "(none)" row, so
+            // an extra Down is needed to step past it onto "release".
+            ScriptedStep::key(AppKeyCode::Down),
             ScriptedStep::key(AppKeyCode::Enter),
             ScriptedStep::key(AppKeyCode::Down),
             ScriptedStep::type_text("demo"),

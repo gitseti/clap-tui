@@ -1152,6 +1152,11 @@ impl AppState {
         self.field_semantics_for_arg(arg)
             .is_none_or(|semantics| semantics.can_edit)
     }
+
+    pub(crate) fn field_required(&mut self, arg: &ArgSpec) -> bool {
+        self.field_semantics_for_arg(arg)
+            .map_or(arg.required, |semantics| semantics.required_badge)
+    }
 }
 
 fn clamp_dropdown_scroll(current: usize, total_rows: usize, visible_rows: usize) -> usize {

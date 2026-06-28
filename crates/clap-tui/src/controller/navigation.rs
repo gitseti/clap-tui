@@ -267,6 +267,19 @@ pub(crate) fn open_enum_dropdown(
         return;
     }
 
+    let (clear_offset, augmented_total) =
+        state
+            .domain
+            .arg_for_input(arg_id)
+            .cloned()
+            .map_or((0, total), |arg| {
+                let widget = form::widget_for(&arg);
+                let required = state.field_required(&arg);
+                let has_clear_row = form::single_choice_has_clear_row(&arg, widget, required);
+                let offset = usize::from(has_clear_row);
+                (offset, total.saturating_add(offset))
+            });
+
     state.ui.open_dropdown(arg_id.to_string(), 0, 0);
     let current = state
         .domain
@@ -289,15 +302,16 @@ pub(crate) fn open_enum_dropdown(
                             _ => None,
                         })
                 })
+                .map(|position| position + clear_offset)
         })
         .unwrap_or(0);
     let visible_rows = frame_snapshot
-        .dropdown_geometry_for_input(arg_id, total)
+        .dropdown_geometry_for_input(arg_id, augmented_total)
         .map_or(
-            total.min(usize::from(crate::frame_snapshot::MAX_DROPDOWN_ROWS)),
+            augmented_total.min(usize::from(crate::frame_snapshot::MAX_DROPDOWN_ROWS)),
             |layout| layout.visible_rows,
         );
-    let max_scroll = total.saturating_sub(visible_rows);
+    let max_scroll = augmented_total.saturating_sub(visible_rows);
     state
         .ui
         .set_dropdown_scroll(current.saturating_sub(visible_rows / 2).min(max_scroll));
@@ -1311,6 +1325,7 @@ mod tests {
     #[test]
     fn opening_dropdown_centers_current_choice_and_clamps_scroll() {
         let mut color = arg("color", "--color", ArgKind::Enum);
+        color.required = true;
         color.choices = (0..10).map(|index| format!("choice-{index}")).collect();
         let mut state = AppState::new(command("tool", vec![color], Vec::new()));
         let mut frame_snapshot = FrameSnapshot::default();

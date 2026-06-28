@@ -265,10 +265,13 @@ fn inherited_global_choice_fields_work_from_descendant_forms() {
         .subcommand(Command::new("admin"));
     let mut config = TuiConfig::default();
     config.start_command = Some("admin".to_string());
+    // Non-required choice dropdowns now lead with a "(none)" row, so an extra
+    // Down is needed to step past it onto "green".
     let events = vec![
         key(AppKeyCode::Tab),
         key(AppKeyCode::Tab),
         key(AppKeyCode::Enter),
+        key(AppKeyCode::Down),
         key(AppKeyCode::Down),
         key(AppKeyCode::Enter),
         ctrl(AppKeyCode::Char('r')),

@@ -33,6 +33,14 @@ pub(crate) struct OrderedArg<'a> {
     pub(crate) section_heading: Option<String>,
 }
 
+pub(crate) fn single_choice_has_clear_row(
+    arg: &ArgSpec,
+    widget: FieldWidget,
+    required: bool,
+) -> bool {
+    matches!(widget, FieldWidget::SingleChoice) && !required && !arg.choices.is_empty()
+}
+
 pub(crate) fn widget_for(arg: &ArgSpec) -> FieldWidget {
     if arg.uses_count_semantics() {
         FieldWidget::Counter
