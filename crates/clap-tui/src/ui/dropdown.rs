@@ -103,9 +103,9 @@ pub(crate) fn render_dropdown(
     domain: &DomainState,
     config: &TuiConfig,
     _area: Rect,
-    _vm: &ScreenView<'_>,
+    vm: &ScreenView<'_>,
 ) {
-    let Some(view) = build_dropdown_view(ui, frame_snapshot, domain, config) else {
+    let Some(view) = build_dropdown_view(ui, frame_snapshot, domain, config, vm) else {
         return;
     };
     let mut widget_state = DropdownWidgetState {
@@ -129,6 +129,7 @@ fn build_dropdown_view(
     frame_snapshot: &FrameSnapshot,
     domain: &DomainState,
     config: &TuiConfig,
+    vm: &ScreenView<'_>,
 ) -> Option<DropdownView> {
     let arg_id = ui.dropdown_open.as_ref()?;
     let rect = frame_snapshot.layout.dropdown?;
@@ -136,13 +137,16 @@ fn build_dropdown_view(
 
     let current_form = domain.current_form();
     let widget = form::widget_for(arg);
+    let required = vm.field_required(arg);
+    let has_clear_row = form::single_choice_has_clear_row(arg, widget, required);
+    let clear_offset = usize::from(has_clear_row);
     let is_touched = current_form
         .as_ref()
         .is_some_and(|form| form.is_touched(&arg.id));
     let selected_values = current_form
         .as_ref()
         .map_or_else(Vec::new, |form| form.selected_values(arg));
-    let total_rows = arg.choices.len();
+    let total_rows = arg.choices.len().saturating_add(clear_offset);
     let visible_rows = rect.height.saturating_sub(2) as usize;
     let scroll_position = ui.dropdown_scroll(total_rows, visible_rows);
     let selected_row = ui.dropdown_cursor(total_rows);
@@ -151,45 +155,62 @@ fn build_dropdown_view(
     .then_some(selected_row - scroll_position);
     let title = dropdown_title(config, arg.display_label(), widget);
 
-    let items = arg
-        .choices
-        .iter()
-        .enumerate()
+    let clear_item = has_clear_row.then(|| {
+        let is_selected = selected_row == 0;
+        let style = if is_selected {
+            Style::default()
+                .fg(config.theme.selection_fg)
+                .add_modifier(ratatui::style::Modifier::BOLD | ratatui::style::Modifier::ITALIC)
+        } else {
+            Style::default()
+                .fg(config.theme.dim)
+                .add_modifier(ratatui::style::Modifier::ITALIC)
+        };
+        DropdownItem {
+            line: Line::from(Span::styled("(none)", style)),
+        }
+    });
+
+    let choice_items = arg.choices.iter().enumerate().map(|(choice_index, value)| {
+        let row = choice_index + clear_offset;
+        let is_default = !is_touched && choice_value_matches_default(arg, value);
+        let is_selected = row == selected_row;
+        let is_checked = selected_values.iter().any(|selected| selected == value);
+        let text_style = match (is_selected, is_default) {
+            (true, _) => Style::default()
+                .fg(config.theme.selection_fg)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+            (false, true) => Style::default().fg(config.theme.dim),
+            (false, false) => Style::default().fg(config.theme.text),
+        };
+        let description = arg
+            .choice_metadata(value)
+            .and_then(|choice| choice.help.as_deref())
+            .map(|help| format!("  {help}"))
+            .unwrap_or_default();
+        let mut spans = Vec::new();
+        if matches!(widget, FieldWidget::MultiChoice) {
+            spans.push(Span::styled(
+                if is_checked { " [x] " } else { " [ ] " },
+                styles::checkbox_chip(config, is_selected, is_checked),
+            ));
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(value.clone(), text_style));
+        if !description.is_empty() {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(description, styles::help(config)));
+        }
+        DropdownItem {
+            line: Line::from(spans),
+        }
+    });
+
+    let items: Vec<DropdownItem> = clear_item
+        .into_iter()
+        .chain(choice_items)
         .skip(scroll_position)
         .take(visible_rows)
-        .map(|(index, value)| {
-            let is_default = !is_touched && choice_value_matches_default(arg, value);
-            let is_selected = index == selected_row;
-            let is_checked = selected_values.iter().any(|selected| selected == value);
-            let text_style = match (is_selected, is_default) {
-                (true, _) => Style::default()
-                    .fg(config.theme.selection_fg)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-                (false, true) => Style::default().fg(config.theme.dim),
-                (false, false) => Style::default().fg(config.theme.text),
-            };
-            let description = arg
-                .choice_metadata(value)
-                .and_then(|choice| choice.help.as_deref())
-                .map(|help| format!("  {help}"))
-                .unwrap_or_default();
-            let mut spans = Vec::new();
-            if matches!(widget, FieldWidget::MultiChoice) {
-                spans.push(Span::styled(
-                    if is_checked { " [x] " } else { " [ ] " },
-                    styles::checkbox_chip(config, is_selected, is_checked),
-                ));
-                spans.push(Span::raw(" "));
-            }
-            spans.push(Span::styled(value.clone(), text_style));
-            if !description.is_empty() {
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(description, styles::help(config)));
-            }
-            DropdownItem {
-                line: Line::from(spans),
-            }
-        })
         .collect();
 
     Some(DropdownView {
@@ -227,6 +248,7 @@ mod tests {
     use crate::frame_snapshot::{MAX_DROPDOWN_ROWS, dropdown_geometry};
     use crate::input::AppState;
     use crate::ui::dropdown::build_dropdown_view;
+    use crate::ui::screen::ScreenView;
     use clap::{Arg, Command, builder::PossibleValue};
     use ratatui::layout::Rect;
 
@@ -298,7 +320,7 @@ mod tests {
     #[test]
     fn dropdown_hides_hidden_choices_and_shows_choice_help() {
         let mut state = AppState::from_command(&Command::new("tool").arg(
-            Arg::new("mode").long("mode").value_parser([
+            Arg::new("mode").long("mode").required(true).value_parser([
                 PossibleValue::new("fast").help("Fast path"),
                 PossibleValue::new("secret").hide(true),
             ]),
@@ -307,8 +329,16 @@ mod tests {
         let mut snapshot = crate::frame_snapshot::FrameSnapshot::default();
         snapshot.layout.dropdown = Some(Rect::new(0, 0, 30, 4));
 
-        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &TuiConfig::default())
-            .expect("dropdown view");
+        let derived = state.derived().clone();
+        let vm = ScreenView::from_state(&state, derived);
+        let view = build_dropdown_view(
+            &state.ui,
+            &snapshot,
+            &state.domain,
+            &TuiConfig::default(),
+            &vm,
+        )
+        .expect("dropdown view");
 
         assert_eq!(view.total_rows, 1);
         let rendered = view.items[0]
@@ -338,26 +368,33 @@ mod tests {
             .expect("valid path");
         state.ui.dropdown_open = Some("color".to_string());
         let mut snapshot = crate::frame_snapshot::FrameSnapshot::default();
-        snapshot.layout.dropdown = Some(Rect::new(0, 0, 30, 4));
+        snapshot.layout.dropdown = Some(Rect::new(0, 0, 30, 5));
 
-        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &TuiConfig::default())
-            .expect("dropdown view");
+        let derived = state.derived().clone();
+        let vm = ScreenView::from_state(&state, derived);
+        let view = build_dropdown_view(
+            &state.ui,
+            &snapshot,
+            &state.domain,
+            &TuiConfig::default(),
+            &vm,
+        )
+        .expect("dropdown view");
 
-        assert_eq!(view.total_rows, 2);
-        let first = view.items[0]
-            .line
-            .spans
+        // Non-required SingleChoice gets a synthetic "(none)" row at index 0.
+        assert_eq!(view.total_rows, 3);
+        let labels = view
+            .items
             .iter()
-            .map(|span| span.content.to_string())
-            .collect::<String>();
-        let second = view.items[1]
-            .line
-            .spans
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect::<String>();
-        assert_eq!(first, "red");
-        assert_eq!(second, "green");
+            .map(|item| {
+                item.line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["(none)", "red", "green"]);
     }
 
     #[test]
@@ -376,9 +413,12 @@ mod tests {
         snapshot.layout.dropdown = Some(Rect::new(0, 0, 30, 4));
         let config = TuiConfig::default();
 
-        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &config)
+        let derived = state.derived().clone();
+        let vm = ScreenView::from_state(&state, derived);
+        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &config, &vm)
             .expect("dropdown view");
 
+        assert_eq!(view.total_rows, 2);
         assert_eq!(
             view.items[0].line.spans[0].style.fg,
             Some(config.theme.selection_fg)
@@ -400,8 +440,16 @@ mod tests {
         let mut snapshot = crate::frame_snapshot::FrameSnapshot::default();
         snapshot.layout.dropdown = Some(Rect::new(0, 0, 40, 5));
 
-        let view = build_dropdown_view(&state.ui, &snapshot, &state.domain, &TuiConfig::default())
-            .expect("dropdown view");
+        let derived = state.derived().clone();
+        let vm = ScreenView::from_state(&state, derived);
+        let view = build_dropdown_view(
+            &state.ui,
+            &snapshot,
+            &state.domain,
+            &TuiConfig::default(),
+            &vm,
+        )
+        .expect("dropdown view");
 
         let rendered = view.items[0]
             .line

@@ -141,7 +141,7 @@ fn field_help_text(
         ));
     }
     if model.selected
-        && let Some(hint) = widget_help_hint(model.widget)
+        && let Some(hint) = widget_help_hint(model.arg, model.widget, model.required)
     {
         parts.push(hint.to_string());
     }
@@ -176,7 +176,7 @@ pub(super) fn section_heading_line(config: &TuiConfig, heading: &str, width: u16
     ])
 }
 
-fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
+fn widget_help_hint(arg: &ArgSpec, widget: FieldWidget, required: bool) -> Option<&'static str> {
     match widget {
         FieldWidget::RepeatedText => Some(
             "Enter moves or adds a line. Up/Down switches lines. Backspace removes an empty line. Alt+Up/Down reorders.",
@@ -184,6 +184,11 @@ fn widget_help_hint(widget: FieldWidget) -> Option<&'static str> {
         FieldWidget::MultiChoice => Some("Space toggles choices. Enter finishes selection."),
         FieldWidget::Counter => Some("Right/+ increments. Left/- decrements."),
         FieldWidget::OptionalValue => Some("Right enables. Left/Delete disables."),
+        FieldWidget::SingleChoice
+            if crate::query::form::single_choice_has_clear_row(arg, widget, required) =>
+        {
+            Some("Enter to choose. Select (none) to clear.")
+        }
         _ => None,
     }
 }
@@ -265,7 +270,7 @@ pub(super) fn field_help_text_for_test(
         ));
     }
     if help.selected
-        && let Some(hint) = widget_help_hint(widget)
+        && let Some(hint) = widget_help_hint(arg, widget, false)
     {
         parts.push(hint.to_string());
     }
