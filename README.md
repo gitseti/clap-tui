@@ -73,16 +73,16 @@ Use `run_with_argv()` when you need both the parsed command and the exact execut
 by the TUI:
 
 ```rust
-if let Some(submission) = Tui::<Command>::new()
+if let Some(invocation) = Tui::<Command>::new()
     .hide_entrypoint("tui")?
     .run_with_argv()?
 {
-    eprintln!("Running argv: {:?}", submission.argv);
-    dispatch(submission.command);
+    eprintln!("Running argv: {:?}", invocation.argv);
+    dispatch(invocation.command);
 }
 ```
 
-`submission.argv` includes the executable token. It is canonical `Vec<OsString>` argv, not a
+`invocation.argv` includes the executable token. It is canonical `Vec<OsString>` argv, not a
 shell-quoted command string.
 
 ## Choose an entrypoint
@@ -113,7 +113,7 @@ Internal reducers, projections, render helpers, and other support modules are no
 ## Example guide
 
 - `simple` shows minimal `Command::Tui` setup with the entrypoint hidden from the rendered TUI.
-- `run_with_argv` shows a minimal typed submission with its canonical argv.
+- `run_with_argv` shows a minimal typed invocation with its canonical argv.
 - `showcase` shows a realistic, readable CLI with a small nested config area.
 - `subcommands` shows typed dispatch across command trees.
 - `clap_features` is the diagnostic compatibility fixture for the full

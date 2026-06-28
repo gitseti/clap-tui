@@ -35,13 +35,13 @@ pub struct Tui<T, R: Runtime = CrosstermRuntime> {
     _parser: PhantomData<fn() -> T>,
 }
 
-/// A typed command submission together with the canonical argv that produced it.
+/// A typed command invocation together with the canonical argv that produced it.
 ///
 /// The argv contains the executable token and is the exact token sequence used for clap
 /// reparsing. It is not shell-rendered preview or clipboard text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct TuiSubmission<T> {
+pub struct TuiInvocation<T> {
     /// The command value parsed from [`Self::argv`].
     pub command: T,
     /// The canonical executable token sequence, including the executable token.
@@ -206,13 +206,13 @@ where
     /// fails.
     pub fn run(self) -> Result<Option<T>, TuiError> {
         self.run_with_argv()
-            .map(|submission| submission.map(|submission| submission.command))
+            .map(|invocation| invocation.map(|invocation| invocation.command))
     }
 
     /// Run the TUI and return the parsed command together with its canonical argv.
     ///
-    /// Returns `Ok(Some(submission))` when the user submits a valid command and `Ok(None)` when
-    /// the user exits without submitting. [`TuiSubmission::argv`] includes the executable token
+    /// Returns `Ok(Some(invocation))` when the user submits a valid command and `Ok(None)` when
+    /// the user exits without submitting. [`TuiInvocation::argv`] includes the executable token
     /// and is the exact token sequence used for clap reparsing; it is not shell-rendered command
     /// text.
     ///
@@ -222,12 +222,12 @@ where
     ///
     /// Returns an error when terminal setup, rendering, runtime integration, or clap reparsing
     /// fails.
-    pub fn run_with_argv(self) -> Result<Option<TuiSubmission<T>>, TuiError> {
+    pub fn run_with_argv(self) -> Result<Option<TuiInvocation<T>>, TuiError> {
         let Some(argv) = self.inner.run()? else {
             return Ok(None);
         };
         let command = parse_result(T::try_parse_from(&argv))?;
-        Ok(Some(TuiSubmission { command, argv }))
+        Ok(Some(TuiInvocation { command, argv }))
     }
 
     /// Drop down to the untyped app surface when only argv or `ArgMatches` execution is needed.
@@ -849,19 +849,19 @@ mod tests {
             },
         ))]);
 
-        let submission = super::Tui::<Cli, _>::new()
+        let invocation = super::Tui::<Cli, _>::new()
             .with_runtime(runtime)
             .run_with_argv()
             .expect("typed run should succeed")
-            .expect("run should produce a submission");
+            .expect("run should produce an invocation");
 
         assert_eq!(
-            submission.command,
+            invocation.command,
             Cli {
                 name: "world".to_string()
             }
         );
-        assert_eq!(submission.argv, os_vec(&["tool"]));
+        assert_eq!(invocation.argv, os_vec(&["tool"]));
     }
 
     #[test]
@@ -1053,16 +1053,16 @@ mod tests {
             .with_runtime(runtime)
             .run_with_argv();
 
-        let submission = result
+        let invocation = result
             .expect("typed run should succeed")
-            .expect("run should produce a submission");
+            .expect("run should produce an invocation");
         assert_eq!(
-            submission.command,
+            invocation.command,
             Cli::Hello {
                 name: "world".to_string()
             }
         );
-        assert_eq!(submission.argv, os_vec(&["tool", "hello"]));
+        assert_eq!(invocation.argv, os_vec(&["tool", "hello"]));
     }
 
     #[test]

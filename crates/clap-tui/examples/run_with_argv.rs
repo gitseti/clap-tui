@@ -11,13 +11,13 @@ enum Command {
 fn main() -> Result<(), clap_tui::TuiError> {
     match Command::parse() {
         Command::Tui => {
-            if let Some(submission) = Tui::<Command>::new()
+            if let Some(invocation) = Tui::<Command>::new()
                 .hide_entrypoint("tui")?
                 .run_with_argv()?
             {
-                println!("Running argv: {:?}", submission.argv);
+                println!("Running argv: {:?}", invocation.argv);
 
-                if let Command::Hello = submission.command {
+                if let Command::Hello = invocation.command {
                     println!("Hello, world!");
                 }
             }

@@ -117,15 +117,15 @@
 //! }
 //!
 //! fn main() -> Result<(), clap_tui::TuiError> {
-//!     if let Some(submission) = Tui::<Cli>::new().run_with_argv()? {
-//!         eprintln!("Running argv: {:?}", submission.argv);
-//!         println!("Hello, {}!", submission.command.name);
+//!     if let Some(invocation) = Tui::<Cli>::new().run_with_argv()? {
+//!         eprintln!("Running argv: {:?}", invocation.argv);
+//!         println!("Hello, {}!", invocation.command.name);
 //!     }
 //!     Ok(())
 //! }
 //! ```
 //!
-//! [`TuiSubmission::argv`] includes the executable token. It is canonical argv, not a shell-quoted
+//! [`TuiInvocation::argv`] includes the executable token. It is canonical argv, not a shell-quoted
 //! command string.
 //!
 //! # Feature Flags
@@ -148,7 +148,7 @@
 //!
 //! The crate ships with five public examples:
 //! - `simple` for minimal `Command::Tui` setup
-//! - `run_with_argv` for a minimal typed submission with canonical argv
+//! - `run_with_argv` for a minimal typed invocation with canonical argv
 //! - `showcase` for a realistic, compact command tree
 //! - `subcommands` for typed dispatch across command trees
 //! - `clap_features` for the full [`TuiApp`] compatibility fixture
@@ -171,8 +171,8 @@ mod spec;
 mod ui;
 mod update;
 
-/// TUI application entry points and typed submission result.
-pub use app::{Tui, TuiApp, TuiSubmission};
+/// TUI application entry points and typed invocation result.
+pub use app::{Tui, TuiApp, TuiInvocation};
 /// Public configuration and theming types.
 pub use config::{Keymap, LayoutConfig, Theme, ThemePreset, TuiConfig};
 /// Error type returned by public `clap-tui` operations.

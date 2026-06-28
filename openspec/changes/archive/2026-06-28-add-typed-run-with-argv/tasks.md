@@ -1,6 +1,6 @@
 ## 1. Public API and Implementation
 
-- [x] 1.1 Add and root-export the documented `TuiSubmission<T>` public type
+- [x] 1.1 Add and root-export the documented `TuiInvocation<T>` public type
 - [x] 1.2 Implement `Tui::run_with_argv()` and delegate `Tui::run()` to the shared typed path
 
 ## 2. Verification Coverage

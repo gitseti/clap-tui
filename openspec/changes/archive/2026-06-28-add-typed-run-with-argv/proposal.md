@@ -4,8 +4,8 @@ The typed `Tui::run()` API returns the parsed clap value but discards the canoni
 
 ## What Changes
 
-- Add a public `TuiSubmission<T>` containing the parsed command and canonical `Vec<OsString>` argv.
-- Add `Tui::run_with_argv()` as an opt-in typed API returning the richer submission.
+- Add a public `TuiInvocation<T>` containing the parsed command and canonical `Vec<OsString>` argv.
+- Add `Tui::run_with_argv()` as an opt-in typed API returning the richer invocation.
 - Keep `Tui::run()` as the primary typed shortcut with unchanged behavior and signature.
 - Document that returned argv includes the executable token and is not shell-rendered command text.
 - Bump the crate version to 0.2.0 for the new public API release.
@@ -18,7 +18,7 @@ None.
 
 ### Modified Capabilities
 
-- `typed-direct-tui-entrypoint`: Add an opt-in typed submission API while preserving the primary `Tui::run()` contract.
+- `typed-direct-tui-entrypoint`: Add an opt-in typed invocation API while preserving the primary `Tui::run()` contract.
 - `argv-serialization-boundary`: Expose the same canonical argv used for validation and typed reparsing without introducing a second serialization path.
 
 ## Impact

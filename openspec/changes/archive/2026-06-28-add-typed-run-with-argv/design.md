@@ -18,17 +18,17 @@
 
 ## Decisions
 
-### Return a named submission record
+### Return a named invocation record
 
-Add a root-exported, non-exhaustive `TuiSubmission<T>` with public `command` and `argv` fields. Named fields are clearer than a tuple, while `#[non_exhaustive]` permits compatible future additions. The type derives `Debug`, `Clone`, `PartialEq`, and `Eq` when `T` supports them.
+Add a root-exported, non-exhaustive `TuiInvocation<T>` with public `command` and `argv` fields. Named fields are clearer than a tuple, while `#[non_exhaustive]` permits compatible future additions. The type derives `Debug`, `Clone`, `PartialEq`, and `Eq` when `T` supports them.
 
 ### Name the richer method `run_with_argv`
 
-The method consumes the runner and performs the same interactive operation as `run()`, so retaining the `run` verb is important. Naming argv directly makes the additional result discoverable; the zero-argument signature distinguishes returned argv from an input parameter. Generic names such as `run_full` and conversion names such as `into_submission` obscure either the output or the fallible interactive operation.
+The method consumes the runner and performs the same interactive operation as `run()`, so retaining the `run` verb is important. Naming argv directly makes the additional result discoverable; the zero-argument signature distinguishes returned argv from an input parameter. Generic names such as `run_full` and conversion names such as `into_invocation` obscure either the output or the fallible interactive operation.
 
 ### Make the richer method the shared typed implementation
 
-`run_with_argv()` obtains argv from `TuiApp::run()`, passes `&argv` to `T::try_parse_from`, and returns both owned results. Borrowing the vector as clap input does not make `T` borrow from argv. `run()` delegates to this method and projects the submission to its `command`, preventing behavior drift between typed paths.
+`run_with_argv()` obtains argv from `TuiApp::run()`, passes `&argv` to `T::try_parse_from`, and returns both owned results. Borrowing the vector as clap input does not make `T` borrow from argv. `run()` delegates to this method and projects the invocation to its `command`, preventing behavior drift between typed paths.
 
 ## Risks / Trade-offs
 
