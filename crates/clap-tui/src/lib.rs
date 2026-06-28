@@ -98,6 +98,34 @@
 //!
 //! See [`TuiError`] for the detailed error taxonomy.
 //!
+//! # Retaining Canonical Argv
+//!
+//! Use [`Tui::run_with_argv`] when the application also needs the exact executable tokens used to
+//! parse the typed command:
+//!
+//! ```no_run
+//! use clap::Parser;
+//! use clap_tui::Tui;
+//!
+//! #[derive(Debug, Parser)]
+//! #[command(name = "tool")]
+//! struct Cli {
+//!     #[arg(long, default_value = "world")]
+//!     name: String,
+//! }
+//!
+//! fn main() -> Result<(), clap_tui::TuiError> {
+//!     if let Some(submission) = Tui::<Cli>::new().run_with_argv()? {
+//!         eprintln!("Running argv: {:?}", submission.argv);
+//!         println!("Hello, {}!", submission.command.name);
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! [`TuiSubmission::argv`] includes the executable token. It is canonical argv, not a shell-quoted
+//! command string.
+//!
 //! # Feature Flags
 //!
 //! - The default `mouse` feature enables mouse capture and mouse-driven controls.
@@ -116,8 +144,9 @@
 //!
 //! # Examples
 //!
-//! The crate ships with four public examples:
+//! The crate ships with five public examples:
 //! - `simple` for minimal `Command::Tui` setup
+//! - `run_with_argv` for a minimal typed submission with canonical argv
 //! - `showcase` for a realistic, compact command tree
 //! - `subcommands` for typed dispatch across command trees
 //! - `clap_features` for the full [`TuiApp`] compatibility fixture
@@ -140,8 +169,8 @@ mod spec;
 mod ui;
 mod update;
 
-/// TUI application entry points.
-pub use app::{Tui, TuiApp};
+/// TUI application entry points and typed submission result.
+pub use app::{Tui, TuiApp, TuiSubmission};
 /// Public configuration and theming types.
 pub use config::{Keymap, LayoutConfig, Theme, ThemePreset, TuiConfig};
 /// Error type returned by public `clap-tui` operations.

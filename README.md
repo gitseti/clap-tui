@@ -67,9 +67,28 @@ fn main() -> Result<(), clap_tui::TuiError> {
 
 See `TuiError` for the detailed error taxonomy.
 
+## Retain canonical argv
+
+Use `run_with_argv()` when you need both the parsed command and the exact executable tokens built
+by the TUI:
+
+```rust
+if let Some(submission) = Tui::<Command>::new()
+    .hide_entrypoint("tui")?
+    .run_with_argv()?
+{
+    eprintln!("Running argv: {:?}", submission.argv);
+    dispatch(submission.command);
+}
+```
+
+`submission.argv` includes the executable token. It is canonical `Vec<OsString>` argv, not a
+shell-quoted command string.
+
 ## Choose an entrypoint
 
 - Use `Tui::<T>::run()` (recommended) when you want typed results from a derive-based clap parser.
+- Use `Tui::<T>::run_with_argv()` when you also need the canonical argv used for typed reparsing.
 - Use `TuiApp::from_command(...)` when you already have a hand-built `clap::Command` or need the lower-level untyped argv or `ArgMatches` flow.
 
 ## Supported customization seams
@@ -94,6 +113,7 @@ Internal reducers, projections, render helpers, and other support modules are no
 ## Example guide
 
 - `simple` shows minimal `Command::Tui` setup with the entrypoint hidden from the rendered TUI.
+- `run_with_argv` shows a minimal typed submission with its canonical argv.
 - `showcase` shows a realistic, readable CLI with a small nested config area.
 - `subcommands` shows typed dispatch across command trees.
 - `clap_features` is the diagnostic compatibility fixture for the full
@@ -102,6 +122,7 @@ Internal reducers, projections, render helpers, and other support modules are no
 
 ```bash
 cargo run -p clap-tui --example simple -- tui
+cargo run -p clap-tui --example run_with_argv -- tui
 cargo run -p clap-tui --example showcase -- tui
 cargo run -p clap-tui --example subcommands -- tui
 cargo run -p clap-tui --example clap_features
