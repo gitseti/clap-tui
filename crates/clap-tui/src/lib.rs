@@ -102,8 +102,7 @@
 //!
 //! # Retaining Canonical Argv
 //!
-//! Use [`Tui::run_with_argv`] when the application also needs the exact executable tokens used to
-//! parse the typed command:
+//! Use [`Tui::run_with_argv`] when the application also needs canonical argv:
 //!
 //! ```no_run
 //! use clap::Parser;
@@ -125,8 +124,7 @@
 //! }
 //! ```
 //!
-//! [`TuiInvocation::argv`] includes the executable token. It is canonical argv, not a shell-quoted
-//! command string.
+//! [`TuiInvocation::argv`] is canonical argv with the program name as its first element.
 //!
 //! # Feature Flags
 //!

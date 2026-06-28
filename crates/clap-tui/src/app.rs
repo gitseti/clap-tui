@@ -36,15 +36,12 @@ pub struct Tui<T, R: Runtime = CrosstermRuntime> {
 }
 
 /// A typed command invocation together with the canonical argv that produced it.
-///
-/// The argv contains the executable token and is the exact token sequence used for clap
-/// reparsing. It is not shell-rendered preview or clipboard text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TuiInvocation<T> {
     /// The command value parsed from [`Self::argv`].
     pub command: T,
-    /// The canonical executable token sequence, including the executable token.
+    /// Canonical argv, with the program name as its first element.
     pub argv: Vec<OsString>,
 }
 
@@ -80,9 +77,9 @@ impl<R: Runtime> TuiApp<R> {
 
     /// Run the TUI and return the selected canonical argv.
     ///
-    /// The returned argv is the executable token sequence. Preview and clipboard text are
-    /// rendered separately from these tokens, using POSIX shell quoting on Unix platforms and
-    /// `PowerShell` quoting on Windows.
+    /// The returned argv includes the program name as its first element. Preview and clipboard
+    /// text are rendered separately, using POSIX shell quoting on Unix platforms and `PowerShell`
+    /// quoting on Windows.
     ///
     /// Returns `Ok(Some(argv))` when the user runs a valid command and `Ok(None)` when the
     /// user exits without running. Validation stays inside the TUI flow, so invalid form
@@ -212,9 +209,8 @@ where
     /// Run the TUI and return the parsed command together with its canonical argv.
     ///
     /// Returns `Ok(Some(invocation))` when the user submits a valid command and `Ok(None)` when
-    /// the user exits without submitting. [`TuiInvocation::argv`] includes the executable token
-    /// and is the exact token sequence used for clap reparsing; it is not shell-rendered command
-    /// text.
+    /// the user exits without submitting. [`TuiInvocation::argv`] is the exact token sequence used
+    /// for clap reparsing.
     ///
     /// Use [`Self::run`] when only the parsed command is needed.
     ///

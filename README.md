@@ -22,7 +22,7 @@ Minimum supported Rust version: `1.88`.
 
 Add a `Tui` subcommand and delegate to `Tui::run()`.
 
-The recommended 0.2.0 integration model is an explicit `Command::Tui` dispatch branch that calls `Tui::<Command>::hide_entrypoint("tui")?.run()`.
+The recommended integration model is an explicit `Command::Tui` dispatch branch that calls `Tui::<Command>::hide_entrypoint("tui")?.run()`.
 
 ```rust
 use clap::Parser;
@@ -69,8 +69,7 @@ See `TuiError` for the detailed error taxonomy.
 
 ## Retain canonical argv
 
-Use `run_with_argv()` when you need both the parsed command and the exact executable tokens built
-by the TUI:
+Use `run_with_argv()` when you need both the parsed command and canonical argv:
 
 ```rust
 if let Some(invocation) = Tui::<Command>::new()
@@ -82,8 +81,7 @@ if let Some(invocation) = Tui::<Command>::new()
 }
 ```
 
-`invocation.argv` includes the executable token. It is canonical `Vec<OsString>` argv, not a
-shell-quoted command string.
+`invocation.argv` is canonical `Vec<OsString>` argv with the program name as its first element.
 
 ## Choose an entrypoint
 
