@@ -124,14 +124,12 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
     ];
     let status = validation.summary().as_ref().map(|summary| {
-        build_status_chip(
-            ui,
-            &if validation.has_target() {
-                format!("F8 Jump to error · {summary}")
-            } else {
-                summary.clone()
-            },
-        )
+        let (label, variant) = if validation.has_target() {
+            (format!("F8 {summary}"), FooterChipVariant::Primary)
+        } else {
+            (summary.clone(), FooterChipVariant::Status)
+        };
+        build_chip(ui, HoverTarget::FooterStatus, &label, variant)
     });
     let (status, hints) = fit_footer_zones(area, &actions, status, candidates);
 
@@ -157,15 +155,6 @@ fn build_chip(
         label: format!(" {chip} "),
         hovered: ui.hover == Some(target),
         variant,
-    }
-}
-
-fn build_status_chip(ui: &UiState, chip: &str) -> FooterChip {
-    FooterChip {
-        target: HoverTarget::FooterStatus,
-        label: format!(" {chip} "),
-        hovered: ui.hover == Some(HoverTarget::FooterStatus),
-        variant: FooterChipVariant::Status,
     }
 }
 

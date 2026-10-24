@@ -49,7 +49,7 @@ fn keyboard_footer_and_invalid_run_reveal_the_same_offscreen_issue() {
     for size in [(80, 24), (60, 20)] {
         for trigger in 0..3 {
             let mut state = AppState::from_command(&command);
-            let (_, snapshot) = draw(&mut state, size.0, size.1);
+            let (backend, snapshot) = draw(&mut state, size.0, size.1);
             assert!(
                 !snapshot
                     .layout
@@ -57,6 +57,23 @@ fn keyboard_footer_and_invalid_run_reveal_the_same_offscreen_issue() {
                     .iter()
                     .any(|field| field.arg_id == "last")
             );
+            let button = snapshot
+                .layout
+                .footer_buttons
+                .iter()
+                .find(|button| button.target == HoverTarget::FooterStatus)
+                .expect("validation button");
+            let run = &snapshot.layout.footer_buttons[0];
+            for x in button.rect.x..button.rect.right() {
+                assert_eq!(
+                    snapshot.footer_target_at(x, button.rect.y),
+                    Some(HoverTarget::FooterStatus)
+                );
+                assert_eq!(
+                    backend.buffer()[(x, button.rect.y)].style(),
+                    backend.buffer()[(run.rect.x, run.rect.y)].style()
+                );
+            }
             state.ui.help_open = true;
             state.ui.dropdown_open = Some("optional0".into());
             let action = match trigger {
@@ -82,7 +99,7 @@ fn keyboard_footer_and_invalid_run_reveal_the_same_offscreen_issue() {
                 .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>();
             assert!(text.contains("Provide --last"));
-            assert!(text.contains("F8 Jump to error"));
+            assert!(text.contains("F8 Provide --last"));
             let focus = state.ui.focus.clone();
             let selection = state.ui.selected_arg_index;
             state.domain.set_text_value("last", "fixed");

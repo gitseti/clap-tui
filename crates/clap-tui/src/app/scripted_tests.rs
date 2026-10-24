@@ -346,7 +346,7 @@ fn f8_and_invalid_run_recover_without_losing_form_edits() {
         let run = ScriptedHarness::new(command)
             .with_size(width, height)
             .script([
-                ScriptedStep::expect_text("F8 Jump to error"),
+                ScriptedStep::expect_text("F8 Provide --name"),
                 ScriptedStep::key(AppKeyCode::F(8)),
                 ScriptedStep::paste("demo"),
                 ScriptedStep::key(AppKeyCode::Down),
