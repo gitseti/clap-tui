@@ -1,8 +1,9 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 
+use super::preview::PreviewLayout;
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
-use crate::input::UiState;
+use crate::input::{HoverTarget, UiState};
 
 use super::{footer, form, screen::ScreenView, sidebar};
 
@@ -38,8 +39,10 @@ pub(crate) struct ScreenAreas {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScreenLayout {
-    pub(crate) areas: ScreenAreas,
+    // Expanded previews have no underlying workspace areas.
+    pub(crate) areas: Option<ScreenAreas>,
     pub(crate) snapshot: FrameSnapshot,
+    pub(crate) preview: PreviewLayout,
 }
 
 pub(crate) fn build_screen_layout(
@@ -48,6 +51,21 @@ pub(crate) fn build_screen_layout(
     size: Rect,
     vm: &ScreenView<'_>,
 ) -> ScreenLayout {
+    if ui.preview_open {
+        let preview = PreviewLayout::expanded(
+            config,
+            vm.rendered_command.as_ref(),
+            ui.preview_scroll,
+            size,
+        );
+        let mut snapshot = FrameSnapshot::default();
+        preview.populate_snapshot(&mut snapshot);
+        return ScreenLayout {
+            areas: None,
+            snapshot,
+            preview,
+        };
+    }
     let mode = LayoutMode::for_size(size);
     let mut sidebar_width =
         u16::try_from(u32::from(size.width) * u32::from(config.layout.sidebar_ratio) / 100)
@@ -115,13 +133,23 @@ pub(crate) fn build_screen_layout(
     };
 
     let mut snapshot = FrameSnapshot::default();
-    snapshot.layout.preview = Some(preview_area);
+    let preview = PreviewLayout::dock(
+        config,
+        vm.rendered_command.as_ref(),
+        ui.hover == Some(HoverTarget::Preview),
+        preview_area,
+    );
+    preview.populate_snapshot(&mut snapshot);
     snapshot.layout.footer = Some(footer_area);
     sidebar::populate_layout(sidebar_area, vm, &mut snapshot.layout);
     form::populate_layout(ui, areas.form, vm, &mut snapshot);
     footer::populate_layout(ui, footer_area, &vm.validation, &mut snapshot.layout);
 
-    ScreenLayout { areas, snapshot }
+    ScreenLayout {
+        areas: Some(areas),
+        snapshot,
+        preview,
+    }
 }
 
 #[cfg(test)]
@@ -142,6 +170,8 @@ mod tests {
             last_non_help_tab: ActiveTab::Inputs,
             help_open: false,
             help_scroll: 0,
+            preview_open: false,
+            preview_scroll: 0,
             selected_arg_index: 0,
             search_query: String::new(),
             editors: crate::editor_state::EditorState::default(),
@@ -211,11 +241,15 @@ mod tests {
             &view(&command),
         );
 
-        assert_eq!(layout.areas.header.height, 2);
-        assert_eq!(layout.areas.preview.height, 2);
-        assert_eq!(layout.areas.preview.x, 0);
-        assert_eq!(layout.areas.preview.x + layout.areas.preview.width, 70);
-        assert_eq!(layout.areas.footer.height, 1);
+        assert_eq!(layout.areas.expect("workspace layout").header.height, 2);
+        assert_eq!(layout.areas.expect("workspace layout").preview.height, 2);
+        assert_eq!(layout.areas.expect("workspace layout").preview.x, 0);
+        assert_eq!(
+            layout.areas.expect("workspace layout").preview.x
+                + layout.areas.expect("workspace layout").preview.width,
+            70
+        );
+        assert_eq!(layout.areas.expect("workspace layout").footer.height, 1);
     }
 
     #[test]
@@ -228,11 +262,15 @@ mod tests {
             &view(&command),
         );
 
-        assert_eq!(layout.areas.header.height, 3);
-        assert_eq!(layout.areas.preview.height, 4);
-        assert_eq!(layout.areas.preview.x, 0);
-        assert_eq!(layout.areas.preview.x + layout.areas.preview.width, 100);
-        assert_eq!(layout.areas.footer.height, 1);
+        assert_eq!(layout.areas.expect("workspace layout").header.height, 3);
+        assert_eq!(layout.areas.expect("workspace layout").preview.height, 4);
+        assert_eq!(layout.areas.expect("workspace layout").preview.x, 0);
+        assert_eq!(
+            layout.areas.expect("workspace layout").preview.x
+                + layout.areas.expect("workspace layout").preview.width,
+            100
+        );
+        assert_eq!(layout.areas.expect("workspace layout").footer.height, 1);
     }
 
     #[test]
@@ -246,9 +284,12 @@ mod tests {
             );
 
             assert_eq!(LayoutMode::for_size(size), LayoutMode::Roomy);
-            assert_eq!(layout.areas.preview.height, 4);
-            assert_eq!(layout.areas.preview.x, 0);
-            assert_eq!(layout.areas.preview.width, size.width);
+            assert_eq!(layout.areas.expect("workspace layout").preview.height, 4);
+            assert_eq!(layout.areas.expect("workspace layout").preview.x, 0);
+            assert_eq!(
+                layout.areas.expect("workspace layout").preview.width,
+                size.width
+            );
         }
     }
 

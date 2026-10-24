@@ -92,13 +92,18 @@ pub(crate) fn render(
     let mut vm = ScreenView::from_state(state, derived);
     vm.sidebar_scroll = state.ui.sidebar_scroll;
     let screen_layout = layout::build_screen_layout(&state.ui, config, size, &vm);
-    let frame_snapshot = screen_layout.snapshot.clone();
+    let frame_snapshot = screen_layout.snapshot;
+    let Some(areas) = screen_layout.areas else {
+        preview::render_preview(frame, config, screen_layout.preview);
+        toast::render_toast(frame, state, config, size);
+        return frame_snapshot;
+    };
     render_main(
         frame,
         &state.ui,
         config,
-        screen_layout.areas.main,
-        screen_layout.areas.header,
+        areas.main,
+        areas.header,
         &vm,
         &frame_snapshot,
     );
@@ -107,19 +112,15 @@ pub(crate) fn render(
         &state.ui,
         &vm.selected_path,
         config,
-        screen_layout.areas.sidebar,
+        areas.sidebar,
         &vm,
         &frame_snapshot.layout,
     );
-    if screen_layout.areas.form.x > 0 {
-        let divider_height = screen_layout
-            .areas
-            .preview
-            .y
-            .saturating_sub(screen_layout.areas.sidebar.y);
+    if areas.form.x > 0 {
+        let divider_height = areas.preview.y.saturating_sub(areas.sidebar.y);
         let divider_area = Rect::new(
-            screen_layout.areas.form.x.saturating_sub(1),
-            screen_layout.areas.sidebar.y,
+            areas.form.x.saturating_sub(1),
+            areas.sidebar.y,
             1,
             divider_height,
         );
@@ -143,12 +144,12 @@ pub(crate) fn render(
         Rect::default(),
         &vm,
     );
-    preview::render_preview(frame, &state.ui, config, screen_layout.areas.preview, &vm);
+    preview::render_preview(frame, config, screen_layout.preview);
     footer::render_footer(
         frame,
         &state.ui,
         config,
-        screen_layout.areas.footer,
+        areas.footer,
         &vm,
         &frame_snapshot.layout,
     );

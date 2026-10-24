@@ -1,105 +1,77 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Margin, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget};
 
 use crate::argv_serializer::{RenderedCommand, RenderedShellToken, RenderedShellTokenKind};
 use crate::config::TuiConfig;
-use crate::input::{HoverTarget, UiState};
 
-use super::screen::ScreenView;
 use super::styles;
+
+mod layout;
+mod wrapping;
+
+pub(crate) use layout::PreviewLayout;
+use wrapping::wrapped_preview;
 
 struct PreviewWidget<'a> {
     config: &'a TuiConfig,
-    command: Option<&'a RenderedCommand>,
-    hovered: bool,
+    layout: PreviewLayout,
 }
 
 impl Widget for PreviewWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        let surface = if self.hovered {
-            styles::surface(self.config, styles::Surface::ControlActive)
-        } else {
-            styles::surface(self.config, styles::Surface::Result)
-        };
-        Widget::render(Block::default().style(surface), area, buf);
-
-        let inner = area.inner(Margin {
-            horizontal: 1,
-            vertical: 0,
-        });
-        if inner.width == 0 {
-            return;
-        }
-
-        let header_area = Rect::new(inner.x, area.y, inner.width, 1);
-        Widget::render(
-            Paragraph::new(preview_header_line(self.config, self.hovered, inner.width))
-                .style(surface),
-            header_area,
-            buf,
+        let surface = styles::surface(
+            self.config,
+            if self.layout.hovered {
+                styles::Surface::ControlActive
+            } else {
+                styles::Surface::Result
+            },
         );
-
-        if area.height < 2 {
-            return;
+        Block::default().style(surface).render(area, buf);
+        Paragraph::new(self.layout.header)
+            .style(surface)
+            .render(self.layout.header_area, buf);
+        Paragraph::new(self.layout.text)
+            .style(surface)
+            .scroll((self.layout.scroll, 0))
+            .render(self.layout.content_area, buf);
+        if let Some((area, line)) = self.layout.footer {
+            Paragraph::new(line)
+                .style(Style::default().fg(self.config.theme.metadata))
+                .render(area, buf);
         }
-
-        let command_y = if area.height >= 4 {
-            area.y.saturating_add(2)
-        } else {
-            area.y.saturating_add(1)
-        };
-        let command_inset = preview_command_inset(inner.width);
-        let command_area = Rect::new(
-            inner.x.saturating_add(command_inset),
-            command_y,
-            inner.width.saturating_sub(command_inset),
-            1,
-        );
-        Widget::render(
-            Paragraph::new(command_preview_line(
-                self.config,
-                self.command,
-                self.hovered,
-            ))
-            .style(surface),
-            command_area,
-            buf,
-        );
     }
 }
 
-pub(crate) fn render_preview(
-    frame: &mut Frame<'_>,
-    ui: &UiState,
-    config: &TuiConfig,
-    area: Rect,
-    vm: &ScreenView<'_>,
-) {
-    let hovered = ui.hover == Some(HoverTarget::Preview);
-    frame.render_widget(
-        PreviewWidget {
-            config,
-            command: vm.rendered_command.as_ref(),
-            hovered,
-        },
-        area,
-    );
+pub(crate) fn render_preview(frame: &mut Frame<'_>, config: &TuiConfig, layout: PreviewLayout) {
+    let area = layout.area;
+    frame.render_widget(PreviewWidget { config, layout }, area);
 }
 
-fn preview_header_line(config: &TuiConfig, hovered: bool, width: u16) -> Line<'static> {
-    let title = "Command Preview";
+fn preview_header_line(
+    config: &TuiConfig,
+    hovered: bool,
+    width: u16,
+    hidden: bool,
+) -> Line<'static> {
+    let title = if hidden {
+        "Command Preview · more ↓ Ctrl+P expand"
+    } else {
+        "Command Preview"
+    };
     let hint = if hovered {
         "Click or Ctrl+Y copies"
     } else {
         "Click/Ctrl+Y copy"
+    };
+    let hint = if usize::from(width) < title.chars().count() + hint.chars().count() + 4 {
+        "Ctrl+Y copy"
+    } else {
+        hint
     };
     let width = usize::from(width);
     let title_width = title.chars().count();
@@ -320,7 +292,7 @@ mod tests {
     fn preview_header_uses_single_label_and_secondary_copy_hint() {
         let config = TuiConfig::default();
 
-        let line = preview_header_line(&config, false, 48);
+        let line = preview_header_line(&config, false, 80, false);
 
         assert_eq!(line.spans[0].content.as_ref(), "──");
         assert_eq!(line.spans[0].style.fg, Some(config.theme.divider));
@@ -339,7 +311,7 @@ mod tests {
             ("value", RenderedShellTokenKind::Value),
         ]);
 
-        let title = preview_header_line(&config, false, 48);
+        let title = preview_header_line(&config, false, 80, false);
         let line = command_preview_line(&config, Some(&command), false);
 
         assert_eq!(line.spans[0].style.fg, Some(config.theme.result_accent));
@@ -354,7 +326,7 @@ mod tests {
     fn preview_hover_keeps_copy_hint_secondary() {
         let config = TuiConfig::default();
 
-        let line = preview_header_line(&config, true, 48);
+        let line = preview_header_line(&config, true, 80, false);
 
         assert_eq!(line.spans[2].style.fg, Some(config.theme.metadata));
         assert_eq!(line.spans[6].style.fg, Some(config.theme.metadata));
@@ -395,8 +367,7 @@ mod tests {
         Widget::render(
             PreviewWidget {
                 config: &config,
-                command: Some(&command),
-                hovered: false,
+                layout: super::PreviewLayout::dock(&config, Some(&command), false, area),
             },
             area,
             &mut buf,
@@ -429,8 +400,7 @@ mod tests {
         Widget::render(
             PreviewWidget {
                 config: &config,
-                command: Some(&command),
-                hovered: false,
+                layout: super::PreviewLayout::dock(&config, Some(&command), false, area),
             },
             area,
             &mut buf,
@@ -446,3 +416,6 @@ mod tests {
         assert!(command_row.starts_with("   $ tool serve"));
     }
 }
+
+#[cfg(test)]
+mod wrapping_tests;

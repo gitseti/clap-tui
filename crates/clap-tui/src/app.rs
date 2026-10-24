@@ -400,68 +400,22 @@ fn handle_app_event<R: Runtime>(
     config: &TuiConfig,
     session: &mut TerminalSession<'_, R>,
 ) -> EventOutcome {
-    let mut needs_redraw = clear_expired_toast_and_request_redraw(state);
+    let needs_redraw = clear_expired_toast_and_request_redraw(state);
 
-    match event {
-        AppEvent::Key(key) => {
-            if let Some(action) = controller::handle_key_event(*key, state, frame_snapshot, config)
-            {
-                let effect = update::apply_action(&action, state, frame_snapshot);
-                match handle_effect(effect, state, session) {
-                    ActionOutcome::Continue => {
-                        needs_redraw |= true;
-                        needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                        EventOutcome::Continue { needs_redraw }
-                    }
-                    ActionOutcome::Exit => EventOutcome::Exit,
-                    ActionOutcome::Run(argv) => EventOutcome::Run(argv),
-                }
-            } else {
-                needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                EventOutcome::Continue { needs_redraw }
-            }
-        }
-        AppEvent::Mouse(mouse) => {
-            if let Some(action) =
-                controller::handle_mouse_event(*mouse, state, frame_snapshot, config)
-            {
-                let effect = update::apply_action(&action, state, frame_snapshot);
-                match handle_effect(effect, state, session) {
-                    ActionOutcome::Continue => {
-                        needs_redraw |= true;
-                        needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                        EventOutcome::Continue { needs_redraw }
-                    }
-                    ActionOutcome::Exit => EventOutcome::Exit,
-                    ActionOutcome::Run(argv) => EventOutcome::Run(argv),
-                }
-            } else {
-                needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                EventOutcome::Continue { needs_redraw }
-            }
-        }
-        AppEvent::Resize { .. } => {
-            needs_redraw = true;
-            needs_redraw |= clear_expired_toast_and_request_redraw(state);
-            EventOutcome::Continue { needs_redraw }
-        }
-        AppEvent::Paste(text) => {
-            let effect =
-                update::apply_action(&update::Action::Paste(text.clone()), state, frame_snapshot);
+    match controller::handle_event(event, state, frame_snapshot, config) {
+        controller::EventDecision::Action(action) => {
+            let effect = update::apply_action(&action, state, frame_snapshot);
             match handle_effect(effect, state, session) {
                 ActionOutcome::Continue => {
-                    needs_redraw |= true;
-                    needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                    EventOutcome::Continue { needs_redraw }
+                    clear_expired_toast_and_request_redraw(state);
+                    EventOutcome::Continue { needs_redraw: true }
                 }
                 ActionOutcome::Exit => EventOutcome::Exit,
                 ActionOutcome::Run(argv) => EventOutcome::Run(argv),
             }
         }
-        AppEvent::FocusGained | AppEvent::FocusLost | AppEvent::Unsupported => {
-            needs_redraw |= clear_expired_toast_and_request_redraw(state);
-            EventOutcome::Continue { needs_redraw }
-        }
+        controller::EventDecision::Redraw => EventOutcome::Continue { needs_redraw: true },
+        controller::EventDecision::Ignore => EventOutcome::Continue { needs_redraw },
     }
 }
 
@@ -1246,5 +1200,44 @@ mod tests {
             EventOutcome::Continue { needs_redraw: true }
         ));
         assert!(state.notifications.toast.is_none());
+    }
+    #[test]
+    fn expanded_preview_ignores_form_edits_and_run_without_requesting_redraw() {
+        let mut state =
+            app_state_from_command(&Command::new("tool").arg(Arg::new("path").long("path")));
+        state.ui.focus_form();
+        state.ui.preview_open = true;
+        let expected = state.rendered_command();
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        for event in [
+            AppEvent::Paste("must not edit the form".into()),
+            AppEvent::Key(AppKeyEvent::new(
+                AppKeyCode::Char('z'),
+                AppKeyModifiers::default(),
+            )),
+            AppEvent::Key(AppKeyEvent::new(
+                AppKeyCode::Char('r'),
+                AppKeyModifiers {
+                    control: true,
+                    ..AppKeyModifiers::default()
+                },
+            )),
+        ] {
+            assert!(matches!(
+                handle_app_event(
+                    &event,
+                    &mut state,
+                    &FrameSnapshot::default(),
+                    &TuiConfig::default(),
+                    &mut session
+                ),
+                EventOutcome::Continue {
+                    needs_redraw: false
+                }
+            ));
+            assert_eq!(state.rendered_command(), expected);
+            assert!(state.ui.preview_open);
+        }
     }
 }

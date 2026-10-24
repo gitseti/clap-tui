@@ -444,6 +444,8 @@ mod tests {
             last_non_help_tab: crate::input::ActiveTab::Inputs,
             help_open: false,
             help_scroll: 0,
+            preview_open: false,
+            preview_scroll: 0,
             selected_arg_index: 0,
             search_query: String::new(),
             editors: crate::editor_state::EditorState::default(),
