@@ -198,6 +198,53 @@ fn missing_subcommand_targets_sidebar_and_unknown_target_is_a_noop() {
 }
 
 #[test]
+fn missing_subcommand_jump_reveals_the_scrolled_parent() {
+    let command = (0..30).fold(
+        Command::new("tool").subcommand(
+            Command::new("parent")
+                .subcommand_required(true)
+                .subcommand(Command::new("child")),
+        ),
+        |command, index| command.subcommand(Command::new(format!("peer{index:02}"))),
+    );
+    for (width, height) in [(80, 24), (60, 20)] {
+        for action in [
+            Action::JumpToError,
+            Action::ClickFooter(HoverTarget::FooterStatus),
+            Action::Run,
+        ] {
+            let mut state = AppState::from_command(&command);
+            state.select_command_path(&["parent".into()]).unwrap();
+            state.domain.expanded.insert("tool::parent".into());
+            state.ui.sidebar_scroll = 20;
+            state.ui.focus_form();
+            let (_, before) = draw(&mut state, width, height);
+            assert!(
+                !before
+                    .layout
+                    .sidebar_items
+                    .iter()
+                    .any(|item| item.path.as_slice() == ["parent"])
+            );
+            assert_eq!(
+                state.derived_validation().summary().as_deref(),
+                Some("Choose a command")
+            );
+            assert_eq!(apply_action(&action, &mut state, &before), Effect::None);
+            let (_, after) = draw(&mut state, width, height);
+            assert_eq!(state.ui.focus, Focus::Sidebar);
+            assert!(
+                after
+                    .layout
+                    .sidebar_items
+                    .iter()
+                    .any(|item| item.path.as_slice() == ["parent"])
+            );
+        }
+    }
+}
+
+#[test]
 fn ambiguous_errors_offer_no_jump_and_preserve_focus_on_invalid_run() {
     let command = Command::new("tool")
         .arg(Arg::new("first").value_name("PATH").required(true))
