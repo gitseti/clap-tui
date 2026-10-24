@@ -11,14 +11,15 @@ use crate::update::Action;
 pub(crate) fn handle_key_event(
     key: AppKeyEvent,
     state: &AppState,
-    _frame_snapshot: &FrameSnapshot,
+    frame_snapshot: &FrameSnapshot,
     config: &TuiConfig,
 ) -> Option<Action> {
     if key.code == AppKeyCode::Char('c') && key.modifiers.control {
         return Some(Action::Exit);
     }
     if key.code == AppKeyCode::Char('p') && key.modifiers.control {
-        return Some(Action::TogglePreview);
+        return (state.ui.preview_open || frame_snapshot.preview_has_more)
+            .then_some(Action::TogglePreview);
     }
     if state.ui.preview_open {
         return match key.code {

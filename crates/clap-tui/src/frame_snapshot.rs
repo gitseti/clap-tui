@@ -41,6 +41,7 @@ pub struct FrameSnapshot {
     pub form_scroll_max: u16,
     pub help_scroll_max: u16,
     pub preview_scroll_max: u16,
+    pub preview_has_more: bool,
 }
 
 impl FrameSnapshot {

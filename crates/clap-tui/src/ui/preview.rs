@@ -21,8 +21,14 @@ struct PreviewWidget<'a> {
 
 impl Widget for PreviewWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        self.render_contents(area, buf);
+    }
+}
+
+impl PreviewWidget<'_> {
+    fn render_contents(self, area: Rect, buf: &mut Buffer) -> bool {
         if area.width == 0 || area.height == 0 {
-            return;
+            return false;
         }
 
         let surface = if self.hovered {
@@ -37,7 +43,7 @@ impl Widget for PreviewWidget<'_> {
             vertical: 0,
         });
         if inner.width == 0 {
-            return;
+            return false;
         }
 
         let command_inset = preview_command_inset(inner.width);
@@ -68,6 +74,7 @@ impl Widget for PreviewWidget<'_> {
             buf,
         );
         Widget::render(paragraph.style(surface), command_area, buf);
+        hidden
     }
 }
 
@@ -77,16 +84,13 @@ pub(crate) fn render_preview(
     config: &TuiConfig,
     area: Rect,
     vm: &ScreenView<'_>,
-) {
-    let hovered = ui.hover == Some(HoverTarget::Preview);
-    frame.render_widget(
-        PreviewWidget {
-            config,
-            command: vm.rendered_command.as_ref(),
-            hovered,
-        },
-        area,
-    );
+) -> bool {
+    PreviewWidget {
+        config,
+        command: vm.rendered_command.as_ref(),
+        hovered: ui.hover == Some(HoverTarget::Preview),
+    }
+    .render_contents(area, frame.buffer_mut())
 }
 
 // Wrap by terminal cells, preserving whitespace and shell quoting exactly.
@@ -176,13 +180,18 @@ fn preview_header_line(
     } else {
         "Command Preview"
     };
-    let hint = if hovered {
-        "Ctrl+P expand · Click or Ctrl+Y copies"
-    } else {
-        "Ctrl+P expand · Click/Ctrl+Y copy"
+    let hint = match (hidden, hovered) {
+        (true, true) => "Ctrl+P expand · Click or Ctrl+Y copies",
+        (true, false) => "Ctrl+P expand · Click/Ctrl+Y copy",
+        (false, true) => "Click or Ctrl+Y copies",
+        (false, false) => "Click/Ctrl+Y copy",
     };
     let hint = if usize::from(width) < title.chars().count() + hint.chars().count() + 4 {
-        "Ctrl+P expand"
+        if hidden {
+            "Ctrl+P expand"
+        } else {
+            "Ctrl+Y copy"
+        }
     } else {
         hint
     };
@@ -493,8 +502,8 @@ mod tests {
         let bottom = row_text(&buf, area, 3);
 
         assert!(header.contains("Command Preview"));
-        assert!(header.contains("Ctrl+P expand"));
-        assert!(header.find("Ctrl+P expand") > header.find("Command Preview"));
+        assert!(header.contains("Click/Ctrl+Y copy"));
+        assert!(header.find("Click/Ctrl+Y copy") > header.find("Command Preview"));
         assert_eq!(spacer.trim(), "");
         assert_eq!(preview_command_inset(area.width.saturating_sub(2)), 2);
         assert!(command_row.starts_with("   $ tool serve"));
@@ -526,7 +535,7 @@ mod tests {
 
         assert!(header.contains("Command Preview"));
         assert!(header.contains("─"));
-        assert!(header.contains("Ctrl+P expand"));
+        assert!(header.contains("Click/Ctrl+Y copy"));
         assert_eq!(preview_command_inset(area.width.saturating_sub(2)), 2);
         assert!(command_row.starts_with("   $ tool serve"));
     }

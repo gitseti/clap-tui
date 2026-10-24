@@ -97,7 +97,7 @@ pub(crate) fn render(
     }
     vm.sidebar_scroll = state.ui.sidebar_scroll;
     let screen_layout = layout::build_screen_layout(&state.ui, config, size, &vm);
-    let frame_snapshot = screen_layout.snapshot.clone();
+    let mut frame_snapshot = screen_layout.snapshot.clone();
     render_main(
         frame,
         &state.ui,
@@ -148,7 +148,8 @@ pub(crate) fn render(
         Rect::default(),
         &vm,
     );
-    preview::render_preview(frame, &state.ui, config, screen_layout.areas.preview, &vm);
+    frame_snapshot.preview_has_more =
+        preview::render_preview(frame, &state.ui, config, screen_layout.areas.preview, &vm);
     footer::render_footer(
         frame,
         &state.ui,
