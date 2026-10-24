@@ -432,7 +432,7 @@ fn build_test_state() -> AppState {
 mod tests {
     use ratatui::layout::Rect;
 
-    use super::{build_footer_view, build_test_state, layout_footer_buttons};
+    use super::{FooterChip, build_footer_view, build_test_state, layout_footer_buttons};
     use crate::input::HoverTarget;
     use crate::pipeline::ValidationState;
 
@@ -608,7 +608,7 @@ mod tests {
             },
         );
 
-        assert!(view.hints.is_empty());
+        assert_eq!(view.hints, Vec::<FooterChip>::new());
         assert_eq!(
             view.status.as_ref().map(|chip| chip.label.as_str()),
             Some(" Missing r… ")
