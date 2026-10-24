@@ -46,9 +46,12 @@ pub(crate) fn validation_errors(
     let (_, _, _, width) = super::field_description_geometry(area, false, label_width);
     args.iter()
         .filter_map(|item| {
-            validation
-                .inline_error(&item.arg.id)
-                .map(|message| (item.arg.id.clone(), wrap_validation_message(message, width)))
+            validation.inline_message(&item.arg.id).map(|message| {
+                (
+                    item.arg.id.clone(),
+                    wrap_validation_message(&message, width),
+                )
+            })
         })
         .collect()
 }

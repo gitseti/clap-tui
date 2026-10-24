@@ -81,14 +81,14 @@ pub(super) fn render_field_help(
     let Some(help) = field_help_text(root, selected_path, model) else {
         return;
     };
-    let help = if model.inline_error.is_some() {
+    let help = if model.inline_message.is_some() {
         crate::layout::form::wrap_validation_message(&help, help_rect.width)
     } else {
         help
     };
     Paragraph::new(help)
         .scroll((field.description_clip_top, 0))
-        .style(if model.inline_error.is_some() {
+        .style(if model.inline_message.is_some() {
             Style::default().fg(config.theme.error)
         } else {
             styles::help(config)
@@ -101,8 +101,8 @@ fn field_help_text(
     selected_path: &CommandPath,
     model: &FieldRenderModel<'_>,
 ) -> Option<String> {
-    if let Some(field_error) = model.inline_error {
-        return Some(field_error.to_string());
+    if let Some(field_error) = &model.inline_message {
+        return Some(field_error.clone());
     }
 
     let mut parts = Vec::new();

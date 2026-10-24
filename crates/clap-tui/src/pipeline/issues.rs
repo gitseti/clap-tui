@@ -64,16 +64,19 @@ impl ValidationState {
             .map(|issue| issue.message.as_str())
     }
 
-    pub(crate) fn inline_error(&self, id: &str) -> Option<&str> {
-        self.issues
+    pub(crate) fn inline_message(&self, id: &str) -> Option<String> {
+        let messages = self
+            .issues
             .iter()
-            .find(|issue| {
+            .filter(|issue| {
                 issue
                     .argument_ids()
                     .first()
                     .is_some_and(|first| first == id)
             })
             .map(|issue| issue.message.as_str())
+            .collect::<Vec<_>>();
+        (!messages.is_empty()).then(|| messages.join("\n"))
     }
 
     #[cfg(test)]

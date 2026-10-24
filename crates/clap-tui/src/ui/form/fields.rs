@@ -26,7 +26,7 @@ pub(super) struct FieldRenderModel<'a> {
     pub(super) effective_value: Option<&'a EffectiveArgValue>,
     pub(super) selected: bool,
     pub(super) field_error: Option<&'a str>,
-    pub(super) inline_error: Option<&'a str>,
+    pub(super) inline_message: Option<String>,
     pub(super) is_primary_invalid: bool,
     pub(super) source_badge: Option<EffectiveValueSource>,
     pub(super) required: bool,
@@ -127,7 +127,7 @@ impl<'a> FieldRenderModel<'a> {
     ) -> Self {
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
         let field_error = vm.validation.field_error(&item.arg.id);
-        let inline_error = vm.validation.inline_error(&item.arg.id);
+        let inline_message = vm.validation.inline_message(&item.arg.id);
         let is_primary_invalid = first_invalid_field_id == Some(item.arg.id.as_str());
         let source_badge = effective_source_badge(vm, item.arg);
         let required = vm.field_required(item.arg);
@@ -199,7 +199,7 @@ impl<'a> FieldRenderModel<'a> {
             effective_value: vm.effective_values.get(&item.arg.id),
             selected,
             field_error,
-            inline_error,
+            inline_message,
             is_primary_invalid,
             source_badge,
             required,

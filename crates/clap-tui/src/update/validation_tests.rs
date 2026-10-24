@@ -186,3 +186,56 @@ fn partially_scrolled_error_renders_the_correct_continuation() {
         .collect::<String>();
     assert_eq!(actual.trim_end(), expected);
 }
+
+#[test]
+fn overlapping_instructions_share_one_description_with_the_full_wrapped_height() {
+    let command = Command::new("tool")
+        .arg(
+            Arg::new("shared")
+                .long("shared")
+                .action(ArgAction::SetTrue)
+                .display_order(0),
+        )
+        .arg(
+            Arg::new("a")
+                .long("a")
+                .action(ArgAction::SetTrue)
+                .display_order(1),
+        )
+        .arg(
+            Arg::new("b")
+                .long("b")
+                .action(ArgAction::SetTrue)
+                .display_order(2),
+        )
+        .group(ArgGroup::new("first").args(["shared", "a"]).required(true))
+        .group(ArgGroup::new("second").args(["shared", "b"]).required(true));
+    for size in [(80, 24), (60, 20)] {
+        let mut state = AppState::from_command(&command);
+        let (backend, snapshot) = draw(&mut state, size.0, size.1);
+        let fields = &snapshot.layout.form_fields;
+        assert_eq!(
+            fields
+                .iter()
+                .filter(|field| field.description.is_some())
+                .count(),
+            1
+        );
+        let field = fields
+            .iter()
+            .find(|field| field.arg_id == "shared")
+            .unwrap();
+        let rect = field.description.unwrap();
+        let message = state.derived_validation().inline_message("shared").unwrap();
+        let wrapped = crate::layout::form::wrap_validation_message(&message, rect.width);
+        assert_eq!(usize::from(rect.height), wrapped.lines().count());
+        let actual = (rect.y..rect.bottom())
+            .flat_map(|y| (rect.x..rect.right()).map(move |x| (x, y)))
+            .map(|point| backend.buffer()[point].symbol())
+            .collect::<String>();
+        assert_eq!(
+            actual.split_whitespace().collect::<String>(),
+            message.split_whitespace().collect::<String>()
+        );
+    }
+}

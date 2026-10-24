@@ -39,21 +39,28 @@ pub(crate) fn reset_validation_call_count() {
     VALIDATION_CALL_COUNT.with(|count| count.set(0));
 }
 
-fn validate_with_clap(state: &AppState, command: Command, argv: &[OsString]) -> ValidationState {
-    match command.clone().try_get_matches_from(argv.iter().cloned()) {
+fn validate_with_clap(
+    state: &AppState,
+    mut command: Command,
+    argv: &[OsString],
+) -> ValidationState {
+    command.build();
+    match command.try_get_matches_from_mut(argv.iter().cloned()) {
         Ok(_) => ValidationState::default(),
         Err(error) if error.kind() == ErrorKind::DisplayVersion => ValidationState::default(),
         Err(error) => {
             if error.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
-                let diagnostic =
-                    suppress_help_on_empty(command, state.domain.selected_path().as_slice());
+                let diagnostic = suppress_help_on_empty(
+                    command.clone(),
+                    state.domain.selected_path().as_slice(),
+                );
                 if let Err(requirement) = diagnostic.try_get_matches_from(argv.iter().cloned())
                     && requirement.kind() != ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
                 {
-                    return adapt_clap_error(state, &requirement);
+                    return adapt_clap_error(state, &requirement, &command);
                 }
             }
-            adapt_clap_error(state, &error)
+            adapt_clap_error(state, &error, &command)
         }
     }
 }
@@ -68,9 +75,9 @@ fn suppress_help_on_empty(command: Command, path: &[String]) -> Command {
     }
 }
 
-fn adapt_clap_error(state: &AppState, error: &clap::Error) -> ValidationState {
+fn adapt_clap_error(state: &AppState, error: &clap::Error, command: &Command) -> ValidationState {
     let issues = match error.kind() {
-        ErrorKind::MissingRequiredArgument => missing_requirement_issues(state, error),
+        ErrorKind::MissingRequiredArgument => missing_requirement_issues(state, error, command),
         ErrorKind::MissingSubcommand => vec![ValidationIssue {
             message: "Choose a command".into(),
             target: ValidationTarget::CommandSelection,
@@ -111,15 +118,20 @@ fn adapt_clap_error(state: &AppState, error: &clap::Error) -> ValidationState {
     }
 }
 
-fn missing_requirement_issues(state: &AppState, error: &clap::Error) -> Vec<ValidationIssue> {
-    let groups = missing_required_group_feedback(state, error);
-    let mut issues = groups
+fn missing_requirement_issues(
+    state: &AppState,
+    error: &clap::Error,
+    command: &Command,
+) -> Vec<ValidationIssue> {
+    let mut issues = missing_group_issues(state, error, command);
+    let group_members = issues
         .iter()
-        .map(|group| ValidationIssue::arguments(&group.message, group.arg_ids.clone()))
-        .collect::<Vec<_>>();
+        .flat_map(ValidationIssue::argument_ids)
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let ids = referenced_arg_ids(state, error);
     for arg in visible_arg_models(state).filter(|arg| ids.contains(&arg.id)) {
-        if groups.iter().any(|group| group.arg_ids.contains(&arg.id)) {
+        if group_members.contains(&arg.id) {
             continue;
         }
         issues.push(ValidationIssue::arguments(
@@ -360,67 +372,100 @@ fn extract_arg_token(token: &str) -> Option<String> {
         .then(|| trimmed.to_string())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MissingRequiredGroupFeedback {
-    message: String,
-    arg_ids: Vec<String>,
+// A group belongs to the command that defines it. A child's selection does not
+// transfer its parent's requirements or multiplicity into the child's scope.
+struct GroupDefinition<'a> {
+    owner: &'a CommandModel,
+    members: BTreeSet<&'a str>,
+    multiple: bool,
 }
 
-fn missing_required_group_feedback(
+impl<'a> GroupDefinition<'a> {
+    fn matching_args(&self, tokens: &[String]) -> Option<Vec<&'a ArgModel>> {
+        let args = self
+            .owner
+            .all_args()
+            .into_iter()
+            .filter(|arg| {
+                self.members.contains(arg.id.as_str())
+                    && arg_reference_candidates(arg)
+                        .iter()
+                        .any(|candidate| tokens.contains(candidate))
+            })
+            .collect::<Vec<_>>();
+        let matched = args
+            .iter()
+            .map(|arg| arg.id.as_str())
+            .collect::<BTreeSet<_>>();
+        (matched == self.members && tokens.len() == self.members.len()).then_some(args)
+    }
+}
+
+fn group_definitions<'a>(state: &'a AppState, command: &'a Command) -> Vec<GroupDefinition<'a>> {
+    let mut definitions = Vec::new();
+    let Some(lineage) = state
+        .domain
+        .root
+        .command_lineage(state.domain.selected_path())
+    else {
+        return definitions;
+    };
+    let mut scope = command;
+    for (index, owner) in lineage.into_iter().enumerate() {
+        if index > 0 {
+            let Some(child) = scope.find_subcommand(&owner.name) else {
+                break;
+            };
+            scope = child;
+        }
+        definitions.extend(scope.get_groups().map(|group| GroupDefinition {
+            owner,
+            members: group.get_args().map(clap::Id::as_str).collect(),
+            multiple: group.clone().is_multiple(),
+        }));
+    }
+    definitions
+}
+
+fn missing_group_issues(
     state: &AppState,
     error: &clap::Error,
-) -> Vec<MissingRequiredGroupFeedback> {
+    command: &Command,
+) -> Vec<ValidationIssue> {
+    let definitions = group_definitions(state, command);
     composite_references(error)
         .into_iter()
         .filter_map(|reference| {
             let tokens = composite_reference_members(&reference)?;
-            let args = resolve_reference_args(state, &tokens);
+            let (args, prefix) = definitions
+                .iter()
+                .find_map(|group| {
+                    group.matching_args(&tokens).map(|args| {
+                        (
+                            args,
+                            if group.multiple {
+                                "Choose at least one"
+                            } else {
+                                "Choose one"
+                            },
+                        )
+                    })
+                })
+                .unwrap_or_else(|| (resolve_reference_args(state, &tokens), "Choose from"));
             if args.is_empty() {
                 return None;
             }
-
-            let multiple = state
-                .domain
-                .validation_command
-                .as_ref()
-                .is_some_and(|root| {
-                    let mut command = root.clone();
-                    command.build();
-                    let selected = state
-                        .domain
-                        .selected_path()
-                        .as_slice()
-                        .iter()
-                        .try_fold(&command, |parent, name| parent.find_subcommand(name))
-                        .unwrap_or(&command);
-                    selected.get_groups().any(|group| {
-                        let members = group
-                            .get_args()
-                            .map(clap::Id::as_str)
-                            .collect::<BTreeSet<_>>();
-                        let actual = args
-                            .iter()
-                            .map(|arg| arg.id.as_str())
-                            .collect::<BTreeSet<_>>();
-                        members == actual && group.clone().is_multiple()
-                    })
-                });
-            Some(MissingRequiredGroupFeedback {
-                message: format!(
-                    "{}: {}",
-                    if multiple {
-                        "Choose at least one"
-                    } else {
-                        "Choose one"
-                    },
-                    args.iter()
-                        .map(|arg| arg.display_name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" or ")
-                ),
-
-                arg_ids: args.into_iter().map(|arg| arg.id.clone()).collect(),
-            })
+            let message = format!(
+                "{prefix}: {}",
+                args.iter()
+                    .map(|arg| arg.display_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            );
+            Some(ValidationIssue::arguments(
+                message,
+                args.into_iter().map(|arg| arg.id.clone()).collect(),
+            ))
         })
         .collect()
 }
