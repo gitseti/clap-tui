@@ -2,6 +2,10 @@ use super::*;
 use crate::pipeline::derive;
 use clap::{Arg, ArgAction, ArgGroup};
 
+fn flag(name: &'static str) -> Arg {
+    Arg::new(name).long(name).action(ArgAction::SetTrue)
+}
+
 fn modes(multiple: bool, help: bool) -> Command {
     Command::new("tool")
         .arg_required_else_help(help)
@@ -11,8 +15,8 @@ fn modes(multiple: bool, help: bool) -> Command {
                 .required(true)
                 .multiple(multiple),
         )
-        .arg(Arg::new("fast").long("fast").action(ArgAction::SetTrue))
-        .arg(Arg::new("safe").long("safe").action(ArgAction::SetTrue))
+        .arg(flag("fast"))
+        .arg(flag("safe"))
 }
 
 #[test]
@@ -111,7 +115,7 @@ fn mixed_groups_handle_nested_placeholders_and_repeated_flags() {
 fn single_option_groups_still_resolve_to_their_member() {
     for token in [
         Arg::new("token").long("token"),
-        Arg::new("token").long("token").action(ArgAction::SetTrue),
+        flag("token"),
         Arg::new("token").long("token").action(ArgAction::Count),
     ] {
         let command = Command::new("tool")
@@ -227,8 +231,8 @@ fn ambiguous_group_references_do_not_guess_multiplicity() {
             let command = policies.into_iter().enumerate().fold(
                 Command::new("tool")
                     .arg_required_else_help(help)
-                    .arg(Arg::new("fast").long("fast").action(ArgAction::SetTrue))
-                    .arg(Arg::new("safe").long("safe").action(ArgAction::SetTrue)),
+                    .arg(flag("fast"))
+                    .arg(flag("safe")),
                 |command, (index, multiple)| {
                     command.group(
                         ArgGroup::new(format!("mode{index}"))
@@ -263,8 +267,8 @@ fn help_recovery_respects_lineage_and_negated_parent_requirements() {
                 .required(true)
                 .multiple(true),
         )
-        .arg(Arg::new("quick").long("quick").action(ArgAction::SetTrue))
-        .arg(Arg::new("secure").long("secure").action(ArgAction::SetTrue));
+        .arg(flag("quick"))
+        .arg(flag("secure"));
     let command = modes(false, true)
         .subcommand_negates_reqs(true)
         .subcommand(child);
@@ -305,12 +309,7 @@ fn defaults_and_inherited_options_follow_clap_validity() {
 #[test]
 fn dependency_and_conditional_requirements_target_the_missing_argument() {
     let command = Command::new("tool")
-        .arg(
-            Arg::new("enable")
-                .long("enable")
-                .action(ArgAction::SetTrue)
-                .requires("config"),
-        )
+        .arg(flag("enable").requires("config"))
         .arg(Arg::new("config").long("config"));
     let mut state = AppState::from_command(&command);
     state.domain.toggle_flag_touched("enable");
@@ -462,8 +461,8 @@ fn active_parent_and_child_groups_keep_their_own_semantics() {
                 .required(true)
                 .multiple(true),
         )
-        .arg(Arg::new("quick").long("quick").action(ArgAction::SetTrue))
-        .arg(Arg::new("secure").long("secure").action(ArgAction::SetTrue));
+        .arg(flag("quick"))
+        .arg(flag("secure"));
     let command = modes(false, false).subcommand(child);
     let mut state = AppState::from_command(&command);
     state.select_command_path(&["child".into()]).unwrap();
@@ -486,24 +485,9 @@ fn active_parent_and_child_groups_keep_their_own_semantics() {
 #[test]
 fn overlapping_groups_keep_each_instruction_at_the_shared_field() {
     let command = Command::new("tool")
-        .arg(
-            Arg::new("shared")
-                .long("shared")
-                .action(ArgAction::SetTrue)
-                .display_order(0),
-        )
-        .arg(
-            Arg::new("a")
-                .long("a")
-                .action(ArgAction::SetTrue)
-                .display_order(1),
-        )
-        .arg(
-            Arg::new("b")
-                .long("b")
-                .action(ArgAction::SetTrue)
-                .display_order(2),
-        )
+        .arg(flag("shared").display_order(0))
+        .arg(flag("a").display_order(1))
+        .arg(flag("b").display_order(2))
         .group(ArgGroup::new("first").args(["shared", "a"]).required(true))
         .group(ArgGroup::new("second").args(["shared", "b"]).required(true));
     let validation = derive(&AppState::from_command(&command)).validation;

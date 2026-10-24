@@ -513,24 +513,12 @@ fn form_field_content_top(
         if item.arg.id == arg_id {
             return Some(y);
         }
-        let semantic_reason = field_semantics
-            .get(&crate::pipeline::FieldInstanceId::from_arg(item.arg))
-            .and_then(|semantics| semantics.reason.as_deref());
-        let show_description = form::field_has_description(
+        let metrics = form_layout::field_metrics_with_feedback(
             item.arg,
-            field_errors
-                .get(&item.arg.id)
-                .map(String::as_str)
-                .or(semantic_reason),
-        );
-        let metrics = form_layout::with_validation_height(
-            form_layout::field_metrics_with_description_and_layout_overrides(
-                item.arg,
-                show_description,
-                input_height_overrides.get(&item.arg.id).copied(),
-                label_height_overrides.get(&item.arg.id).copied(),
-            ),
-            field_errors.get(&item.arg.id),
+            field_errors,
+            input_height_overrides,
+            label_height_overrides,
+            field_semantics,
         );
         y = y.saturating_add(metrics.total_height);
         previous_heading = item.section_heading.as_deref();

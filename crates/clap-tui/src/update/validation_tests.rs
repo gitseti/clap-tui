@@ -8,6 +8,10 @@ use crate::{
 use clap::{Arg, ArgAction, ArgGroup, Command};
 use ratatui::{Terminal, backend::TestBackend};
 
+fn flag(name: &'static str) -> Arg {
+    Arg::new(name).long(name).action(ArgAction::SetTrue)
+}
+
 fn draw(state: &mut AppState, width: u16, height: u16) -> (TestBackend, FrameSnapshot) {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     let mut snapshot = FrameSnapshot::default();
@@ -299,24 +303,9 @@ fn partially_scrolled_error_renders_the_correct_continuation() {
 #[test]
 fn overlapping_instructions_share_one_description_with_the_full_wrapped_height() {
     let command = Command::new("tool")
-        .arg(
-            Arg::new("shared")
-                .long("shared")
-                .action(ArgAction::SetTrue)
-                .display_order(0),
-        )
-        .arg(
-            Arg::new("a")
-                .long("a")
-                .action(ArgAction::SetTrue)
-                .display_order(1),
-        )
-        .arg(
-            Arg::new("b")
-                .long("b")
-                .action(ArgAction::SetTrue)
-                .display_order(2),
-        )
+        .arg(flag("shared").display_order(0))
+        .arg(flag("a").display_order(1))
+        .arg(flag("b").display_order(2))
         .group(ArgGroup::new("first").args(["shared", "a"]).required(true))
         .group(ArgGroup::new("second").args(["shared", "b"]).required(true));
     for size in [(80, 24), (60, 20)] {

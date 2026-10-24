@@ -137,10 +137,23 @@ pub(crate) fn field_metrics_with_description_and_layout_overrides(
     }
 }
 
-pub(crate) fn with_validation_height(
-    mut metrics: FieldMetrics,
-    error: Option<&String>,
+pub(crate) fn field_metrics_with_feedback(
+    arg: &ArgSpec,
+    field_errors: &BTreeMap<String, String>,
+    input_heights: &HashMap<String, u16>,
+    label_heights: &HashMap<String, u16>,
+    semantics: &BTreeMap<FieldInstanceId, FieldSemantics>,
 ) -> FieldMetrics {
+    let error = field_errors.get(&arg.id);
+    let reason = semantics
+        .get(&FieldInstanceId::from_arg(arg))
+        .and_then(|value| value.reason.as_deref());
+    let mut metrics = field_metrics_with_description_and_layout_overrides(
+        arg,
+        form::field_has_description(arg, error.map(String::as_str).or(reason)),
+        input_heights.get(&arg.id).copied(),
+        label_heights.get(&arg.id).copied(),
+    );
     if let Some(error) = error {
         let height = u16::try_from(error.lines().count())
             .unwrap_or(u16::MAX)
@@ -265,23 +278,12 @@ pub(crate) fn measure_fields_height_with_layout_overrides_and_semantics(
         if form::field_heading(previous_heading, item).is_some() {
             total += 1;
         }
-        let semantic_reason = field_semantics
-            .get(&FieldInstanceId::from_arg(item.arg))
-            .and_then(|semantics| semantics.reason.as_deref());
-        total += with_validation_height(
-            field_metrics_with_description_and_layout_overrides(
-                item.arg,
-                form::field_has_description(
-                    item.arg,
-                    field_errors
-                        .get(&item.arg.id)
-                        .map(String::as_str)
-                        .or(semantic_reason),
-                ),
-                input_height_overrides.get(&item.arg.id).copied(),
-                label_height_overrides.get(&item.arg.id).copied(),
-            ),
-            field_errors.get(&item.arg.id),
+        total += field_metrics_with_feedback(
+            item.arg,
+            field_errors,
+            input_height_overrides,
+            label_height_overrides,
+            field_semantics,
         )
         .total_height;
         previous_heading = item.section_heading.as_deref();
@@ -348,25 +350,14 @@ pub(crate) fn field_content_bounds_with_layout_overrides_and_semantics(
         if form::field_heading(previous_heading, item).is_some() {
             y = y.saturating_add(1);
         }
-        let semantic_reason = field_semantics
-            .get(&FieldInstanceId::from_arg(item.arg))
-            .and_then(|semantics| semantics.reason.as_deref());
-        let show_description = form::field_has_description(
+        let metrics = field_metrics_with_feedback(
             item.arg,
-            field_errors
-                .get(&item.arg.id)
-                .map(String::as_str)
-                .or(semantic_reason),
+            field_errors,
+            input_height_overrides,
+            label_height_overrides,
+            field_semantics,
         );
-        let metrics = with_validation_height(
-            field_metrics_with_description_and_layout_overrides(
-                item.arg,
-                show_description,
-                input_height_overrides.get(&item.arg.id).copied(),
-                label_height_overrides.get(&item.arg.id).copied(),
-            ),
-            field_errors.get(&item.arg.id),
-        );
+        let show_description = metrics.description_height > 0;
         let input_top = y.saturating_add(field_input_offset_with_description(
             item.arg,
             show_description,
@@ -433,25 +424,14 @@ pub(crate) fn hit_test_form_content_with_layout_overrides_and_semantics(
         if form::field_heading(previous_heading, item).is_some() {
             y = y.saturating_add(1);
         }
-        let semantic_reason = field_semantics
-            .get(&FieldInstanceId::from_arg(item.arg))
-            .and_then(|semantics| semantics.reason.as_deref());
-        let show_description = form::field_has_description(
+        let metrics = field_metrics_with_feedback(
             item.arg,
-            field_errors
-                .get(&item.arg.id)
-                .map(String::as_str)
-                .or(semantic_reason),
+            field_errors,
+            input_height_overrides,
+            label_height_overrides,
+            field_semantics,
         );
-        let metrics = with_validation_height(
-            field_metrics_with_description_and_layout_overrides(
-                item.arg,
-                show_description,
-                input_height_overrides.get(&item.arg.id).copied(),
-                label_height_overrides.get(&item.arg.id).copied(),
-            ),
-            field_errors.get(&item.arg.id),
-        );
+        let show_description = metrics.description_height > 0;
         let input_top = y.saturating_add(field_input_offset_with_description(
             item.arg,
             show_description,
@@ -541,27 +521,14 @@ pub(crate) fn project_visible_form_fields(
 
     for item in input.active_args {
         let heading = form::field_heading(previous_heading, item);
-        let semantic_reason = input
-            .field_semantics
-            .get(&FieldInstanceId::from_arg(item.arg))
-            .and_then(|semantics| semantics.reason.as_deref());
-        let show_description = form::field_has_description(
+        let metrics = field_metrics_with_feedback(
             item.arg,
-            input
-                .field_errors
-                .get(&item.arg.id)
-                .map(String::as_str)
-                .or(semantic_reason),
+            input.field_errors,
+            input.input_height_overrides,
+            input.label_height_overrides,
+            input.field_semantics,
         );
-        let metrics = with_validation_height(
-            field_metrics_with_description_and_layout_overrides(
-                item.arg,
-                show_description,
-                input.input_height_overrides.get(&item.arg.id).copied(),
-                input.label_height_overrides.get(&item.arg.id).copied(),
-            ),
-            input.field_errors.get(&item.arg.id),
-        );
+        let show_description = metrics.description_height > 0;
         let heading_height = i32::from(u16::from(heading.is_some()));
         let item_bottom = y + heading_height + i32::from(metrics.total_height);
         if y >= i32::from(input.content_area.y) + i32::from(input.content_area.height) {
