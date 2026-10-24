@@ -288,16 +288,18 @@ impl<'a> GroupDefinition<'a> {
             .owner
             .all_args()
             .into_iter()
-            .filter(|arg| {
-                self.members.contains(arg.id.as_str())
-                    && references.iter().any(|reference| reference.matches(arg))
-            })
+            .filter(|arg| self.members.contains(arg.id.as_str()))
             .collect::<Vec<_>>();
-        let matched = args
-            .iter()
-            .map(|arg| arg.id.as_str())
-            .collect::<BTreeSet<_>>();
-        (matched == self.members && references.len() == self.members.len()).then_some(args)
+        if args.len() != self.members.len() || references.len() != args.len() {
+            return None;
+        }
+        // Consume one member per reference, preserving repeated-label counts.
+        let mut unmatched = args.clone();
+        for reference in references {
+            let index = unmatched.iter().position(|arg| reference.matches(arg))?;
+            unmatched.swap_remove(index);
+        }
+        Some(args)
     }
 }
 
@@ -363,18 +365,20 @@ fn missing_group_issues(
                     "Choose from",
                 ),
             };
-            if args.is_empty() {
-                return None;
-            }
-            let message = format!(
-                "{prefix}: {}",
+            let alternatives = if args.is_empty() {
+                members
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            } else {
                 args.iter()
                     .map(|arg| arg.display_name.as_str())
                     .collect::<Vec<_>>()
                     .join(" or ")
-            );
+            };
             Some(ValidationIssue::arguments(
-                message,
+                format!("{prefix}: {alternatives}"),
                 args.into_iter().map(|arg| arg.id.clone()).collect(),
             ))
         })

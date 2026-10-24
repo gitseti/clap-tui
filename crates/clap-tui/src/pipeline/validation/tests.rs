@@ -225,6 +225,89 @@ fn known_group_members_remain_scoped_when_positional_names_repeat() {
 }
 
 #[test]
+fn group_matching_accounts_for_every_reference() {
+    let command = Command::new("tool")
+        .arg(Arg::new("left").value_name("PATH"))
+        .arg(Arg::new("right").value_name("PATH"))
+        .arg(Arg::new("token").value_name("OTHER"))
+        .group(ArgGroup::new("optional").args(["left", "right"]))
+        .group(
+            ArgGroup::new("required")
+                .args(["left", "token"])
+                .required(true),
+        );
+    let validation = derive(&AppState::from_command(&command)).validation;
+    assert_eq!(
+        validation.summary().as_deref(),
+        Some("Choose one: left or token")
+    );
+    assert_eq!(validation.issues[0].argument_ids(), ["left", "token"]);
+    assert!(validation.field_error("right").is_none());
+}
+
+#[test]
+fn group_matching_preserves_duplicate_label_counts() {
+    let command = Command::new("tool")
+        .args([
+            Arg::new("first").value_name("PATH"),
+            Arg::new("second").value_name("PATH"),
+            Arg::new("third").value_name("OTHER"),
+            Arg::new("fourth").value_name("OTHER"),
+            Arg::new("fifth").value_name("OTHER"),
+        ])
+        .group(ArgGroup::new("optional").args(["first", "second", "third"]))
+        .group(
+            ArgGroup::new("required")
+                .args(["first", "fourth", "fifth"])
+                .required(true),
+        );
+    let validation = derive(&AppState::from_command(&command)).validation;
+    assert_eq!(validation.issues.len(), 1);
+    assert_eq!(
+        validation.issues[0].argument_ids(),
+        ["first", "fourth", "fifth"]
+    );
+    assert!(validation.field_error("second").is_none());
+    assert!(validation.field_error("third").is_none());
+}
+
+#[test]
+fn unresolved_groups_retain_feedback_alongside_known_requirements() {
+    let command = Command::new("tool")
+        .arg(Arg::new("first").value_name("PATH"))
+        .arg(Arg::new("second").value_name("PATH"))
+        .arg(Arg::new("third").value_name("PATH"))
+        .arg(Arg::new("name").long("name").required(true))
+        .group(
+            ArgGroup::new("required_paths")
+                .args(["first", "second"])
+                .required(true),
+        )
+        .group(ArgGroup::new("other_paths").args(["first", "third"]));
+    let mut state = AppState::from_command(&command);
+    let validation = derive(&state).validation;
+    assert_eq!(
+        validation.summary().as_deref(),
+        Some("Provide --name (+1 more)")
+    );
+    assert_eq!(validation.issues.len(), 2);
+    assert_eq!(
+        validation.issues[1].message,
+        "Choose from: <PATH> or <PATH>"
+    );
+    assert_eq!(validation.issues[1].target, ValidationTarget::None);
+    state.domain.set_text_value("name", "valid");
+    let validation = derive(&state).validation;
+    assert_eq!(
+        validation.summary().as_deref(),
+        Some("Choose from: <PATH> or <PATH>")
+    );
+    assert!(!validation.has_target());
+    state.domain.set_text_value("first", "valid");
+    assert!(derive(&state).validation.is_valid());
+}
+
+#[test]
 fn ambiguous_group_references_do_not_guess_multiplicity() {
     for help in [false, true] {
         for policies in [[true, false], [false, true]] {
