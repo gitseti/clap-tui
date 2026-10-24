@@ -271,7 +271,12 @@ fn apply_form_click(event: AppMouseEvent, state: &mut AppState, frame_snapshot: 
         event,
         state,
         frame_snapshot,
-        &derived.validation.field_errors,
+        &crate::layout::form::validation_errors(
+            &args,
+            &derived.validation,
+            frame_snapshot.form_view_rect().unwrap_or_default(),
+            &derived.field_semantics,
+        ),
         &input_height_overrides,
         &derived.field_semantics,
     ) {
@@ -808,7 +813,12 @@ mod tests {
         );
         state.domain.toggle_flag_touched("fast");
         state.domain.toggle_flag_touched("safe");
-        assert!(state.derived_validation().field_errors.contains_key("fast"));
+        assert!(
+            state
+                .derived_validation()
+                .field_errors()
+                .contains_key("fast")
+        );
 
         state.ui.set_form_scroll(99);
         let mut snapshot = FrameSnapshot {
@@ -823,6 +833,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 2, 10, 1)),
             input: ratatui::layout::Rect::new(12, 2, 20, 1),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 1,
             description: Some(ratatui::layout::Rect::new(12, 3, 40, 1)),
         });
@@ -861,6 +872,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 3),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 3,
             description: None,
         });
@@ -918,6 +930,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 1),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 1,
             description: None,
         });
@@ -958,6 +971,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 2),
             input_clip_top: 1,
+            description_clip_top: 0,
             full_input_height: 3,
             description: None,
         });
@@ -1005,6 +1019,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 6,
             description: None,
         });
@@ -1067,6 +1082,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 6,
             description: None,
         });
@@ -1129,6 +1145,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 9),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 9,
             description: None,
         });
@@ -1247,6 +1264,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 3),
             input_clip_top: REPEATED_ROW_HEIGHT,
+            description_clip_top: 0,
             full_input_height: REPEATED_ROW_HEIGHT + 3,
             description: None,
         });
@@ -1306,6 +1324,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 3),
             input_clip_top: 1,
+            description_clip_top: 0,
             full_input_height: 4,
             description: None,
         });
@@ -1365,6 +1384,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 6,
             description: None,
         });
@@ -1414,6 +1434,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 3),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 3,
             description: None,
         });
@@ -1465,6 +1486,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 0, 9, 1)),
             input: ratatui::layout::Rect::new(10, 0, 30, 6),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 6,
             description: None,
         });
@@ -1509,6 +1531,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 6,
             description: None,
         });
@@ -1561,6 +1584,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 30, 6),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 6,
             description: None,
         });
@@ -1669,6 +1693,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 20, 2),
             input_clip_top: 1,
+            description_clip_top: 0,
             full_input_height: 3,
             description: None,
         });
@@ -1723,6 +1748,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 20, 2),
             input_clip_top: 1,
+            description_clip_top: 0,
             full_input_height: 3,
             description: None,
         });
@@ -1777,6 +1803,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 1, 9, 1)),
             input: ratatui::layout::Rect::new(10, 1, 20, 1),
             input_clip_top: 2,
+            description_clip_top: 0,
             full_input_height: 3,
             description: None,
         });
@@ -2203,6 +2230,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 0, 9, 1)),
             input: ratatui::layout::Rect::new(10, 0, 30, 5),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 5,
             description: None,
         });
@@ -2258,6 +2286,7 @@ mod tests {
             label: Some(ratatui::layout::Rect::new(0, 2, 9, 1)),
             input: ratatui::layout::Rect::new(10, 2, 30, 5),
             input_clip_top: 0,
+            description_clip_top: 0,
             full_input_height: 5,
             description: None,
         });

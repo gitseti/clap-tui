@@ -13,22 +13,14 @@ use crate::input::{HoverTarget, UiState};
 use crate::pipeline::ValidationState;
 
 use super::screen::ScreenView;
-use super::styles;
+use super::styles::{self, FooterChipKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FooterChip {
     target: HoverTarget,
     label: String,
     hovered: bool,
-    variant: FooterChipVariant,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FooterChipVariant {
-    Primary,
-    Secondary,
-    Status,
-    Subtle,
+    variant: FooterChipKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,33 +92,32 @@ pub(crate) fn populate_layout(
 
 fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> FooterView {
     let actions = vec![
-        build_chip(
-            ui,
-            HoverTarget::Run,
-            "Ctrl+R Run",
-            FooterChipVariant::Primary,
-        ),
+        build_chip(ui, HoverTarget::Run, "Ctrl+R Run", FooterChipKind::Primary),
         build_chip(
             ui,
             HoverTarget::Exit,
             "Ctrl+C Exit",
-            FooterChipVariant::Secondary,
+            FooterChipKind::Secondary,
         ),
     ];
     let candidates = vec![
+        build_chip(ui, HoverTarget::Search, "/ Search", FooterChipKind::Subtle),
+        build_chip(ui, HoverTarget::Focus, "Focus", FooterChipKind::Subtle),
+        build_chip(ui, HoverTarget::Help, "? Help", FooterChipKind::Subtle),
+    ];
+    let status = validation.summary().as_ref().map(|summary| {
+        let label = if validation.has_target() {
+            format!("F8 · {summary}")
+        } else {
+            summary.clone()
+        };
         build_chip(
             ui,
-            HoverTarget::Search,
-            "/ Search",
-            FooterChipVariant::Subtle,
-        ),
-        build_chip(ui, HoverTarget::Focus, "Focus", FooterChipVariant::Subtle),
-        build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
-    ];
-    let status = validation
-        .summary
-        .as_ref()
-        .map(|summary| build_status_chip(ui, summary));
+            HoverTarget::FooterStatus,
+            &label,
+            FooterChipKind::Status,
+        )
+    });
     let (status, hints) = fit_footer_zones(area, &actions, status, candidates);
 
     FooterView {
@@ -144,22 +135,13 @@ fn build_chip(
     ui: &UiState,
     target: HoverTarget,
     chip: &str,
-    variant: FooterChipVariant,
+    variant: FooterChipKind,
 ) -> FooterChip {
     FooterChip {
         target,
         label: format!(" {chip} "),
         hovered: ui.hover == Some(target),
         variant,
-    }
-}
-
-fn build_status_chip(ui: &UiState, chip: &str) -> FooterChip {
-    FooterChip {
-        target: HoverTarget::FooterStatus,
-        label: format!(" {chip} "),
-        hovered: ui.hover == Some(HoverTarget::FooterStatus),
-        variant: FooterChipVariant::Status,
     }
 }
 
@@ -224,7 +206,7 @@ fn spans_for_chips(config: &TuiConfig, chips: &[FooterChip]) -> Vec<Span<'static
             }
             spans.push(Span::styled(
                 chip.label.clone(),
-                chip_style(config, chip.variant, chip.hovered),
+                styles::footer_chip(config, chip.variant, chip.hovered),
             ));
             spans
         })
@@ -381,23 +363,6 @@ fn chip_width(label: &str) -> u16 {
     u16::try_from(label.chars().count()).unwrap_or(u16::MAX)
 }
 
-fn chip_style(config: &TuiConfig, variant: FooterChipVariant, hovered: bool) -> Style {
-    match variant {
-        FooterChipVariant::Primary => {
-            styles::footer_chip(config, styles::FooterChipKind::Primary, hovered)
-        }
-        FooterChipVariant::Secondary => {
-            styles::footer_chip(config, styles::FooterChipKind::Secondary, hovered)
-        }
-        FooterChipVariant::Status => {
-            styles::footer_chip(config, styles::FooterChipKind::Status, hovered)
-        }
-        FooterChipVariant::Subtle => {
-            styles::footer_chip(config, styles::FooterChipKind::Subtle, hovered)
-        }
-    }
-}
-
 fn truncate_chip(chip: &FooterChip, available_width: u16) -> Option<FooterChip> {
     if available_width < 8 {
         return None;
@@ -514,15 +479,16 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 80, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Missing required argument: --name".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Provide --name",
+                    Vec::new(),
+                )],
             },
         );
 
         assert_eq!(
             view.status.as_ref().map(|chip| chip.label.as_str()),
-            Some(" Missing required argument: --name ")
+            Some(" Provide --name ")
         );
         assert_eq!(
             view.status.as_ref().map(|chip| chip.target),
@@ -539,9 +505,10 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 80, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Missing required argument: --name".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Provide --name",
+                    Vec::new(),
+                )],
             },
         );
 
@@ -559,9 +526,10 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 50, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Missing required argument: --name".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Provide --name",
+                    Vec::new(),
+                )],
             },
         );
 
@@ -584,9 +552,10 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 100, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Invalid value".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Invalid value",
+                    Vec::new(),
+                )],
             },
         );
 
@@ -602,16 +571,17 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 40, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Missing required argument: --name".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Provide --name",
+                    Vec::new(),
+                )],
             },
         );
 
         assert_eq!(view.hints, Vec::<FooterChip>::new());
         assert_eq!(
             view.status.as_ref().map(|chip| chip.label.as_str()),
-            Some(" Missing r… ")
+            Some(" Provide -… ")
         );
     }
 
@@ -622,9 +592,10 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 56, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Invalid value".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Invalid value",
+                    Vec::new(),
+                )],
             },
         );
 

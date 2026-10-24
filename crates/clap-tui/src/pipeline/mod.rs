@@ -12,12 +12,8 @@ mod validation;
 pub(crate) use effective::{EffectiveArgValue, EffectiveValueSource};
 pub(crate) use field_semantics::{FieldInstanceId, FieldSemantics, FieldVisibility};
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct ValidationState {
-    pub(crate) is_valid: bool,
-    pub(crate) summary: Option<String>,
-    pub(crate) field_errors: BTreeMap<String, String>,
-}
+mod issues;
+pub(crate) use issues::{ValidationIssue, ValidationState, ValidationTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DerivedState {
@@ -37,7 +33,7 @@ pub(crate) fn derive(state: &AppState) -> DerivedState {
         .map(|token| token.to_string_lossy().to_string())
         .collect::<Vec<_>>();
     let rendered_command = serialization.rendered_for_platform();
-    let (validation, effective_values) = if serialization.is_ok() {
+    let (mut validation, effective_values) = if serialization.is_ok() {
         (
             validation::validate_argv(state, &executable_argv),
             effective::derive_effective_values(state, &executable_argv),
@@ -48,6 +44,12 @@ pub(crate) fn derive(state: &AppState) -> DerivedState {
             BTreeMap::new(),
         )
     };
+    let args = crate::query::selectors::visible_form_args(
+        &state.domain.root,
+        state.domain.selected_path(),
+        crate::input::ActiveTab::Inputs,
+    );
+    validation.order_by_form(&args);
     let field_semantics = field_semantics::derive_field_semantics(state, &validation);
     DerivedState {
         serialization,
@@ -60,22 +62,23 @@ pub(crate) fn derive(state: &AppState) -> DerivedState {
 }
 
 fn validation_state_from_serialization(diagnostics: &[SerializationDiagnostic]) -> ValidationState {
-    let mut field_errors = BTreeMap::new();
-    for diagnostic in diagnostics {
-        if let crate::argv_serializer::DiagnosticTarget::Field(arg_id) = &diagnostic.target {
-            field_errors.insert(arg_id.clone(), diagnostic.message.clone());
-        }
-    }
     ValidationState {
-        is_valid: false,
-        summary: diagnostics.first().map(|diagnostic| {
-            if diagnostic.kind == SerializationDiagnosticKind::UnsupportedParserShape {
-                format!("Unsupported parser shape: {}", diagnostic.message)
-            } else {
-                format!("Serialization ambiguity: {}", diagnostic.message)
-            }
-        }),
-        field_errors,
+        issues: diagnostics
+            .iter()
+            .map(|diagnostic| {
+                let message =
+                    if diagnostic.kind == SerializationDiagnosticKind::UnsupportedParserShape {
+                        format!("Unsupported parser shape: {}", diagnostic.message)
+                    } else {
+                        format!("Serialization ambiguity: {}", diagnostic.message)
+                    };
+                let ids = match &diagnostic.target {
+                    crate::argv_serializer::DiagnosticTarget::Field(id) => vec![id.clone()],
+                    _ => Vec::new(),
+                };
+                ValidationIssue::arguments(message, ids)
+            })
+            .collect(),
     }
 }
 
@@ -169,7 +172,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--verbose".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -209,13 +212,13 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert!(derived.rendered_command.is_none());
         assert_eq!(derived.effective_values, std::collections::BTreeMap::new());
         assert!(
             derived
                 .validation
-                .field_errors
+                .field_errors()
                 .get("feature")
                 .is_some_and(|message| message.contains("variable values before a positional"))
         );
@@ -246,7 +249,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--feature=gzip,brotli".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -295,7 +298,7 @@ mod tests {
                 "abc".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -333,7 +336,7 @@ mod tests {
                 "--feature=http2".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -385,15 +388,15 @@ mod tests {
                 "--feature=http2".to_string(),
             ]
         );
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert!(
             derived
                 .validation
-                .summary
+                .summary()
                 .as_deref()
-                .is_some_and(|message| message.contains("required"))
+                .is_some_and(|message| message.starts_with("Provide "))
         );
-        assert!(!derived.validation.field_errors.contains_key("feature"));
+        assert!(!derived.validation.field_errors().contains_key("feature"));
     }
 
     #[test]
@@ -461,7 +464,7 @@ mod tests {
         assert!(
             derived
                 .validation
-                .summary
+                .summary()
                 .as_deref()
                 .is_some_and(|summary| summary.starts_with("Unsupported parser shape:"))
         );
@@ -475,14 +478,14 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.field_errors.get("name"),
-            Some(&"Required argument".to_string())
+            derived.validation.field_errors().get("name"),
+            Some(&"Provide --name".to_string())
         );
         assert_eq!(
-            derived.validation.summary.as_deref(),
-            Some("Missing required argument: --name")
+            derived.validation.summary().as_deref(),
+            Some("Provide --name")
         );
     }
 
@@ -495,7 +498,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(derived.authoritative_argv, vec!["tool".to_string()]);
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -507,10 +510,10 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.field_errors.get("color"),
-            Some(&"Required argument".to_string())
+            derived.validation.field_errors().get("color"),
+            Some(&"Provide --color".to_string())
         );
     }
 
@@ -579,16 +582,16 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert!(
             derived
                 .validation
-                .summary
+                .summary()
                 .as_deref()
-                .is_some_and(|summary| summary == "Conflicting arguments: --debug, --quiet")
+                .is_some_and(|summary| summary == "Remove one of: --debug or --quiet")
         );
-        assert!(derived.validation.field_errors.contains_key("debug"));
-        assert!(derived.validation.field_errors.contains_key("quiet"));
+        assert!(derived.validation.field_errors().contains_key("debug"));
+        assert!(derived.validation.field_errors().contains_key("quiet"));
     }
 
     #[test]
@@ -609,14 +612,14 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.summary.as_deref(),
-            Some("Conflicting arguments: --debug, --quiet")
+            derived.validation.summary().as_deref(),
+            Some("Remove one of: --debug or --quiet")
         );
-        assert!(!derived.validation.field_errors.contains_key("name"));
-        assert!(derived.validation.field_errors.contains_key("debug"));
-        assert!(derived.validation.field_errors.contains_key("quiet"));
+        assert!(!derived.validation.field_errors().contains_key("name"));
+        assert!(derived.validation.field_errors().contains_key("debug"));
+        assert!(derived.validation.field_errors().contains_key("quiet"));
     }
 
     #[test]
@@ -628,7 +631,7 @@ mod tests {
 
         let initial = derive(&state);
         assert_eq!(initial.authoritative_argv, vec!["tool".to_string()]);
-        assert!(initial.validation.is_valid);
+        assert!(initial.validation.is_valid());
         assert_eq!(
             initial
                 .effective_values
@@ -682,7 +685,7 @@ mod tests {
                 "tests".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -703,7 +706,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--color".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -733,7 +736,7 @@ mod tests {
         );
         assert_eq!(effective.source, EffectiveValueSource::DefaultMissing);
         assert_eq!(effective.values, vec!["always".to_string()]);
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -761,7 +764,7 @@ mod tests {
         );
         assert_eq!(effective.source, EffectiveValueSource::ConditionalDefault);
         assert_eq!(effective.values, vec!["auto".to_string()]);
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -790,7 +793,7 @@ mod tests {
                 "blue".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -817,7 +820,7 @@ mod tests {
                 "blue".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -840,7 +843,7 @@ mod tests {
                 "-v".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -860,7 +863,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "other".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -895,7 +898,7 @@ mod tests {
                 "sub".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -909,19 +912,19 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.summary.as_deref(),
-            Some("Missing required argument: path")
+            derived.validation.summary().as_deref(),
+            Some("Provide path")
         );
         assert_eq!(
-            derived.validation.field_errors.get("path"),
-            Some(&"Required argument".to_string())
+            derived.validation.field_errors().get("path"),
+            Some(&"Provide path".to_string())
         );
         assert!(
             derived
                 .validation
-                .summary
+                .summary()
                 .as_deref()
                 .is_some_and(|summary| !summary.contains("Run the selected tool"))
         );
@@ -942,12 +945,12 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.summary.as_deref(),
+            derived.validation.summary().as_deref(),
             Some("Missing required input")
         );
-        assert!(derived.validation.field_errors.is_empty());
+        assert!(derived.validation.field_errors().is_empty());
     }
 
     #[test]
@@ -961,12 +964,12 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.summary.as_deref(),
-            Some("Missing required subcommand")
+            derived.validation.summary().as_deref(),
+            Some("Choose a command")
         );
-        assert!(derived.validation.field_errors.is_empty());
+        assert!(derived.validation.field_errors().is_empty());
     }
 
     #[test]
@@ -979,13 +982,13 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.summary.as_deref(),
-            Some("Missing required arguments: --name, path")
+            derived.validation.summary().as_deref(),
+            Some("Provide path (+1 more)")
         );
-        assert!(derived.validation.field_errors.contains_key("name"));
-        assert!(derived.validation.field_errors.contains_key("path"));
+        assert!(derived.validation.field_errors().contains_key("name"));
+        assert!(derived.validation.field_errors().contains_key("path"));
     }
 
     #[test]
@@ -1009,18 +1012,18 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.summary.as_deref(),
-            Some("Choose one of: --fast, --safe")
+            derived.validation.summary().as_deref(),
+            Some("Choose one: --fast or --safe")
         );
         assert_eq!(
-            derived.validation.field_errors.get("fast"),
-            Some(&"Choose one of: --fast, --safe".to_string())
+            derived.validation.field_errors().get("fast"),
+            Some(&"Choose one: --fast or --safe".to_string())
         );
         assert_eq!(
-            derived.validation.field_errors.get("safe"),
-            Some(&"Choose one of: --fast, --safe".to_string())
+            derived.validation.field_errors().get("safe"),
+            Some(&"Choose one: --fast or --safe".to_string())
         );
     }
 
@@ -1046,22 +1049,22 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
-            derived.validation.summary.as_deref(),
-            Some("Missing required argument: --name; Choose one of: --fast, --safe")
+            derived.validation.summary().as_deref(),
+            Some("Provide --name (+1 more)")
         );
         assert_eq!(
-            derived.validation.field_errors.get("name"),
-            Some(&"Required argument".to_string())
+            derived.validation.field_errors().get("name"),
+            Some(&"Provide --name".to_string())
         );
         assert_eq!(
-            derived.validation.field_errors.get("fast"),
-            Some(&"Choose one of: --fast, --safe".to_string())
+            derived.validation.field_errors().get("fast"),
+            Some(&"Choose one: --fast or --safe".to_string())
         );
         assert_eq!(
-            derived.validation.field_errors.get("safe"),
-            Some(&"Choose one of: --fast, --safe".to_string())
+            derived.validation.field_errors().get("safe"),
+            Some(&"Choose one: --fast or --safe".to_string())
         );
     }
 
@@ -1085,9 +1088,9 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--version".to_string()]
         );
-        assert!(derived.validation.is_valid);
-        assert_eq!(derived.validation.summary, None);
-        assert!(derived.validation.field_errors.is_empty());
+        assert!(derived.validation.is_valid());
+        assert_eq!(derived.validation.summary(), None);
+        assert!(derived.validation.field_errors().is_empty());
     }
 
     #[test]
@@ -1107,14 +1110,14 @@ mod tests {
 
         let validation = super::validate_argv(&state, &argv);
 
-        assert!(!validation.is_valid);
+        assert!(!validation.is_valid());
         assert_eq!(
-            validation.summary.as_deref(),
-            Some("Invalid value for --color: orange")
+            validation.summary().as_deref(),
+            Some("Invalid value for --color: orange. Choose: red, green")
         );
         assert_eq!(
-            validation.field_errors.get("color"),
-            Some(&"Invalid value for --color: orange".to_string())
+            validation.field_errors().get("color"),
+            Some(&"Invalid value for --color: orange. Choose: red, green".to_string())
         );
     }
 
@@ -1135,17 +1138,15 @@ mod tests {
 
         let validation = super::validate_argv(&state, &argv);
 
-        assert!(!validation.is_valid);
+        assert!(!validation.is_valid());
         let summary = validation
-            .summary
-            .as_deref()
+            .summary()
             .expect("value validation should produce a summary");
         assert!(summary.contains("--port"));
         assert!(summary.contains("1000000"));
 
         let field_error = validation
-            .field_errors
-            .get("port")
+            .field_error("port")
             .expect("value validation should attach to the port field");
         assert_eq!(field_error, summary);
     }
@@ -1164,13 +1165,13 @@ mod tests {
 
         let validation = super::validate_argv(&state, &argv);
 
-        assert!(!validation.is_valid);
+        assert!(!validation.is_valid());
         assert_eq!(
-            validation.summary.as_deref(),
+            validation.summary().as_deref(),
             Some("Option requires '=': --color")
         );
         assert_eq!(
-            validation.field_errors.get("color"),
+            validation.field_errors().get("color"),
             Some(&"Option requires '=': --color".to_string())
         );
     }
@@ -1208,7 +1209,7 @@ mod tests {
                 "run".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1224,7 +1225,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--pattern=-x".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1251,7 +1252,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--pattern=-x,literal".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1276,7 +1277,7 @@ mod tests {
                 "--not-a-flag".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1302,7 +1303,7 @@ mod tests {
                 "subcommand".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1327,9 +1328,9 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--".to_string(), "a".to_string()]
         );
-        assert!(derived.validation.is_valid);
-        assert!(derived.validation.field_errors.is_empty());
-        assert!(derived.validation.summary.is_none());
+        assert!(derived.validation.is_valid());
+        assert!(derived.validation.field_errors().is_empty());
+        assert!(derived.validation.summary().is_none());
     }
 
     #[test]
@@ -1350,8 +1351,8 @@ mod tests {
             arg_id: "config".to_string(),
         };
 
-        assert!(derived.validation.is_valid);
-        assert!(derived.validation.field_errors.is_empty());
+        assert!(derived.validation.is_valid());
+        assert!(derived.validation.field_errors().is_empty());
         assert!(
             !derived
                 .field_semantics
@@ -1387,8 +1388,8 @@ mod tests {
             .get(&verbose)
             .expect("verbose semantics");
 
-        assert!(derived.validation.is_valid);
-        assert!(derived.validation.field_errors.is_empty());
+        assert!(derived.validation.is_valid());
+        assert!(derived.validation.field_errors().is_empty());
         assert_eq!(
             semantics.conflict,
             FieldConflictState::PotentialPathConflict
@@ -1424,7 +1425,7 @@ mod tests {
             .get(&verbose)
             .expect("verbose semantics");
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert_eq!(
             semantics.conflict,
             FieldConflictState::ActualValidationConflict
@@ -1492,7 +1493,7 @@ mod tests {
                 "gamma".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1519,7 +1520,7 @@ mod tests {
                 "subcommand".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1544,7 +1545,7 @@ mod tests {
                 "value".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
         assert!(derived.serialization.provenance.iter().any(|provenance| {
             matches!(
                 &provenance.kind,
@@ -1578,7 +1579,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "build".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1608,7 +1609,7 @@ mod tests {
                 "release".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1640,7 +1641,7 @@ mod tests {
                 "run".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1656,7 +1657,7 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert!(derived.rendered_command.is_none());
         assert_eq!(
             derived
@@ -1681,7 +1682,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "-weird".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1692,7 +1693,7 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert!(derived.rendered_command.is_none());
         assert_eq!(
             derived
@@ -1717,7 +1718,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "--pattern=".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1729,7 +1730,7 @@ mod tests {
         let derived = derive(&state);
 
         assert_eq!(derived.authoritative_argv, vec!["tool".to_string()]);
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
         assert_eq!(
             derived
                 .effective_values
@@ -1756,7 +1757,7 @@ mod tests {
                 "always".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
         assert!(derived.serialization.provenance.iter().any(|provenance| {
             matches!(
                 &provenance.kind,
@@ -1821,7 +1822,7 @@ mod tests {
                 "run".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1842,7 +1843,7 @@ mod tests {
             derived.authoritative_argv,
             vec!["tool".to_string(), "-42".to_string()]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1864,11 +1865,11 @@ mod tests {
 
         let derived = derive(&state);
 
-        assert!(!derived.validation.is_valid);
+        assert!(!derived.validation.is_valid());
         assert!(
             derived
                 .validation
-                .summary
+                .summary()
                 .as_deref()
                 .is_some_and(|summary| summary.contains("--verbose"))
         );

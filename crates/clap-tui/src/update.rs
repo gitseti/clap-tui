@@ -15,6 +15,7 @@ use crate::runtime::{AppKeyEvent, AppMouseEvent};
 pub(crate) enum Action {
     Exit,
     Run,
+    JumpToError,
     CopyPreview,
     TogglePreview,
     ScrollPreview(i16),
@@ -66,8 +67,11 @@ pub(crate) fn apply_action(
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
     match action {
-        Action::Exit | Action::Run | Action::CopyPreview => command::apply(action, state),
-        Action::TogglePreview
+        Action::Exit | Action::Run | Action::CopyPreview => {
+            command::apply(action, state, frame_snapshot)
+        }
+        Action::JumpToError
+        | Action::TogglePreview
         | Action::ScrollPreview(_)
         | Action::PreviewBoundary { .. }
         | Action::Escape
@@ -100,3 +104,6 @@ pub(crate) fn apply_action(
         | Action::ClearMouseSelection => pointer::apply(action, state, frame_snapshot),
     }
 }
+
+#[cfg(test)]
+mod validation_tests;

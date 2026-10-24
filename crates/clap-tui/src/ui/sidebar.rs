@@ -74,7 +74,20 @@ pub(crate) fn render_sidebar(
     let panel = Block::default().style(styles::surface(config, styles::Surface::Workspace));
     frame.render_widget(panel, area);
     let (title_area, search_area, list_area) = sidebar_sections(area);
-    render_title(frame, config, title_area, vm.root, root_selected);
+    let needs_command = vm.validation.issues.iter().any(|issue| {
+        matches!(
+            issue.target,
+            crate::pipeline::ValidationTarget::CommandSelection
+        )
+    });
+    render_title(
+        frame,
+        config,
+        title_area,
+        vm.root,
+        root_selected,
+        needs_command,
+    );
     render_search(frame, ui, config, search_area, search_focused);
 
     let list_view = SidebarListView::new(ui, vm, list_area);
@@ -127,9 +140,16 @@ fn render_title(
     title_area: Rect,
     root: &crate::spec::CommandSpec,
     root_selected: bool,
+    needs_command: bool,
 ) {
+    let mut title = sidebar_title(config, root, root_selected);
+    if needs_command {
+        for span in &mut title.spans {
+            span.style = span.style.fg(config.theme.error);
+        }
+    }
     frame.render_widget(
-        Paragraph::new(sidebar_title(config, root, root_selected))
+        Paragraph::new(title)
             .alignment(Alignment::Center)
             .style(Style::default().bg(config.theme.workspace_bg)),
         title_area,

@@ -358,12 +358,12 @@ fn handle_effect<R: Runtime>(
         Effect::None => ActionOutcome::Continue,
         Effect::Run(argv) => {
             let validation = state.derived_validation();
-            if validation.is_valid {
+            if validation.is_valid() {
                 ActionOutcome::Run(argv)
             } else {
                 state.notifications.show_toast(
                     validation
-                        .summary
+                        .summary()
                         .unwrap_or_else(|| "Command is invalid".to_string()),
                     Duration::from_secs(3),
                     true,
@@ -706,7 +706,7 @@ mod tests {
         assert!(matches!(outcome, ActionOutcome::Continue));
         let toast = state.notifications.toast.as_ref().expect("toast");
         assert!(toast.is_error);
-        assert_eq!(toast.message, "Missing required argument: --name");
+        assert_eq!(toast.message, "Provide --name");
     }
 
     #[test]
@@ -732,7 +732,7 @@ mod tests {
         assert_eq!(pipeline::validation_call_count(), 1);
         let toast = state.notifications.toast.as_ref().expect("toast");
         assert!(toast.is_error);
-        assert_eq!(toast.message, "Missing required argument: --name");
+        assert_eq!(toast.message, "Provide --name");
     }
 
     #[test]
@@ -1069,7 +1069,7 @@ mod tests {
         assert!(matches!(outcome, ActionOutcome::Continue));
         let toast = state.notifications.toast.as_ref().expect("toast");
         assert!(toast.is_error);
-        assert_eq!(toast.message, "Missing required argument: path");
+        assert_eq!(toast.message, "Provide path");
         assert!(!toast.message.contains("Run the selected tool"));
     }
 
@@ -1131,7 +1131,7 @@ mod tests {
                 "/tmp/foo".to_string(),
             ]
         );
-        assert!(derived.validation.is_valid);
+        assert!(derived.validation.is_valid());
     }
 
     #[test]
@@ -1212,6 +1212,10 @@ mod tests {
         let mut session = terminal_session(&mut runtime);
         for event in [
             AppEvent::Paste("must not edit the form".into()),
+            AppEvent::Key(AppKeyEvent::new(
+                AppKeyCode::F(8),
+                AppKeyModifiers::default(),
+            )),
             AppEvent::Key(AppKeyEvent::new(
                 AppKeyCode::Char('z'),
                 AppKeyModifiers::default(),

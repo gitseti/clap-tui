@@ -276,9 +276,10 @@ pub(crate) fn populate_form_layout(
     frame_snapshot: &mut FrameSnapshot,
 ) {
     let content_area = area;
+    let errors = form_layout::validation_errors(active_args, validation, area, field_semantics);
     let content_height = form_layout::measure_fields_height_with_layout_overrides_and_semantics(
         active_args,
-        &validation.field_errors,
+        &errors,
         input_height_overrides,
         label_height_overrides,
         field_semantics,
@@ -303,7 +304,7 @@ pub(crate) fn populate_form_layout(
         content_area,
         form_scroll,
         active_args,
-        field_errors: &validation.field_errors,
+        field_errors: &errors,
         input_height_overrides,
         label_height_overrides,
         field_semantics,
@@ -312,7 +313,7 @@ pub(crate) fn populate_form_layout(
         frame_layout
             .form_inputs
             .insert(field.arg_id.clone(), field.input);
-        if validation.field_errors.contains_key(&field.arg_id) {
+        if validation.field_error(&field.arg_id).is_some() {
             frame_layout.invalid_field_ids.push(field.arg_id.clone());
         }
 
@@ -487,12 +488,10 @@ mod tests {
             authoritative_argv: Vec::new(),
             rendered_command: None,
             validation: ValidationState {
-                is_valid: false,
-                summary: Some("Missing required arguments: --alpha, --beta".to_string()),
-                field_errors: std::collections::BTreeMap::from([
-                    ("beta".to_string(), "Required argument".to_string()),
-                    ("alpha".to_string(), "Required argument".to_string()),
-                ]),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Missing required arguments: --alpha, --beta",
+                    vec!["beta".into(), "alpha".into()],
+                )],
             },
             effective_values: std::collections::BTreeMap::new(),
             field_semantics: std::collections::BTreeMap::new(),
