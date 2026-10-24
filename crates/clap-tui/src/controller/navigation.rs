@@ -604,6 +604,7 @@ pub(crate) fn focus_first_invalid_field(
             crate::pipeline::ValidationTarget::CommandSelection => {
                 state.ui.search_query.clear();
                 state.ui.focus_sidebar();
+                ensure_selected_sidebar_visible(state, frame_snapshot);
                 return;
             }
             crate::pipeline::ValidationTarget::Arguments(ids) => {
