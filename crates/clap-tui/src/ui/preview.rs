@@ -2,11 +2,12 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph, Widget};
 
 use crate::argv_serializer::{RenderedCommand, RenderedShellToken, RenderedShellTokenKind};
 use crate::config::TuiConfig;
+use crate::frame_snapshot::FrameSnapshot;
 use crate::input::{HoverTarget, UiState};
 
 use super::screen::ScreenView;
@@ -39,40 +40,34 @@ impl Widget for PreviewWidget<'_> {
             return;
         }
 
+        let command_inset = preview_command_inset(inner.width);
+        let command_width = inner.width.saturating_sub(command_inset);
+        let text = wrapped_preview(self.config, self.command, self.hovered, command_width);
+        let lines = text.lines.len();
+        let paragraph = Paragraph::new(text);
+        // Preserve the breathing room for short commands; use every available
+        // content row as soon as the command needs to wrap.
+        let command_offset = if area.height >= 4 && lines == 1 { 2 } else { 1 };
+        let command_area = Rect::new(
+            inner.x.saturating_add(command_inset),
+            area.y.saturating_add(command_offset),
+            command_width,
+            area.height.saturating_sub(command_offset),
+        );
+        let hidden = lines > usize::from(command_area.height);
         let header_area = Rect::new(inner.x, area.y, inner.width, 1);
         Widget::render(
-            Paragraph::new(preview_header_line(self.config, self.hovered, inner.width))
-                .style(surface),
+            Paragraph::new(preview_header_line(
+                self.config,
+                self.hovered,
+                inner.width,
+                hidden,
+            ))
+            .style(surface),
             header_area,
             buf,
         );
-
-        if area.height < 2 {
-            return;
-        }
-
-        let command_y = if area.height >= 4 {
-            area.y.saturating_add(2)
-        } else {
-            area.y.saturating_add(1)
-        };
-        let command_inset = preview_command_inset(inner.width);
-        let command_area = Rect::new(
-            inner.x.saturating_add(command_inset),
-            command_y,
-            inner.width.saturating_sub(command_inset),
-            1,
-        );
-        Widget::render(
-            Paragraph::new(command_preview_line(
-                self.config,
-                self.command,
-                self.hovered,
-            ))
-            .style(surface),
-            command_area,
-            buf,
-        );
+        Widget::render(paragraph.style(surface), command_area, buf);
     }
 }
 
@@ -94,12 +89,102 @@ pub(crate) fn render_preview(
     );
 }
 
-fn preview_header_line(config: &TuiConfig, hovered: bool, width: u16) -> Line<'static> {
-    let title = "Command Preview";
-    let hint = if hovered {
-        "Click or Ctrl+Y copies"
+// Wrap by terminal cells, preserving whitespace and shell quoting exactly.
+// Word wrapping would discard spaces inside quoted values at line boundaries.
+fn wrapped_preview(
+    config: &TuiConfig,
+    command: Option<&RenderedCommand>,
+    hovered: bool,
+    width: u16,
+) -> Text<'static> {
+    if width == 0 {
+        return Text::default();
+    }
+    let source = command_preview_line(config, command, hovered);
+    let mut lines = Vec::new();
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for grapheme in source.styled_graphemes(Style::default()) {
+        let cells = Span::raw(grapheme.symbol).width();
+        if grapheme.symbol == "\n" || used > 0 && used + cells > usize::from(width) {
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            used = 0;
+        }
+        if grapheme.symbol != "\n" {
+            spans.push(Span::styled(grapheme.symbol.to_string(), grapheme.style));
+            used += cells;
+        }
+    }
+    lines.push(Line::from(spans));
+    Text::from(lines)
+}
+
+pub(crate) fn render_expanded(
+    frame: &mut Frame<'_>,
+    ui: &UiState,
+    config: &TuiConfig,
+    vm: &ScreenView<'_>,
+) -> FrameSnapshot {
+    let area = frame.area();
+    let surface = styles::surface(config, styles::Surface::Result);
+    frame.render_widget(Block::default().style(surface), area);
+    let content = Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    let text = wrapped_preview(config, vm.rendered_command.as_ref(), false, content.width);
+    let lines = text.lines.len();
+    let paragraph = Paragraph::new(text);
+    let max_scroll =
+        u16::try_from(lines.saturating_sub(usize::from(content.height))).unwrap_or(u16::MAX);
+    let scroll = ui.preview_scroll.min(max_scroll);
+    let start = if lines == 0 {
+        0
     } else {
-        "Click/Ctrl+Y copy"
+        usize::from(scroll) + 1
+    };
+    let end = (usize::from(scroll) + usize::from(content.height)).min(lines);
+    frame.render_widget(
+        Paragraph::new(format!(" Command Preview · lines {start}–{end}/{lines}"))
+            .style(styles::preview_title(config)),
+        Rect::new(area.x, area.y, area.width, area.height.min(1)),
+    );
+    frame.render_widget(paragraph.style(surface).scroll((scroll, 0)), content);
+    if area.height > 1 {
+        frame.render_widget(
+            Paragraph::new(" Esc close · ↑/↓ scroll · PgUp/Dn · Ctrl+Y copy")
+                .style(Style::default().fg(config.theme.metadata)),
+            Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
+        );
+    }
+    let mut snapshot = FrameSnapshot::default();
+    snapshot.layout.preview = Some(area);
+    snapshot.preview_scroll_max = max_scroll;
+    snapshot
+}
+
+fn preview_header_line(
+    config: &TuiConfig,
+    hovered: bool,
+    width: u16,
+    hidden: bool,
+) -> Line<'static> {
+    let title = if hidden {
+        "Command Preview · more ↓"
+    } else {
+        "Command Preview"
+    };
+    let hint = if hovered {
+        "Ctrl+P expand · Click or Ctrl+Y copies"
+    } else {
+        "Ctrl+P expand · Click/Ctrl+Y copy"
+    };
+    let hint = if usize::from(width) < title.chars().count() + hint.chars().count() + 4 {
+        "Ctrl+P expand"
+    } else {
+        hint
     };
     let width = usize::from(width);
     let title_width = title.chars().count();
@@ -320,7 +405,7 @@ mod tests {
     fn preview_header_uses_single_label_and_secondary_copy_hint() {
         let config = TuiConfig::default();
 
-        let line = preview_header_line(&config, false, 48);
+        let line = preview_header_line(&config, false, 80, false);
 
         assert_eq!(line.spans[0].content.as_ref(), "──");
         assert_eq!(line.spans[0].style.fg, Some(config.theme.divider));
@@ -339,7 +424,7 @@ mod tests {
             ("value", RenderedShellTokenKind::Value),
         ]);
 
-        let title = preview_header_line(&config, false, 48);
+        let title = preview_header_line(&config, false, 80, false);
         let line = command_preview_line(&config, Some(&command), false);
 
         assert_eq!(line.spans[0].style.fg, Some(config.theme.result_accent));
@@ -354,7 +439,7 @@ mod tests {
     fn preview_hover_keeps_copy_hint_secondary() {
         let config = TuiConfig::default();
 
-        let line = preview_header_line(&config, true, 48);
+        let line = preview_header_line(&config, true, 80, false);
 
         assert_eq!(line.spans[2].style.fg, Some(config.theme.metadata));
         assert_eq!(line.spans[6].style.fg, Some(config.theme.metadata));
@@ -408,8 +493,8 @@ mod tests {
         let bottom = row_text(&buf, area, 3);
 
         assert!(header.contains("Command Preview"));
-        assert!(header.contains("Click/Ctrl+Y copy"));
-        assert!(header.find("Click/Ctrl+Y copy") > header.find("Command Preview"));
+        assert!(header.contains("Ctrl+P expand"));
+        assert!(header.find("Ctrl+P expand") > header.find("Command Preview"));
         assert_eq!(spacer.trim(), "");
         assert_eq!(preview_command_inset(area.width.saturating_sub(2)), 2);
         assert!(command_row.starts_with("   $ tool serve"));
@@ -441,8 +526,11 @@ mod tests {
 
         assert!(header.contains("Command Preview"));
         assert!(header.contains("─"));
-        assert!(header.contains("Click/Ctrl+Y copy"));
+        assert!(header.contains("Ctrl+P expand"));
         assert_eq!(preview_command_inset(area.width.saturating_sub(2)), 2);
         assert!(command_row.starts_with("   $ tool serve"));
     }
 }
+
+#[cfg(test)]
+mod wrapping_tests;

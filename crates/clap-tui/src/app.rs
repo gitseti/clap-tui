@@ -445,6 +445,7 @@ fn handle_app_event<R: Runtime>(
             needs_redraw |= clear_expired_toast_and_request_redraw(state);
             EventOutcome::Continue { needs_redraw }
         }
+        AppEvent::Paste(_) if state.ui.preview_open => EventOutcome::Continue { needs_redraw },
         AppEvent::Paste(text) => {
             let effect =
                 update::apply_action(&update::Action::Paste(text.clone()), state, frame_snapshot);
@@ -1246,5 +1247,44 @@ mod tests {
             EventOutcome::Continue { needs_redraw: true }
         ));
         assert!(state.notifications.toast.is_none());
+    }
+    #[test]
+    fn expanded_preview_ignores_form_edits_and_run_without_requesting_redraw() {
+        let mut state =
+            app_state_from_command(&Command::new("tool").arg(Arg::new("path").long("path")));
+        state.ui.focus_form();
+        state.ui.preview_open = true;
+        let expected = state.rendered_command();
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        for event in [
+            AppEvent::Paste("must not edit the form".into()),
+            AppEvent::Key(AppKeyEvent::new(
+                AppKeyCode::Char('z'),
+                AppKeyModifiers::default(),
+            )),
+            AppEvent::Key(AppKeyEvent::new(
+                AppKeyCode::Char('r'),
+                AppKeyModifiers {
+                    control: true,
+                    ..AppKeyModifiers::default()
+                },
+            )),
+        ] {
+            assert!(matches!(
+                handle_app_event(
+                    &event,
+                    &mut state,
+                    &FrameSnapshot::default(),
+                    &TuiConfig::default(),
+                    &mut session
+                ),
+                EventOutcome::Continue {
+                    needs_redraw: false
+                }
+            ));
+            assert_eq!(state.rendered_command(), expected);
+            assert!(state.ui.preview_open);
+        }
     }
 }

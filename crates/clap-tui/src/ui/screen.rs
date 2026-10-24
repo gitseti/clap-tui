@@ -90,6 +90,11 @@ pub(crate) fn render(
     frame.render_widget(background, size);
     let derived = state.derived().clone();
     let mut vm = ScreenView::from_state(state, derived);
+    if state.ui.preview_open {
+        let snapshot = preview::render_expanded(frame, &state.ui, config, &vm);
+        toast::render_toast(frame, state, config, size);
+        return snapshot;
+    }
     vm.sidebar_scroll = state.ui.sidebar_scroll;
     let screen_layout = layout::build_screen_layout(&state.ui, config, size, &vm);
     let frame_snapshot = screen_layout.snapshot.clone();

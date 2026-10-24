@@ -16,6 +16,9 @@ pub(crate) enum Action {
     Exit,
     Run,
     CopyPreview,
+    TogglePreview,
+    ScrollPreview(i16),
+    PreviewBoundary { end: bool },
     Escape,
     SearchInput(AppKeyEvent),
     Paste(String),
@@ -64,7 +67,10 @@ pub(crate) fn apply_action(
 ) -> Effect {
     match action {
         Action::Exit | Action::Run | Action::CopyPreview => command::apply(action, state),
-        Action::Escape
+        Action::TogglePreview
+        | Action::ScrollPreview(_)
+        | Action::PreviewBoundary { .. }
+        | Action::Escape
         | Action::SearchInput(_)
         | Action::Paste(_)
         | Action::ToggleFocus

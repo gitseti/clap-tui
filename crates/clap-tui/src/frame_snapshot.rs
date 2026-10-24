@@ -40,6 +40,7 @@ pub struct FrameSnapshot {
     pub layout: FrameLayout,
     pub form_scroll_max: u16,
     pub help_scroll_max: u16,
+    pub preview_scroll_max: u16,
 }
 
 impl FrameSnapshot {
@@ -503,6 +504,8 @@ mod tests {
             last_non_help_tab: ActiveTab::Inputs,
             help_open: false,
             help_scroll: 0,
+            preview_open: false,
+            preview_scroll: 0,
             selected_arg_index: 0,
             search_query: String::new(),
             editors: crate::editor_state::EditorState::default(),
@@ -563,6 +566,8 @@ mod tests {
             last_non_help_tab: ActiveTab::Inputs,
             help_open: false,
             help_scroll: 0,
+            preview_open: false,
+            preview_scroll: 0,
             selected_arg_index: 0,
             search_query: String::new(),
             editors: crate::editor_state::EditorState::default(),

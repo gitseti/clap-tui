@@ -309,3 +309,34 @@ fn resize_scripted_flow_triggers_an_additional_observed_redraw() {
         run.frames[1].snapshot.layout.footer
     );
 }
+
+#[test]
+fn expanded_preview_is_read_only_and_restores_the_form_before_run() {
+    let value = format!("{}END", "quoted path ".repeat(80));
+    let command = Command::new("tool").arg(Arg::new("path").long("path"));
+    let run = ScriptedHarness::new(command)
+        .with_size(80, 24)
+        .script([
+            ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::paste(value.clone()),
+            ScriptedStep::expect_text("more ↓"),
+            ScriptedStep::ctrl(AppKeyCode::Char('p')),
+            ScriptedStep::expect_text("Command Preview · lines"),
+            ScriptedStep::expect_text("Esc close"),
+            ScriptedStep::resize(60, 20),
+            ScriptedStep::key(AppKeyCode::End),
+            ScriptedStep::expect_text("END'"),
+            ScriptedStep::key(AppKeyCode::Home),
+            ScriptedStep::expect_text("$ tool --path"),
+            ScriptedStep::key(AppKeyCode::Esc),
+            ScriptedStep::expect_text("Ctrl+R Run"),
+            ScriptedStep::ctrl(AppKeyCode::Char('r')),
+        ])
+        .run()
+        .expect("expanded preview should preserve the underlying form");
+    assert_eq!(
+        run.outcome,
+        ScriptedOutcome::Run(vec!["tool".into(), "--path".into(), value])
+    );
+}

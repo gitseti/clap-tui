@@ -11,6 +11,29 @@ pub(crate) fn apply(
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
     match action {
+        Action::TogglePreview => {
+            state.ui.preview_open = !state.ui.preview_open;
+            state.ui.preview_scroll = 0;
+            state.ui.dismiss_transient_interaction();
+            Effect::None
+        }
+        Action::ScrollPreview(delta) => {
+            state.ui.preview_scroll = state
+                .ui
+                .preview_scroll
+                .min(frame_snapshot.preview_scroll_max)
+                .saturating_add_signed(*delta)
+                .min(frame_snapshot.preview_scroll_max);
+            Effect::None
+        }
+        Action::PreviewBoundary { end } => {
+            state.ui.preview_scroll = if *end {
+                frame_snapshot.preview_scroll_max
+            } else {
+                0
+            };
+            Effect::None
+        }
         Action::Escape => {
             navigation::handle_escape(state);
             Effect::None
