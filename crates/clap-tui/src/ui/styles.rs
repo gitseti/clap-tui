@@ -222,10 +222,13 @@ pub(crate) fn subtle_chip(config: &TuiConfig, hovered: bool) -> Style {
 }
 
 pub(crate) fn status_chip(config: &TuiConfig, hovered: bool) -> Style {
-    let _ = hovered;
     Style::default()
         .fg(config.theme.error)
-        .bg(config.theme.shell_bg)
+        .bg(if hovered {
+            config.theme.badge_bg
+        } else {
+            config.theme.shell_bg
+        })
         .add_modifier(Modifier::BOLD)
 }
 
@@ -472,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn footer_status_and_subtle_chips_stay_discoverable_without_filled_hover_states() {
+    fn footer_hover_preserves_error_text_and_keeps_passive_hints_subtle() {
         let config = TuiConfig::default();
 
         let subtle_idle = subtle_chip(&config, false);
@@ -485,11 +488,11 @@ mod tests {
         assert_eq!(subtle_idle.fg, Some(config.theme.dim));
         assert_eq!(subtle_hover.fg, Some(config.theme.metadata));
         assert_eq!(status_idle.bg, Some(config.theme.shell_bg));
-        assert_eq!(status_hover.bg, Some(config.theme.shell_bg));
+        assert_eq!(status_hover.bg, Some(config.theme.badge_bg));
         assert_eq!(status_idle.fg, Some(config.theme.error));
         assert_eq!(status_hover.fg, Some(config.theme.error));
         assert!(status_idle.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(status_idle, status_hover);
+        assert_ne!(status_idle, status_hover);
     }
 
     #[test]
