@@ -157,7 +157,3 @@ Available presets:
 - `Ctrl+Enter` runs when supported by the terminal
 - `Ctrl+C` exits without running
 - typing edits the focused field
-
-## Command preview
-
-The preview shows embedded control characters as symbols such as `␊` (newline) and `␉` (tab). Copying the command retains the original characters.
