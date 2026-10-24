@@ -437,21 +437,27 @@ fn missing_group_issues(
         .into_iter()
         .filter_map(|reference| {
             let tokens = composite_reference_members(&reference)?;
-            let (args, prefix) = definitions
+            let matches = definitions
                 .iter()
-                .find_map(|group| {
-                    group.matching_args(&tokens).map(|args| {
-                        (
-                            args,
-                            if group.multiple {
-                                "Choose at least one"
-                            } else {
-                                "Choose one"
-                            },
-                        )
-                    })
+                .filter_map(|group| {
+                    group
+                        .matching_args(&tokens)
+                        .map(|args| (args, group.multiple))
                 })
-                .unwrap_or_else(|| (resolve_reference_args(state, &tokens), "Choose from"));
+                .collect::<Vec<_>>();
+            // Clap's composite reference names the members, not the group.
+            // Only a unique match gives us a reliable multiplicity policy.
+            let (args, prefix) = match matches.as_slice() {
+                [(args, multiple)] => (
+                    args.clone(),
+                    if *multiple {
+                        "Choose at least one"
+                    } else {
+                        "Choose one"
+                    },
+                ),
+                _ => (resolve_reference_args(state, &tokens), "Choose from"),
+            };
             if args.is_empty() {
                 return None;
             }

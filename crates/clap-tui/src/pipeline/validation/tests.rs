@@ -41,6 +41,39 @@ fn empty_groups_use_clap_requirements_with_correct_multiplicity() {
 }
 
 #[test]
+fn ambiguous_group_references_do_not_guess_multiplicity() {
+    for help in [false, true] {
+        for policies in [[true, false], [false, true]] {
+            let command = policies.into_iter().enumerate().fold(
+                Command::new("tool")
+                    .arg_required_else_help(help)
+                    .arg(Arg::new("fast").long("fast").action(ArgAction::SetTrue))
+                    .arg(Arg::new("safe").long("safe").action(ArgAction::SetTrue)),
+                |command, (index, multiple)| {
+                    command.group(
+                        ArgGroup::new(format!("mode{index}"))
+                            .args(["fast", "safe"])
+                            .required(true)
+                            .multiple(multiple),
+                    )
+                },
+            );
+            let mut state = AppState::from_command(&command);
+            let validation = derive(&state).validation;
+            assert_eq!(
+                validation.summary().as_deref(),
+                Some("Choose from: --fast or --safe")
+            );
+            assert_eq!(validation.issues[0].argument_ids(), ["fast", "safe"]);
+            state.domain.toggle_flag_touched("fast");
+            assert!(derive(&state).validation.is_valid());
+            state.domain.toggle_flag_touched("safe");
+            assert!(!derive(&state).validation.is_valid());
+        }
+    }
+}
+
+#[test]
 fn help_recovery_respects_lineage_and_negated_parent_requirements() {
     let child = Command::new("child")
         .arg_required_else_help(true)

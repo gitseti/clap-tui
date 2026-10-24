@@ -340,7 +340,7 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
             &args,
             state.ui.selected_arg_index,
             &errors,
-            &HashMap::new(),
+            &repeated_input_height_overrides(state, &args),
             &HashMap::new(),
             &derived.field_semantics,
         )

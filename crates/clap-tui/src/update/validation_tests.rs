@@ -63,16 +63,14 @@ fn keyboard_footer_and_invalid_run_reveal_the_same_offscreen_issue() {
                 .iter()
                 .find(|button| button.target == HoverTarget::FooterStatus)
                 .expect("validation button");
-            let run = &snapshot.layout.footer_buttons[0];
             for x in button.rect.x..button.rect.right() {
                 assert_eq!(
                     snapshot.footer_target_at(x, button.rect.y),
                     Some(HoverTarget::FooterStatus)
                 );
-                assert_eq!(
-                    backend.buffer()[(x, button.rect.y)].style(),
-                    backend.buffer()[(run.rect.x, run.rect.y)].style()
-                );
+                let cell = &backend.buffer()[(x, button.rect.y)];
+                assert_eq!(cell.bg, TuiConfig::default().theme.shell_bg);
+                assert_eq!(cell.fg, TuiConfig::default().theme.error);
             }
             state.ui.help_open = true;
             state.ui.dropdown_open = Some("optional0".into());
@@ -110,6 +108,67 @@ fn keyboard_footer_and_invalid_run_reveal_the_same_offscreen_issue() {
                 apply_action(&Action::Run, &mut state, &after),
                 Effect::Run(_)
             ));
+        }
+    }
+}
+
+#[test]
+fn all_jump_paths_reveal_errors_after_tall_repeated_fields() {
+    let command = Command::new("tool")
+        .arg(
+            Arg::new("items")
+                .long("items")
+                .action(ArgAction::Append)
+                .display_order(0),
+        )
+        .arg(
+            Arg::new("last")
+                .long("last")
+                .required(true)
+                .display_order(1),
+        );
+    for (width, height) in [(80, 24), (60, 20)] {
+        for action in [
+            Action::JumpToError,
+            Action::ClickFooter(HoverTarget::FooterStatus),
+            Action::Run,
+        ] {
+            let mut state = AppState::from_command(&command);
+            state.domain.replace_occurrences(
+                "items",
+                (0..30)
+                    .map(|index| crate::input::InputValueOccurrence {
+                        values: vec![format!("item{index}")],
+                        source: crate::input::InputSource::User,
+                    })
+                    .collect(),
+            );
+            let (_, before) = draw(&mut state, width, height);
+            assert!(
+                !before
+                    .layout
+                    .form_fields
+                    .iter()
+                    .any(|field| field.arg_id == "last")
+            );
+            assert_eq!(apply_action(&action, &mut state, &before), Effect::None);
+            let (backend, after) = draw(&mut state, width, height);
+            let field = after
+                .layout
+                .form_fields
+                .iter()
+                .find(|field| field.arg_id == "last")
+                .expect("error target must be visible");
+            assert_eq!(state.ui.focus, Focus::Form);
+            assert_eq!(state.ui.selected_arg_index, 1);
+            assert_eq!(field.input.height, 3);
+            let rect = field
+                .description
+                .expect("error instruction must be visible");
+            let text = (rect.x..rect.right())
+                .map(|x| backend.buffer()[(x, rect.y)].symbol())
+                .collect::<String>();
+            assert_eq!(text.trim(), "Provide --last");
         }
     }
 }
