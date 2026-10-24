@@ -1,172 +1,55 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Margin, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget};
 
 use crate::argv_serializer::{RenderedCommand, RenderedShellToken, RenderedShellTokenKind};
 use crate::config::TuiConfig;
-use crate::frame_snapshot::FrameSnapshot;
-use crate::input::{HoverTarget, UiState};
 
-use super::screen::ScreenView;
 use super::styles;
+
+mod layout;
+mod wrapping;
+
+pub(crate) use layout::PreviewLayout;
+use wrapping::wrapped_preview;
 
 struct PreviewWidget<'a> {
     config: &'a TuiConfig,
-    command: Option<&'a RenderedCommand>,
-    hovered: bool,
+    layout: PreviewLayout,
 }
 
 impl Widget for PreviewWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        self.render_contents(area, buf);
-    }
-}
-
-impl PreviewWidget<'_> {
-    fn render_contents(self, area: Rect, buf: &mut Buffer) -> bool {
-        if area.width == 0 || area.height == 0 {
-            return false;
-        }
-
-        let surface = if self.hovered {
-            styles::surface(self.config, styles::Surface::ControlActive)
-        } else {
-            styles::surface(self.config, styles::Surface::Result)
-        };
-        Widget::render(Block::default().style(surface), area, buf);
-
-        let inner = area.inner(Margin {
-            horizontal: 1,
-            vertical: 0,
-        });
-        if inner.width == 0 {
-            return false;
-        }
-
-        let command_inset = preview_command_inset(inner.width);
-        let command_width = inner.width.saturating_sub(command_inset);
-        let text = wrapped_preview(self.config, self.command, self.hovered, command_width);
-        let lines = text.lines.len();
-        let paragraph = Paragraph::new(text);
-        // Preserve the breathing room for short commands; use every available
-        // content row as soon as the command needs to wrap.
-        let command_offset = if area.height >= 4 && lines == 1 { 2 } else { 1 };
-        let command_area = Rect::new(
-            inner.x.saturating_add(command_inset),
-            area.y.saturating_add(command_offset),
-            command_width,
-            area.height.saturating_sub(command_offset),
+        let surface = styles::surface(
+            self.config,
+            if self.layout.hovered {
+                styles::Surface::ControlActive
+            } else {
+                styles::Surface::Result
+            },
         );
-        let hidden = lines > usize::from(command_area.height);
-        let header_area = Rect::new(inner.x, area.y, inner.width, 1);
-        Widget::render(
-            Paragraph::new(preview_header_line(
-                self.config,
-                self.hovered,
-                inner.width,
-                hidden,
-            ))
-            .style(surface),
-            header_area,
-            buf,
-        );
-        Widget::render(paragraph.style(surface), command_area, buf);
-        hidden
-    }
-}
-
-pub(crate) fn render_preview(
-    frame: &mut Frame<'_>,
-    ui: &UiState,
-    config: &TuiConfig,
-    area: Rect,
-    vm: &ScreenView<'_>,
-) -> bool {
-    PreviewWidget {
-        config,
-        command: vm.rendered_command.as_ref(),
-        hovered: ui.hover == Some(HoverTarget::Preview),
-    }
-    .render_contents(area, frame.buffer_mut())
-}
-
-// Wrap by terminal cells, preserving whitespace and shell quoting exactly.
-// Word wrapping would discard spaces inside quoted values at line boundaries.
-fn wrapped_preview(
-    config: &TuiConfig,
-    command: Option<&RenderedCommand>,
-    hovered: bool,
-    width: u16,
-) -> Text<'static> {
-    if width == 0 {
-        return Text::default();
-    }
-    let source = command_preview_line(config, command, hovered);
-    let mut lines = Vec::new();
-    let mut spans = Vec::new();
-    let mut used = 0;
-    for grapheme in source.styled_graphemes(Style::default()) {
-        let cells = Span::raw(grapheme.symbol).width();
-        if grapheme.symbol == "\n" || used > 0 && used + cells > usize::from(width) {
-            lines.push(Line::from(std::mem::take(&mut spans)));
-            used = 0;
-        }
-        if grapheme.symbol != "\n" {
-            spans.push(Span::styled(grapheme.symbol.to_string(), grapheme.style));
-            used += cells;
+        Block::default().style(surface).render(area, buf);
+        Paragraph::new(self.layout.header)
+            .style(surface)
+            .render(self.layout.header_area, buf);
+        Paragraph::new(self.layout.text)
+            .style(surface)
+            .scroll((self.layout.scroll, 0))
+            .render(self.layout.content_area, buf);
+        if let Some((area, line)) = self.layout.footer {
+            Paragraph::new(line)
+                .style(Style::default().fg(self.config.theme.metadata))
+                .render(area, buf);
         }
     }
-    lines.push(Line::from(spans));
-    Text::from(lines)
 }
 
-pub(crate) fn render_expanded(
-    frame: &mut Frame<'_>,
-    ui: &UiState,
-    config: &TuiConfig,
-    vm: &ScreenView<'_>,
-) -> FrameSnapshot {
-    let area = frame.area();
-    let surface = styles::surface(config, styles::Surface::Result);
-    frame.render_widget(Block::default().style(surface), area);
-    let content = Rect::new(
-        area.x.saturating_add(1),
-        area.y.saturating_add(1),
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    );
-    let text = wrapped_preview(config, vm.rendered_command.as_ref(), false, content.width);
-    let lines = text.lines.len();
-    let paragraph = Paragraph::new(text);
-    let max_scroll =
-        u16::try_from(lines.saturating_sub(usize::from(content.height))).unwrap_or(u16::MAX);
-    let scroll = ui.preview_scroll.min(max_scroll);
-    let start = if lines == 0 {
-        0
-    } else {
-        usize::from(scroll) + 1
-    };
-    let end = (usize::from(scroll) + usize::from(content.height)).min(lines);
-    frame.render_widget(
-        Paragraph::new(format!(" Command Preview · lines {start}–{end}/{lines}"))
-            .style(styles::preview_title(config)),
-        Rect::new(area.x, area.y, area.width, area.height.min(1)),
-    );
-    frame.render_widget(paragraph.style(surface).scroll((scroll, 0)), content);
-    if area.height > 1 {
-        frame.render_widget(
-            Paragraph::new(" Esc close · ↑/↓ scroll · PgUp/Dn · Ctrl+Y copy")
-                .style(Style::default().fg(config.theme.metadata)),
-            Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
-        );
-    }
-    let mut snapshot = FrameSnapshot::default();
-    snapshot.layout.preview = Some(area);
-    snapshot.preview_scroll_max = max_scroll;
-    snapshot
+pub(crate) fn render_preview(frame: &mut Frame<'_>, config: &TuiConfig, layout: PreviewLayout) {
+    let area = layout.area;
+    frame.render_widget(PreviewWidget { config, layout }, area);
 }
 
 fn preview_header_line(
@@ -484,8 +367,7 @@ mod tests {
         Widget::render(
             PreviewWidget {
                 config: &config,
-                command: Some(&command),
-                hovered: false,
+                layout: super::PreviewLayout::dock(&config, Some(&command), false, area),
             },
             area,
             &mut buf,
@@ -518,8 +400,7 @@ mod tests {
         Widget::render(
             PreviewWidget {
                 config: &config,
-                command: Some(&command),
-                hovered: false,
+                layout: super::PreviewLayout::dock(&config, Some(&command), false, area),
             },
             area,
             &mut buf,

@@ -400,69 +400,22 @@ fn handle_app_event<R: Runtime>(
     config: &TuiConfig,
     session: &mut TerminalSession<'_, R>,
 ) -> EventOutcome {
-    let mut needs_redraw = clear_expired_toast_and_request_redraw(state);
+    let needs_redraw = clear_expired_toast_and_request_redraw(state);
 
-    match event {
-        AppEvent::Key(key) => {
-            if let Some(action) = controller::handle_key_event(*key, state, frame_snapshot, config)
-            {
-                let effect = update::apply_action(&action, state, frame_snapshot);
-                match handle_effect(effect, state, session) {
-                    ActionOutcome::Continue => {
-                        needs_redraw |= true;
-                        needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                        EventOutcome::Continue { needs_redraw }
-                    }
-                    ActionOutcome::Exit => EventOutcome::Exit,
-                    ActionOutcome::Run(argv) => EventOutcome::Run(argv),
-                }
-            } else {
-                needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                EventOutcome::Continue { needs_redraw }
-            }
-        }
-        AppEvent::Mouse(mouse) => {
-            if let Some(action) =
-                controller::handle_mouse_event(*mouse, state, frame_snapshot, config)
-            {
-                let effect = update::apply_action(&action, state, frame_snapshot);
-                match handle_effect(effect, state, session) {
-                    ActionOutcome::Continue => {
-                        needs_redraw |= true;
-                        needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                        EventOutcome::Continue { needs_redraw }
-                    }
-                    ActionOutcome::Exit => EventOutcome::Exit,
-                    ActionOutcome::Run(argv) => EventOutcome::Run(argv),
-                }
-            } else {
-                needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                EventOutcome::Continue { needs_redraw }
-            }
-        }
-        AppEvent::Resize { .. } => {
-            needs_redraw = true;
-            needs_redraw |= clear_expired_toast_and_request_redraw(state);
-            EventOutcome::Continue { needs_redraw }
-        }
-        AppEvent::Paste(_) if state.ui.preview_open => EventOutcome::Continue { needs_redraw },
-        AppEvent::Paste(text) => {
-            let effect =
-                update::apply_action(&update::Action::Paste(text.clone()), state, frame_snapshot);
+    match controller::handle_event(event, state, frame_snapshot, config) {
+        controller::EventDecision::Action(action) => {
+            let effect = update::apply_action(&action, state, frame_snapshot);
             match handle_effect(effect, state, session) {
                 ActionOutcome::Continue => {
-                    needs_redraw |= true;
-                    needs_redraw |= clear_expired_toast_and_request_redraw(state);
-                    EventOutcome::Continue { needs_redraw }
+                    clear_expired_toast_and_request_redraw(state);
+                    EventOutcome::Continue { needs_redraw: true }
                 }
                 ActionOutcome::Exit => EventOutcome::Exit,
                 ActionOutcome::Run(argv) => EventOutcome::Run(argv),
             }
         }
-        AppEvent::FocusGained | AppEvent::FocusLost | AppEvent::Unsupported => {
-            needs_redraw |= clear_expired_toast_and_request_redraw(state);
-            EventOutcome::Continue { needs_redraw }
-        }
+        controller::EventDecision::Redraw => EventOutcome::Continue { needs_redraw: true },
+        controller::EventDecision::Ignore => EventOutcome::Continue { needs_redraw },
     }
 }
 

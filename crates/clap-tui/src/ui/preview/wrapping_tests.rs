@@ -1,8 +1,10 @@
 use super::*;
+use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
 use crate::runtime::{AppKeyCode, AppKeyEvent, AppKeyModifiers};
 use crate::update::{Action, Effect, apply_action};
 use clap::{Arg, Command};
+use ratatui::text::Text;
 use ratatui::{Terminal, backend::TestBackend};
 
 fn command(value: &str) -> RenderedCommand {
@@ -50,8 +52,7 @@ fn dock_uses_spare_rows_and_marks_overflow() {
         let mut buffer = Buffer::empty(area);
         PreviewWidget {
             config: &config,
-            command: Some(&command),
-            hovered: false,
+            layout: PreviewLayout::dock(&config, Some(&command), false, area),
         }
         .render(area, &mut buffer);
         let row = |y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>();
@@ -121,7 +122,7 @@ fn expanded_preview_scrolls_resizes_and_copies_the_entire_command() {
         snapshot.preview_scroll_max.saturating_sub(1)
     );
     let key = AppKeyEvent::new(AppKeyCode::Esc, AppKeyModifiers::default());
-    let action = crate::controller::handle_key_event(key, &state, &snapshot, &config).unwrap();
+    let action = event_action(key, &state, &snapshot, &config).unwrap();
     apply_action(&action, &mut state, &snapshot);
     assert!(!state.ui.preview_open);
 }
@@ -148,7 +149,7 @@ fn expansion_is_available_only_when_the_rendered_dock_has_hidden_content() {
             })
             .unwrap();
         assert_eq!(snapshot.preview_has_more, has_more);
-        let action = crate::controller::handle_key_event(ctrl_p, &state, &snapshot, &config);
+        let action = event_action(ctrl_p, &state, &snapshot, &config);
         assert_eq!(action, has_more.then_some(Action::TogglePreview));
         let header: String = terminal
             .backend()
@@ -173,7 +174,69 @@ fn expansion_is_available_only_when_the_rendered_dock_has_hidden_content() {
         .unwrap();
     assert!(!snapshot.preview_has_more);
     assert_eq!(
-        crate::controller::handle_key_event(ctrl_p, &state, &snapshot, &config),
+        event_action(ctrl_p, &state, &snapshot, &config),
         Some(Action::TogglePreview)
     );
+}
+
+fn event_action(
+    key: AppKeyEvent,
+    state: &AppState,
+    snapshot: &FrameSnapshot,
+    config: &TuiConfig,
+) -> Option<Action> {
+    match crate::controller::handle_event(
+        &crate::runtime::AppEvent::Key(key),
+        state,
+        snapshot,
+        config,
+    ) {
+        crate::controller::EventDecision::Action(action) => Some(action),
+        _ => None,
+    }
+}
+
+#[test]
+fn controls_remain_visible_without_changing_clipboard_contents() {
+    let config = TuiConfig::default();
+    let value = "first\nsecond\tthird\r\nlast\u{1b}";
+    let command = command(value);
+    for width in [2, 7, 80] {
+        let text = wrapped_preview(&config, Some(&command), false, width);
+        assert_eq!(plain(&text), "$ tool --value 'first␊second␉third␍␊last␛'");
+    }
+    let mut state =
+        AppState::from_command(&Command::new("tool").arg(Arg::new("value").long("value")));
+    state.domain.set_text_value("value", value);
+    let serialized = state.rendered_command().unwrap();
+    assert!(serialized.contains(value));
+    assert_eq!(
+        apply_action(&Action::CopyPreview, &mut state, &FrameSnapshot::default()),
+        Effect::CopyToClipboard(serialized)
+    );
+}
+
+#[test]
+fn wrapping_retains_styled_runs_instead_of_allocating_per_character() {
+    let command = command(&"x".repeat(1000));
+    let text = wrapped_preview(&TuiConfig::default(), Some(&command), false, 80);
+    assert!(text.lines.iter().all(|line| line.spans.len() <= 2));
+}
+
+#[test]
+fn layout_exposes_overflow_and_scroll_limits_before_any_painting() {
+    let config = TuiConfig::default();
+    let command = command(&"x".repeat(400));
+    let area = Rect::new(0, 0, 80, 4);
+    let mut snapshot = FrameSnapshot::default();
+    let dock = PreviewLayout::dock(&config, Some(&command), false, area);
+    dock.populate_snapshot(&mut snapshot);
+    assert!(snapshot.preview_has_more);
+    assert_eq!(snapshot.layout.preview, Some(area));
+    assert_eq!(snapshot.preview_scroll_max, 0);
+    let expanded = PreviewLayout::expanded(&config, Some(&command), u16::MAX, area);
+    expanded.populate_snapshot(&mut snapshot);
+    assert!(!snapshot.preview_has_more);
+    assert!(snapshot.preview_scroll_max > 0);
+    assert_eq!(expanded.scroll, snapshot.preview_scroll_max);
 }

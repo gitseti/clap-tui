@@ -10,14 +10,6 @@ pub(crate) fn handle_mouse_event(
     frame_snapshot: &FrameSnapshot,
     _config: &TuiConfig,
 ) -> Option<Action> {
-    if state.ui.preview_open {
-        return match event.kind {
-            AppMouseEventKind::ScrollUp => Some(Action::ScrollPreview(-2)),
-            AppMouseEventKind::ScrollDown => Some(Action::ScrollPreview(2)),
-            AppMouseEventKind::Down(AppMouseButton::Left) => Some(Action::CopyPreview),
-            _ => None,
-        };
-    }
     if let AppMouseEventKind::Moved = event.kind {
         return state.ui.mouse_select.as_ref().map_or(
             Some(Action::UpdateHover {
