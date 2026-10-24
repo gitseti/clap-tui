@@ -85,7 +85,7 @@ pub(crate) fn derive_field_semantics(
                 .input(&arg.id)
                 .is_some_and(input_state_is_user_provided);
             let actual_validation_conflict =
-                path_conflict && authored && validation.field_errors.contains_key(&arg.id);
+                path_conflict && authored && validation.field_error(&arg.id).is_some();
 
             let conflict = if actual_validation_conflict {
                 FieldConflictState::ActualValidationConflict

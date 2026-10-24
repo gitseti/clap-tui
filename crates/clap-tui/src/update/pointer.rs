@@ -307,6 +307,7 @@ mod tests {
             label: Some(Rect::new(0, 1, 9, 1)),
             input: Rect::new(10, 1, 30, 5),
             input_clip_top: 2,
+            description_clip_top: 0,
             full_input_height: 7,
             description: None,
         });

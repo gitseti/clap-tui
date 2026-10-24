@@ -123,10 +123,16 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
         build_chip(ui, HoverTarget::Focus, "Focus", FooterChipVariant::Subtle),
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipVariant::Subtle),
     ];
-    let status = validation
-        .summary
-        .as_ref()
-        .map(|summary| build_status_chip(ui, summary));
+    let status = validation.summary().as_ref().map(|summary| {
+        build_status_chip(
+            ui,
+            &if validation.has_target() {
+                format!("F8 Jump to error · {summary}")
+            } else {
+                summary.clone()
+            },
+        )
+    });
     let (status, hints) = fit_footer_zones(area, &actions, status, candidates);
 
     FooterView {
@@ -514,15 +520,16 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 80, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Missing required argument: --name".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Provide --name",
+                    Vec::new(),
+                )],
             },
         );
 
         assert_eq!(
             view.status.as_ref().map(|chip| chip.label.as_str()),
-            Some(" Missing required argument: --name ")
+            Some(" Provide --name ")
         );
         assert_eq!(
             view.status.as_ref().map(|chip| chip.target),
@@ -539,9 +546,10 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 80, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Missing required argument: --name".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Provide --name",
+                    Vec::new(),
+                )],
             },
         );
 
@@ -559,9 +567,10 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 50, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Missing required argument: --name".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Provide --name",
+                    Vec::new(),
+                )],
             },
         );
 
@@ -584,9 +593,10 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 100, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Invalid value".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Invalid value",
+                    Vec::new(),
+                )],
             },
         );
 
@@ -602,16 +612,17 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 40, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Missing required argument: --name".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Provide --name",
+                    Vec::new(),
+                )],
             },
         );
 
         assert_eq!(view.hints, Vec::<FooterChip>::new());
         assert_eq!(
             view.status.as_ref().map(|chip| chip.label.as_str()),
-            Some(" Missing r… ")
+            Some(" Provide -… ")
         );
     }
 
@@ -622,9 +633,10 @@ mod tests {
             &state.ui,
             Rect::new(0, 0, 56, 1),
             &ValidationState {
-                is_valid: false,
-                summary: Some("Invalid value".to_string()),
-                field_errors: std::collections::BTreeMap::new(),
+                issues: vec![crate::pipeline::ValidationIssue::arguments(
+                    "Invalid value",
+                    Vec::new(),
+                )],
             },
         );
 

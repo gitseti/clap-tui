@@ -153,6 +153,7 @@ Available presets:
 - `/` opens command search
 - `Ctrl+P` expands the command preview when some content is hidden; arrows, Page Up/Down, and Home/End scroll it, and `Esc` closes it
 - `Ctrl+Y` copies the complete command, including content outside the visible preview
+- `F8` jumps to the first validation issue; invalid submission also focuses the relevant input
 - `Ctrl+R` runs the current selection
 - `Ctrl+Enter` runs when supported by the terminal
 - `Ctrl+C` exits without running

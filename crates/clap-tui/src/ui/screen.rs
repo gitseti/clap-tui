@@ -277,7 +277,7 @@ mod tests {
             .expect("required field layout");
         let config = TuiConfig::default();
 
-        assert!(rendered.contains("Missing required argument: --name"));
+        assert!(rendered.contains("Provide --name"));
         let label = field.label.expect("label rect");
         assert_eq!(cell_fg(&backend, label.x, label.y), config.theme.error);
         assert_eq!(
@@ -341,7 +341,7 @@ mod tests {
                 .any(|field| field.arg_id == "verbose")
         );
         assert!(rendered.contains("Disabled because it conflicts with the selected subcommand."));
-        assert!(!rendered.contains("Conflicting arguments"));
+        assert!(!rendered.contains("Remove one of"));
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
                 .iter()
                 .any(|token| token == "--verbose")
         );
-        assert!(!state.derived_validation().is_valid);
+        assert!(!state.derived_validation().is_valid());
 
         controller::navigation::activate_form_field(&mut state, &snapshot);
 
@@ -380,7 +380,7 @@ mod tests {
                 .iter()
                 .any(|token| token == "--verbose")
         );
-        assert!(state.derived_validation().is_valid);
+        assert!(state.derived_validation().is_valid());
     }
 
     #[test]
@@ -427,13 +427,18 @@ mod tests {
 
         let (backend, snapshot) = render_app(&mut state);
         let rendered = buffer_text(&backend);
-        let summary = "Conflicting arguments: --debug, --quiet";
+        let summary = "Remove one of: --debug or --quiet";
 
-        assert_eq!(count_occurrences(&rendered, summary), 3);
-        for field in &snapshot.layout.form_fields {
-            assert!(field.description.is_some());
-            assert!(rendered.contains(summary));
-        }
+        assert_eq!(count_occurrences(&rendered, summary), 2, "{rendered}");
+        assert_eq!(
+            snapshot
+                .layout
+                .form_fields
+                .iter()
+                .filter(|field| field.description.is_some())
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -455,9 +460,9 @@ mod tests {
 
         let (backend, snapshot) = render_app(&mut state);
         let rendered = buffer_text(&backend);
-        let summary = "Conflicting arguments: --debug, --quiet";
+        let summary = "Remove one of: --debug or --quiet";
 
-        assert_eq!(count_occurrences(&rendered, summary), 3);
+        assert_eq!(count_occurrences(&rendered, summary), 2, "{rendered}");
         assert_eq!(count_occurrences(&rendered, "Required argument"), 0);
         assert_eq!(
             snapshot
@@ -466,7 +471,7 @@ mod tests {
                 .iter()
                 .filter(|field| field.description.is_some())
                 .count(),
-            2
+            1
         );
     }
 
@@ -491,13 +496,21 @@ mod tests {
 
         let (backend, snapshot) = render_app(&mut state);
         let rendered = buffer_text(&backend);
-        let summary = "Choose one of: --fast, --safe";
+        let summary = "Choose one: --fast or --safe";
         let config = TuiConfig::default();
 
-        assert_eq!(count_occurrences(&rendered, summary), 3);
+        assert_eq!(count_occurrences(&rendered, summary), 2, "{rendered}");
         assert_eq!(snapshot.layout.form_fields.len(), 2);
+        assert_eq!(
+            snapshot
+                .layout
+                .form_fields
+                .iter()
+                .filter(|field| field.description.is_some())
+                .count(),
+            1
+        );
         for field in &snapshot.layout.form_fields {
-            assert!(field.description.is_some());
             let label = field.label.expect("label rect");
             assert_eq!(cell_fg(&backend, label.x, label.y), config.theme.error);
             assert_eq!(
@@ -528,7 +541,7 @@ mod tests {
             .expect("color field layout");
         let summary = "Invalid value for --color: orange";
 
-        assert_eq!(count_occurrences(&rendered, summary), 2);
+        assert_eq!(count_occurrences(&rendered, summary), 2, "{rendered}");
         assert!(field.description.is_some());
     }
 

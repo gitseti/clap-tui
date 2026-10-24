@@ -65,7 +65,7 @@ pub(crate) fn render_form(
     let label_height_overrides = label_height_overrides(vm);
     let content_height = form_layout::measure_fields_height_with_layout_overrides_and_semantics(
         &vm.active_args,
-        &vm.validation.field_errors,
+        &form_layout::validation_errors(&vm.active_args, &vm.validation, area, &vm.field_semantics),
         &input_height_overrides,
         &label_height_overrides,
         &vm.field_semantics,

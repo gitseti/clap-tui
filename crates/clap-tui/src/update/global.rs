@@ -11,6 +11,11 @@ pub(crate) fn apply(
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
     match action {
+        Action::JumpToError => {
+            let validation = state.derived_validation();
+            navigation::focus_first_invalid_field(state, frame_snapshot, &validation);
+            Effect::None
+        }
         Action::TogglePreview => {
             state.ui.preview_open = !state.ui.preview_open;
             state.ui.preview_scroll = 0;
@@ -113,10 +118,7 @@ fn apply_footer_click(
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
     match target {
-        HoverTarget::Run => {
-            state.ui.dismiss_transient_interaction();
-            Effect::Run(state.authoritative_argv())
-        }
+        HoverTarget::Run => super::command::apply(&Action::Run, state, frame_snapshot),
         HoverTarget::Exit => {
             state.ui.dismiss_transient_interaction();
             Effect::Exit
@@ -133,13 +135,7 @@ fn apply_footer_click(
             navigation::toggle_help_tab(state);
             Effect::None
         }
-        HoverTarget::FooterStatus => {
-            let validation = state.derived_validation();
-            if validation.summary.is_some() {
-                navigation::focus_first_invalid_field(state, frame_snapshot, &validation);
-            }
-            Effect::None
-        }
+        HoverTarget::FooterStatus => apply(&Action::JumpToError, state, frame_snapshot),
         HoverTarget::Preview => Effect::None,
     }
 }

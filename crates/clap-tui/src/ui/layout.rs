@@ -298,9 +298,10 @@ mod tests {
         let command = command(Some("Run the selected tool"));
         let mut screen_view = view(&command);
         screen_view.validation = ValidationState {
-            is_valid: false,
-            summary: Some("Missing required argument: --name".to_string()),
-            field_errors: std::collections::BTreeMap::new(),
+            issues: vec![crate::pipeline::ValidationIssue::arguments(
+                "Provide --name",
+                Vec::new(),
+            )],
         };
 
         let layout = build_screen_layout(

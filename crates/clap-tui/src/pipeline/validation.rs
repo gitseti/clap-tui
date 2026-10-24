@@ -1,13 +1,13 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 
 use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 
 use crate::input::{AppState, ArgInput, ArgInputState, ArgValue, CommandFormState, InputSource};
-use crate::pipeline::ValidationState;
+use crate::pipeline::{ValidationIssue, ValidationState, ValidationTarget};
 use crate::spec::{ArgModel, CommandModel};
 
 #[cfg(test)]
@@ -40,93 +40,100 @@ pub(crate) fn reset_validation_call_count() {
 }
 
 fn validate_with_clap(state: &AppState, command: Command, argv: &[OsString]) -> ValidationState {
-    match command.try_get_matches_from(argv.iter().cloned()) {
-        Ok(_) => ValidationState {
-            is_valid: true,
-            summary: None,
-            field_errors: BTreeMap::new(),
-        },
-        Err(error) if error.kind() == ErrorKind::DisplayVersion => ValidationState {
-            is_valid: true,
-            summary: None,
-            field_errors: BTreeMap::new(),
-        },
-        Err(error) => adapt_clap_error(state, &error),
+    match command.clone().try_get_matches_from(argv.iter().cloned()) {
+        Ok(_) => ValidationState::default(),
+        Err(error) if error.kind() == ErrorKind::DisplayVersion => ValidationState::default(),
+        Err(error) => {
+            if error.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
+                let diagnostic =
+                    suppress_help_on_empty(command, state.domain.selected_path().as_slice());
+                if let Err(requirement) = diagnostic.try_get_matches_from(argv.iter().cloned())
+                    && requirement.kind() != ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                {
+                    return adapt_clap_error(state, &requirement);
+                }
+            }
+            adapt_clap_error(state, &error)
+        }
+    }
+}
+
+fn suppress_help_on_empty(command: Command, path: &[String]) -> Command {
+    let command = command.arg_required_else_help(false);
+    match path.split_first() {
+        Some((name, rest)) => {
+            command.mut_subcommand(name, |child| suppress_help_on_empty(child, rest))
+        }
+        None => command,
     }
 }
 
 fn adapt_clap_error(state: &AppState, error: &clap::Error) -> ValidationState {
-    let summary = summary_from_error_kind_and_context(state, error);
-    let field_errors = infer_field_errors(state, error, summary.as_deref());
-
-    ValidationState {
-        is_valid: false,
-        summary,
-        field_errors,
+    let issues = match error.kind() {
+        ErrorKind::MissingRequiredArgument => missing_requirement_issues(state, error),
+        ErrorKind::MissingSubcommand => vec![ValidationIssue {
+            message: "Choose a command".into(),
+            target: ValidationTarget::CommandSelection,
+        }],
+        _ => Vec::new(),
+    };
+    if !issues.is_empty() {
+        return ValidationState { issues };
     }
-}
-
-fn summary_from_error_kind_and_context(state: &AppState, error: &clap::Error) -> Option<String> {
-    match error.kind() {
-        ErrorKind::MissingRequiredArgument => summary_for_missing_required_error(state, error),
+    let message = match error.kind() {
         ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
             summary_for_help_style_missing(state)
-                .or_else(|| clean_diagnostic_line(&error.to_string(), current_about(state)))
         }
-        ErrorKind::MissingSubcommand => Some("Missing required subcommand".to_string()),
-        ErrorKind::ArgumentConflict => summary_from_conflict_context(error)
-            .or_else(|| clean_diagnostic_line(&error.to_string(), current_about(state))),
-        ErrorKind::InvalidValue => summary_from_value_context(error)
-            .or_else(|| clean_diagnostic_line(&error.to_string(), current_about(state))),
-        ErrorKind::NoEquals => summary_from_no_equals_context(error)
-            .or_else(|| clean_diagnostic_line(&error.to_string(), current_about(state))),
-        ErrorKind::TooFewValues
-        | ErrorKind::TooManyValues
-        | ErrorKind::WrongNumberOfValues
-        | ErrorKind::UnknownArgument
-        | ErrorKind::InvalidSubcommand
-        | ErrorKind::ValueValidation => {
-            clean_diagnostic_line(&error.to_string(), current_about(state))
-        }
-        _ => clean_diagnostic_line(&error.to_string(), current_about(state)),
+        ErrorKind::ArgumentConflict => summary_from_conflict_context(error),
+        ErrorKind::NoEquals => summary_from_no_equals_context(error),
+        ErrorKind::InvalidValue => summary_from_value_context(error),
+        ErrorKind::ValueValidation => summary_from_validator(error),
+        _ => None,
+    }
+    .or_else(|| clean_diagnostic_line(&error.to_string(), current_about(state)))
+    .unwrap_or_else(|| "Invalid input".into());
+    let ids = referenced_arg_ids(state, error);
+    let target = if error.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        && state
+            .domain
+            .current_command()
+            .parser_rules
+            .subcommand_required
+    {
+        ValidationTarget::CommandSelection
+    } else if ids.is_empty() {
+        ValidationTarget::None
+    } else {
+        ValidationTarget::Arguments(ids)
+    };
+    ValidationState {
+        issues: vec![ValidationIssue { message, target }],
     }
 }
 
-fn summary_for_missing_required_error(state: &AppState, error: &clap::Error) -> Option<String> {
-    let mut parts = Vec::new();
-    if let Some(summary) = summary_for_missing_required(state) {
-        parts.push(summary);
+fn missing_requirement_issues(state: &AppState, error: &clap::Error) -> Vec<ValidationIssue> {
+    let groups = missing_required_group_feedback(state, error);
+    let mut issues = groups
+        .iter()
+        .map(|group| ValidationIssue::arguments(&group.message, group.arg_ids.clone()))
+        .collect::<Vec<_>>();
+    let ids = referenced_arg_ids(state, error);
+    for arg in visible_arg_models(state).filter(|arg| ids.contains(&arg.id)) {
+        if groups.iter().any(|group| group.arg_ids.contains(&arg.id)) {
+            continue;
+        }
+        issues.push(ValidationIssue::arguments(
+            format!("Provide {}", arg.display_name),
+            vec![arg.id.clone()],
+        ));
     }
-    parts.extend(
-        missing_required_group_feedback(state, error)
-            .into_iter()
-            .map(|group| group.message),
-    );
-
-    match parts.as_slice() {
-        [] => clean_diagnostic_line(&error.to_string(), current_about(state)),
-        [single] => Some(single.clone()),
-        many => Some(many.join("; ")),
-    }
-}
-
-fn summary_for_missing_required(state: &AppState) -> Option<String> {
-    let missing = missing_required_args(state);
-    match missing.as_slice() {
-        [] => None,
-        [single] => Some(format!("Missing required argument: {single}")),
-        many => Some(format!("Missing required arguments: {}", many.join(", "))),
-    }
+    issues
 }
 
 fn summary_for_help_style_missing(state: &AppState) -> Option<String> {
-    if let Some(summary) = summary_for_missing_required(state) {
-        return Some(summary);
-    }
-
     let current_command = state.domain.current_command();
     if current_command.parser_rules.subcommand_required && !current_command.subcommands.is_empty() {
-        return Some("Missing required subcommand".to_string());
+        return Some("Choose a command".to_string());
     }
 
     if current_command.parser_rules.arg_required_else_help && !current_command_has_user_input(state)
@@ -143,7 +150,7 @@ fn summary_from_conflict_context(error: &clap::Error) -> Option<String> {
     let prior =
         context_string(error, ContextKind::PriorArg).map(|value| compact_arg_reference(&value));
     match (invalid, prior) {
-        (Some(invalid), Some(prior)) => Some(format!("Conflicting arguments: {invalid}, {prior}")),
+        (Some(invalid), Some(prior)) => Some(format!("Remove one of: {invalid} or {prior}")),
         _ => None,
     }
 }
@@ -151,7 +158,21 @@ fn summary_from_conflict_context(error: &clap::Error) -> Option<String> {
 fn summary_from_value_context(error: &clap::Error) -> Option<String> {
     let arg = compact_arg_reference(&context_string(error, ContextKind::InvalidArg)?);
     let value = context_string(error, ContextKind::InvalidValue)?;
-    Some(format!("Invalid value for {arg}: {value}"))
+    let mut message = format!("Invalid value for {arg}: {value}");
+    if let Some(ContextValue::Strings(values)) = error.get(ContextKind::ValidValue)
+        && !values.is_empty()
+    {
+        message.push_str(". Choose: ");
+        message.push_str(&values.join(", "));
+    }
+    Some(message)
+}
+
+fn summary_from_validator(error: &clap::Error) -> Option<String> {
+    let arg = compact_arg_reference(&context_string(error, ContextKind::InvalidArg)?);
+    let value = context_string(error, ContextKind::InvalidValue)?;
+    let explanation = std::error::Error::source(error)?;
+    Some(format!("Invalid value for {arg}: {value}. {explanation}"))
 }
 
 fn summary_from_no_equals_context(error: &clap::Error) -> Option<String> {
@@ -195,65 +216,13 @@ fn clean_diagnostic_line(error_text: &str, current_about: Option<&str>) -> Optio
         })
 }
 
-fn infer_field_errors(
-    state: &AppState,
-    error: &clap::Error,
-    summary: Option<&str>,
-) -> BTreeMap<String, String> {
-    let summary = summary.unwrap_or("Invalid input").to_string();
-    let mut field_errors = BTreeMap::new();
-
-    match error.kind() {
-        ErrorKind::MissingRequiredArgument
-        | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-            for arg in missing_required_arg_models(state) {
-                field_errors.insert(arg.id.clone(), "Required argument".to_string());
-            }
-            for group in missing_required_group_feedback(state, error) {
-                for arg_id in group.arg_ids {
-                    field_errors.insert(arg_id, group.message.clone());
-                }
-            }
-        }
-        ErrorKind::ArgumentConflict => {
-            for arg_id in referenced_arg_ids(state, error, Some(&summary)) {
-                field_errors.insert(arg_id, summary.clone());
-            }
-        }
-        ErrorKind::InvalidValue
-        | ErrorKind::NoEquals
-        | ErrorKind::TooFewValues
-        | ErrorKind::TooManyValues
-        | ErrorKind::WrongNumberOfValues
-        | ErrorKind::ValueValidation => {
-            let referenced = referenced_arg_ids(state, error, Some(&summary));
-            if referenced.len() == 1 {
-                field_errors.insert(referenced[0].clone(), summary);
-            }
-        }
-        _ => {}
-    }
-
-    field_errors
-}
-
-fn missing_required_args(state: &AppState) -> Vec<String> {
-    missing_required_arg_models(state)
-        .into_iter()
-        .map(|arg| arg.display_name.clone())
-        .collect()
-}
-
-fn missing_required_arg_models(state: &AppState) -> Vec<&ArgModel> {
-    let current_form = state.domain.current_form().unwrap_or_default();
-    visible_arg_models(state)
-        .filter(|arg| arg.required && !arg.is_help_action())
-        .filter(|arg| arg_is_missing(arg, &current_form))
-        .collect()
-}
-
-fn referenced_arg_ids(state: &AppState, error: &clap::Error, summary: Option<&str>) -> Vec<String> {
-    let tokens = referenced_tokens(error, summary);
+fn referenced_arg_ids(state: &AppState, error: &clap::Error) -> Vec<String> {
+    // Only clap's structured argument references identify controls. Diagnostic
+    // prose can mention unrelated flags, examples, or suggested spellings.
+    let tokens = context_reference_values(error)
+        .iter()
+        .flat_map(|value| reference_tokens(value))
+        .collect::<BTreeSet<_>>();
     visible_arg_models(state)
         .filter(|arg| {
             arg_reference_candidates(arg)
@@ -291,28 +260,6 @@ fn arg_reference_candidates(arg: &ArgModel) -> Vec<String> {
     candidates
 }
 
-fn referenced_tokens(error: &clap::Error, summary: Option<&str>) -> BTreeSet<String> {
-    let mut tokens = BTreeSet::new();
-
-    for value in context_reference_values(error) {
-        tokens.extend(reference_tokens(&value));
-    }
-
-    if let Some(diagnostic) = diagnostic_text(error) {
-        for token in diagnostic.split_whitespace().filter_map(extract_arg_token) {
-            tokens.extend(reference_tokens(&token));
-        }
-    }
-
-    if let Some(summary) = summary {
-        for token in summary.split_whitespace().filter_map(extract_arg_token) {
-            tokens.extend(reference_tokens(&token));
-        }
-    }
-
-    tokens
-}
-
 fn context_reference_values(error: &clap::Error) -> Vec<String> {
     let mut values = Vec::new();
 
@@ -342,6 +289,11 @@ fn reference_tokens(value: &str) -> BTreeSet<String> {
     let mut tokens = BTreeSet::new();
     if !compact.is_empty() {
         tokens.insert(compact.clone());
+    }
+    if !compact.contains('|')
+        && let Some(inner) = compact.strip_prefix('<').and_then(|v| v.strip_suffix('>'))
+    {
+        tokens.insert(inner.to_string());
     }
     if let Some(members) = composite_reference_members(&compact) {
         tokens.extend(members);
@@ -427,14 +379,46 @@ fn missing_required_group_feedback(
                 return None;
             }
 
+            let multiple = state
+                .domain
+                .validation_command
+                .as_ref()
+                .is_some_and(|root| {
+                    let mut command = root.clone();
+                    command.build();
+                    let selected = state
+                        .domain
+                        .selected_path()
+                        .as_slice()
+                        .iter()
+                        .try_fold(&command, |parent, name| parent.find_subcommand(name))
+                        .unwrap_or(&command);
+                    selected.get_groups().any(|group| {
+                        let members = group
+                            .get_args()
+                            .map(clap::Id::as_str)
+                            .collect::<BTreeSet<_>>();
+                        let actual = args
+                            .iter()
+                            .map(|arg| arg.id.as_str())
+                            .collect::<BTreeSet<_>>();
+                        members == actual && group.clone().is_multiple()
+                    })
+                });
             Some(MissingRequiredGroupFeedback {
                 message: format!(
-                    "Choose one of: {}",
+                    "{}: {}",
+                    if multiple {
+                        "Choose at least one"
+                    } else {
+                        "Choose one"
+                    },
                     args.iter()
                         .map(|arg| arg.display_name.as_str())
                         .collect::<Vec<_>>()
-                        .join(", ")
+                        .join(" or ")
                 ),
+
                 arg_ids: args.into_iter().map(|arg| arg.id.clone()).collect(),
             })
         })
@@ -534,30 +518,18 @@ fn input_state_is_user_provided(input: &ArgInputState) -> bool {
 }
 
 fn fallback_validation_state(command: &CommandModel, form: &CommandFormState) -> ValidationState {
-    let mut field_errors = BTreeMap::new();
-    let mut missing = Vec::new();
-
-    for arg in command
-        .args
-        .iter()
-        .filter(|arg| arg.required && !arg.is_help_action())
-    {
-        if arg_is_missing(arg, form) {
-            field_errors.insert(arg.id.clone(), "Required argument".to_string());
-            missing.push(arg.display_name.clone());
-        }
-    }
-
-    let summary = match missing.as_slice() {
-        [] => None,
-        [single] => Some(format!("Missing required argument: {single}")),
-        many => Some(format!("Missing required arguments: {}", many.join(", "))),
-    };
-
     ValidationState {
-        is_valid: field_errors.is_empty(),
-        summary,
-        field_errors,
+        issues: command
+            .args
+            .iter()
+            .filter(|arg| arg.required && !arg.is_help_action() && arg_is_missing(arg, form))
+            .map(|arg| {
+                ValidationIssue::arguments(
+                    format!("Provide {}", arg.display_name),
+                    vec![arg.id.clone()],
+                )
+            })
+            .collect(),
     }
 }
 
@@ -569,3 +541,6 @@ fn arg_is_missing(arg: &ArgModel, form: &CommandFormState) -> bool {
         None => true,
     }
 }
+
+#[cfg(test)]
+mod tests;

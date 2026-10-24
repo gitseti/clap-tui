@@ -329,11 +329,17 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     let selected_path = state.domain.selected_path().clone();
     let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
     let derived = state.derived().clone();
+    let errors = form_layout::validation_errors(
+        &args,
+        &derived.validation,
+        form_area,
+        &derived.field_semantics,
+    );
     let Some((input_top, input_bottom)) =
         form_layout::field_content_bounds_with_layout_overrides_and_semantics(
             &args,
             state.ui.selected_arg_index,
-            &derived.validation.field_errors,
+            &errors,
             &HashMap::new(),
             &HashMap::new(),
             &derived.field_semantics,
@@ -341,6 +347,16 @@ pub(crate) fn ensure_form_visible(state: &mut AppState, frame_snapshot: &FrameSn
     else {
         return;
     };
+    let error_height = args
+        .iter()
+        .find(|item| item.order_index == state.ui.selected_arg_index)
+        .and_then(|item| errors.get(&item.arg.id))
+        .map_or(0, |message| {
+            u16::try_from(message.lines().count()).unwrap_or(u16::MAX)
+        });
+    let input_bottom = input_bottom
+        .saturating_add(error_height)
+        .min(input_top.saturating_add(form_area.height));
     let visible_top = state.ui.form_scroll(frame_snapshot);
     let visible_bottom = visible_top.saturating_add(form_area.height);
 
@@ -377,11 +393,17 @@ pub(crate) fn ensure_active_repeated_row_visible(
     let selected_path = state.domain.selected_path().clone();
     let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
     let derived = state.derived().clone();
+    let errors = form_layout::validation_errors(
+        &args,
+        &derived.validation,
+        form_view,
+        &derived.field_semantics,
+    );
     let input_height_overrides = repeated_input_height_overrides(state, &args);
     let label_height_overrides = HashMap::new();
     let content_height = form_layout::measure_fields_height_with_layout_overrides_and_semantics(
         &args,
-        &derived.validation.field_errors,
+        &errors,
         &input_height_overrides,
         &label_height_overrides,
         &derived.field_semantics,
@@ -401,7 +423,7 @@ pub(crate) fn ensure_active_repeated_row_visible(
 
     let Some(field_top) = form_field_content_top(
         &args,
-        &derived.validation.field_errors,
+        &errors,
         &label_height_overrides,
         &input_height_overrides,
         &derived.field_semantics,
@@ -422,12 +444,7 @@ pub(crate) fn ensure_active_repeated_row_visible(
         .and_then(|semantics| semantics.reason.as_deref());
     let show_description = form::field_has_description(
         arg,
-        derived
-            .validation
-            .field_errors
-            .get(arg_id)
-            .map(String::as_str)
-            .or(semantic_reason),
+        errors.get(arg_id).map(String::as_str).or(semantic_reason),
     );
     let displayed = form_editor::displayed_text(state, arg);
     let projection = project_repeated_field(
@@ -506,11 +523,14 @@ fn form_field_content_top(
                 .map(String::as_str)
                 .or(semantic_reason),
         );
-        let metrics = form_layout::field_metrics_with_description_and_layout_overrides(
-            item.arg,
-            show_description,
-            input_height_overrides.get(&item.arg.id).copied(),
-            label_height_overrides.get(&item.arg.id).copied(),
+        let metrics = form_layout::with_validation_height(
+            form_layout::field_metrics_with_description_and_layout_overrides(
+                item.arg,
+                show_description,
+                input_height_overrides.get(&item.arg.id).copied(),
+                label_height_overrides.get(&item.arg.id).copied(),
+            ),
+            field_errors.get(&item.arg.id),
         );
         y = y.saturating_add(metrics.total_height);
         previous_heading = item.section_heading.as_deref();
@@ -586,15 +606,36 @@ pub(crate) fn focus_first_invalid_field(
     frame_snapshot: &FrameSnapshot,
     validation: &crate::pipeline::ValidationState,
 ) {
-    let root = state.domain.root.clone();
-    let selected_path = state.domain.selected_path().clone();
-    let args = selectors::visible_form_args(&root, &selected_path, state.ui.active_tab);
-    let Some(item) = selectors::first_invalid_visible_field(&args, &validation.field_errors) else {
+    if !validation.has_target() {
         return;
-    };
-    state.ui.set_selected_arg_index(item.order_index);
-    state.ui.focus_form();
-    ensure_form_visible(state, frame_snapshot);
+    }
+    state.ui.help_open = false;
+    state.ui.dismiss_transient_interaction();
+    for issue in &validation.issues {
+        match &issue.target {
+            crate::pipeline::ValidationTarget::CommandSelection => {
+                state.ui.search_query.clear();
+                state.ui.focus_sidebar();
+                return;
+            }
+            crate::pipeline::ValidationTarget::Arguments(ids) => {
+                state.ui.active_tab = crate::input::ActiveTab::Inputs;
+                let root = state.domain.root.clone();
+                let args = selectors::visible_form_args(
+                    &root,
+                    state.domain.selected_path(),
+                    state.ui.active_tab,
+                );
+                if let Some(item) = args.iter().find(|item| ids.contains(&item.arg.id)) {
+                    state.ui.set_selected_arg_index(item.order_index);
+                    state.ui.focus_form();
+                    ensure_form_visible(state, frame_snapshot);
+                    return;
+                }
+            }
+            crate::pipeline::ValidationTarget::None => {}
+        }
+    }
 }
 
 pub(crate) fn scroll_form(state: &mut AppState, frame_snapshot: &FrameSnapshot, delta: i16) {

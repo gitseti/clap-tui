@@ -17,6 +17,9 @@ pub(crate) fn handle_key_event(
     if key.code == AppKeyCode::Char('c') && key.modifiers.control {
         return Some(Action::Exit);
     }
+    if key.code == AppKeyCode::F(8) {
+        return Some(Action::JumpToError);
+    }
     if key.code == AppKeyCode::Char('r') && key.modifiers.control {
         return Some(Action::Run);
     }

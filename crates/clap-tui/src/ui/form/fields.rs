@@ -26,6 +26,7 @@ pub(super) struct FieldRenderModel<'a> {
     pub(super) effective_value: Option<&'a EffectiveArgValue>,
     pub(super) selected: bool,
     pub(super) field_error: Option<&'a str>,
+    pub(super) inline_error: Option<&'a str>,
     pub(super) is_primary_invalid: bool,
     pub(super) source_badge: Option<EffectiveValueSource>,
     pub(super) required: bool,
@@ -61,14 +62,7 @@ pub(super) fn render_fields<'a>(
         render_heading(buffer, config, field, item.section_heading.as_deref());
         render_label(buffer, config, field, &model);
         cursor = render_clipped_widget(buffer, ui, config, field, &model).or(cursor);
-        help::render_field_help(
-            buffer,
-            config,
-            field.description,
-            vm.root,
-            &vm.selected_path,
-            &model,
-        );
+        help::render_field_help(buffer, config, field, vm.root, &vm.selected_path, &model);
     }
     cursor
 }
@@ -132,11 +126,8 @@ impl<'a> FieldRenderModel<'a> {
         first_invalid_field_id: Option<&str>,
     ) -> Self {
         let selected = item.order_index == ui.selected_arg_index && matches!(ui.focus, Focus::Form);
-        let field_error = vm
-            .validation
-            .field_errors
-            .get(&item.arg.id)
-            .map(String::as_str);
+        let field_error = vm.validation.field_error(&item.arg.id);
+        let inline_error = vm.validation.inline_error(&item.arg.id);
         let is_primary_invalid = first_invalid_field_id == Some(item.arg.id.as_str());
         let source_badge = effective_source_badge(vm, item.arg);
         let required = vm.field_required(item.arg);
@@ -208,6 +199,7 @@ impl<'a> FieldRenderModel<'a> {
             effective_value: vm.effective_values.get(&item.arg.id),
             selected,
             field_error,
+            inline_error,
             is_primary_invalid,
             source_badge,
             required,

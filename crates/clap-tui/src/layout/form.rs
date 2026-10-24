@@ -1,3 +1,6 @@
+mod validation;
+pub(crate) use validation::{validation_errors, wrap_validation_message};
+
 use std::collections::{BTreeMap, HashMap};
 
 use ratatui::layout::Rect;
@@ -41,6 +44,7 @@ pub struct FormFieldLayout {
     pub label: Option<Rect>,
     pub input: Rect,
     pub input_clip_top: u16,
+    pub description_clip_top: u16,
     pub full_input_height: u16,
     pub description: Option<Rect>,
 }
@@ -131,6 +135,22 @@ pub(crate) fn field_metrics_with_description_and_layout_overrides(
         gap_height,
         total_height: content_height + description_height + gap_height,
     }
+}
+
+pub(crate) fn with_validation_height(
+    mut metrics: FieldMetrics,
+    error: Option<&String>,
+) -> FieldMetrics {
+    if let Some(error) = error {
+        let height = u16::try_from(error.lines().count())
+            .unwrap_or(u16::MAX)
+            .max(1);
+        metrics.total_height = metrics
+            .total_height
+            .saturating_add(height.saturating_sub(metrics.description_height));
+        metrics.description_height = height;
+    }
+    metrics
 }
 
 #[cfg(test)]
@@ -248,17 +268,20 @@ pub(crate) fn measure_fields_height_with_layout_overrides_and_semantics(
         let semantic_reason = field_semantics
             .get(&FieldInstanceId::from_arg(item.arg))
             .and_then(|semantics| semantics.reason.as_deref());
-        total += field_metrics_with_description_and_layout_overrides(
-            item.arg,
-            form::field_has_description(
+        total += with_validation_height(
+            field_metrics_with_description_and_layout_overrides(
                 item.arg,
-                field_errors
-                    .get(&item.arg.id)
-                    .map(String::as_str)
-                    .or(semantic_reason),
+                form::field_has_description(
+                    item.arg,
+                    field_errors
+                        .get(&item.arg.id)
+                        .map(String::as_str)
+                        .or(semantic_reason),
+                ),
+                input_height_overrides.get(&item.arg.id).copied(),
+                label_height_overrides.get(&item.arg.id).copied(),
             ),
-            input_height_overrides.get(&item.arg.id).copied(),
-            label_height_overrides.get(&item.arg.id).copied(),
+            field_errors.get(&item.arg.id),
         )
         .total_height;
         previous_heading = item.section_heading.as_deref();
@@ -335,11 +358,14 @@ pub(crate) fn field_content_bounds_with_layout_overrides_and_semantics(
                 .map(String::as_str)
                 .or(semantic_reason),
         );
-        let metrics = field_metrics_with_description_and_layout_overrides(
-            item.arg,
-            show_description,
-            input_height_overrides.get(&item.arg.id).copied(),
-            label_height_overrides.get(&item.arg.id).copied(),
+        let metrics = with_validation_height(
+            field_metrics_with_description_and_layout_overrides(
+                item.arg,
+                show_description,
+                input_height_overrides.get(&item.arg.id).copied(),
+                label_height_overrides.get(&item.arg.id).copied(),
+            ),
+            field_errors.get(&item.arg.id),
         );
         let input_top = y.saturating_add(field_input_offset_with_description(
             item.arg,
@@ -417,11 +443,14 @@ pub(crate) fn hit_test_form_content_with_layout_overrides_and_semantics(
                 .map(String::as_str)
                 .or(semantic_reason),
         );
-        let metrics = field_metrics_with_description_and_layout_overrides(
-            item.arg,
-            show_description,
-            input_height_overrides.get(&item.arg.id).copied(),
-            label_height_overrides.get(&item.arg.id).copied(),
+        let metrics = with_validation_height(
+            field_metrics_with_description_and_layout_overrides(
+                item.arg,
+                show_description,
+                input_height_overrides.get(&item.arg.id).copied(),
+                label_height_overrides.get(&item.arg.id).copied(),
+            ),
+            field_errors.get(&item.arg.id),
         );
         let input_top = y.saturating_add(field_input_offset_with_description(
             item.arg,
@@ -524,11 +553,14 @@ pub(crate) fn project_visible_form_fields(
                 .map(String::as_str)
                 .or(semantic_reason),
         );
-        let metrics = field_metrics_with_description_and_layout_overrides(
-            item.arg,
-            show_description,
-            input.input_height_overrides.get(&item.arg.id).copied(),
-            input.label_height_overrides.get(&item.arg.id).copied(),
+        let metrics = with_validation_height(
+            field_metrics_with_description_and_layout_overrides(
+                item.arg,
+                show_description,
+                input.input_height_overrides.get(&item.arg.id).copied(),
+                input.label_height_overrides.get(&item.arg.id).copied(),
+            ),
+            input.field_errors.get(&item.arg.id),
         );
         let heading_height = i32::from(u16::from(heading.is_some()));
         let item_bottom = y + heading_height + i32::from(metrics.total_height);
@@ -602,7 +634,7 @@ pub(crate) fn project_visible_form_fields(
                     description_x,
                     description_width,
                     description_y,
-                    description.height,
+                    metrics.description_height,
                     input.content_area,
                 )
             });
@@ -638,6 +670,7 @@ pub(crate) fn project_visible_form_fields(
                 preferred_label_width,
                 input.input_height_overrides.get(&item.arg.id).copied(),
                 input.label_height_overrides.get(&item.arg.id).copied(),
+                metrics.description_height,
             );
             let field_input = clipped_rect(
                 input_x,
@@ -660,12 +693,17 @@ pub(crate) fn project_visible_form_fields(
 
         let input_clip_top =
             u16::try_from((i32::from(field_input.y) - input_y).max(0)).unwrap_or(u16::MAX);
+        let description_top = input_y + i32::from(full_input_height.max(metrics.label_height));
+        let description_clip_top = description.map_or(0, |rect| {
+            u16::try_from((i32::from(rect.y) - description_top).max(0)).unwrap_or(u16::MAX)
+        });
         fields.push(FormFieldLayout {
             arg_id: item.arg.id.clone(),
             heading,
             label,
             input: field_input,
             input_clip_top,
+            description_clip_top,
             full_input_height,
             description,
         });
@@ -695,6 +733,7 @@ fn form_description_rect(
     preferred_label_width: u16,
     input_height_override: Option<u16>,
     label_height_override: Option<u16>,
+    description_height: u16,
 ) -> Option<Rect> {
     show_description.then_some(())?;
     let description_y = y + i32::from(field_description_offset_with_layout_overrides(
@@ -709,14 +748,7 @@ fn form_description_rect(
         input_x,
         input_width,
         description_y,
-        field_metrics_with_description_and_layout_overrides(
-            item.arg,
-            show_description,
-            input_height_override,
-            label_height_override,
-        )
-        .description_height
-        .max(1),
+        description_height.max(1),
         content_area,
     )
 }

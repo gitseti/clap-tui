@@ -183,11 +183,7 @@ fn invalid_scripted_flow_blocks_run_and_keeps_feedback_visible() {
         .expect("scripted run should succeed");
 
     assert_eq!(run.outcome, ScriptedOutcome::Cancelled);
-    assert!(
-        last_frame(&run)
-            .text
-            .contains("Missing required argument: --name")
-    );
+    assert!(last_frame(&run).text.contains("Provide --name"));
     assert!(run.frames.len() >= 2);
 }
 
@@ -244,24 +240,20 @@ fn invalid_scripted_flow_keeps_validation_alignment_after_resize() {
         .with_size(120, 24)
         .script([
             ScriptedStep::click_footer(HoverTarget::Run),
-            ScriptedStep::expect_text("Missing required arguments"),
+            ScriptedStep::expect_text("Provide --a"),
             ScriptedStep::click_input("a"),
             ScriptedStep::type_text("alpha"),
             ScriptedStep::expect_text("tool --a alpha"),
             ScriptedStep::resize(100, 30),
             ScriptedStep::click_footer(HoverTarget::Run),
-            ScriptedStep::expect_text("Missing required argument: --b"),
+            ScriptedStep::expect_text("Provide --b"),
             ScriptedStep::ctrl(AppKeyCode::Char('c')),
         ])
         .run()
         .expect("scripted run should succeed");
 
     assert_eq!(run.outcome, ScriptedOutcome::Cancelled);
-    assert!(
-        last_frame(&run)
-            .text
-            .contains("Missing required argument: --b")
-    );
+    assert!(last_frame(&run).text.contains("Provide --b"));
     assert!(last_frame(&run).text.contains("tool --a alpha"));
 }
 
@@ -339,4 +331,44 @@ fn expanded_preview_is_read_only_and_restores_the_form_before_run() {
         run.outcome,
         ScriptedOutcome::Run(vec!["tool".into(), "--path".into(), value])
     );
+}
+
+#[test]
+fn f8_and_invalid_run_recover_without_losing_form_edits() {
+    for (width, height) in [(80, 24), (60, 20)] {
+        let command = Command::new("tool")
+            .arg(Arg::new("name").long("name").required(true))
+            .arg(
+                Arg::new("port")
+                    .long("port")
+                    .value_parser(clap::value_parser!(u16)),
+            );
+        let run = ScriptedHarness::new(command)
+            .with_size(width, height)
+            .script([
+                ScriptedStep::expect_text("F8 Jump to error"),
+                ScriptedStep::key(AppKeyCode::F(8)),
+                ScriptedStep::paste("demo"),
+                ScriptedStep::key(AppKeyCode::Down),
+                ScriptedStep::paste("99999"),
+                ScriptedStep::ctrl(AppKeyCode::Char('r')),
+                ScriptedStep::expect_text("0..=65535"),
+                ScriptedStep::ctrl(AppKeyCode::Char('a')),
+                ScriptedStep::ctrl(AppKeyCode::Char('k')),
+                ScriptedStep::paste("8080"),
+                ScriptedStep::ctrl(AppKeyCode::Char('r')),
+            ])
+            .run()
+            .expect("validation recovery script");
+        assert_eq!(
+            run.outcome,
+            ScriptedOutcome::Run(vec![
+                "tool".into(),
+                "--name".into(),
+                "demo".into(),
+                "--port".into(),
+                "8080".into()
+            ])
+        );
+    }
 }

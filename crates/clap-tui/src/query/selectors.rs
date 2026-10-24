@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use crate::input::ActiveTab;
 use crate::spec::{ArgSpec, CommandPath, CommandSpec};
@@ -44,23 +44,13 @@ pub(crate) fn active_form_field<'a>(
         .find(|item| item.order_index == selected_arg_index)
 }
 
-pub(crate) fn first_invalid_visible_field<'a>(
-    args: &'a [OrderedArg<'a>],
-    field_errors: &BTreeMap<String, String>,
-) -> Option<&'a OrderedArg<'a>> {
-    args.iter()
-        .find(|item| field_errors.contains_key(&item.arg.id))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashSet};
+    use std::collections::HashSet;
 
     use clap::Command;
 
-    use super::{
-        active_form_field, first_invalid_visible_field, visible_form_args, visible_sidebar_items,
-    };
+    use super::{active_form_field, visible_form_args, visible_sidebar_items};
     use crate::input::ActiveTab;
     use crate::spec::{ArgKind, ArgSpec, CommandPath, CommandSpec, ValueCardinality};
 
@@ -112,27 +102,5 @@ mod tests {
             items[1].path.as_slice(),
             &["release".to_string(), "deploy".to_string()]
         );
-    }
-
-    #[test]
-    fn first_invalid_visible_field_follows_form_order() {
-        let command = CommandSpec {
-            name: "tool".to_string(),
-            version: None,
-            about: None,
-            help: String::new(),
-            args: vec![arg("alpha", "--alpha"), arg("beta", "--beta")],
-            subcommands: Vec::new(),
-            ..CommandSpec::default()
-        };
-        let args = visible_form_args(&command, &CommandPath::default(), ActiveTab::Inputs);
-        let field_errors = BTreeMap::from([
-            ("beta".to_string(), "Required argument".to_string()),
-            ("alpha".to_string(), "Required argument".to_string()),
-        ]);
-
-        let invalid = first_invalid_visible_field(&args, &field_errors).expect("invalid field");
-
-        assert_eq!(invalid.arg.id, "alpha");
     }
 }
