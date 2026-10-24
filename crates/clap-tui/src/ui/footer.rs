@@ -107,7 +107,7 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
     ];
     let status = validation.summary().as_ref().map(|summary| {
         let label = if validation.has_target() {
-            format!("F8 {summary}")
+            format!("F8 · {summary}")
         } else {
             summary.clone()
         };

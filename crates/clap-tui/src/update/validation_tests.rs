@@ -97,7 +97,7 @@ fn keyboard_footer_and_invalid_run_reveal_the_same_offscreen_issue() {
                 .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>();
             assert!(text.contains("Provide --last"));
-            assert!(text.contains("F8 Provide --last"));
+            assert!(text.contains("F8 · Provide --last"));
             let focus = state.ui.focus.clone();
             let selection = state.ui.selected_arg_index;
             state.domain.set_text_value("last", "fixed");
