@@ -410,10 +410,10 @@ mod tests {
         assert!(header.contains("Command Preview"));
         assert!(header.contains("Click/Ctrl+Y copy"));
         assert!(header.find("Click/Ctrl+Y copy") > header.find("Command Preview"));
-        assert!(spacer.trim().is_empty());
+        assert_eq!(spacer.trim(), "");
         assert_eq!(preview_command_inset(area.width.saturating_sub(2)), 2);
         assert!(command_row.starts_with("   $ tool serve"));
-        assert!(bottom.trim().is_empty());
+        assert_eq!(bottom.trim(), "");
     }
 
     #[test]

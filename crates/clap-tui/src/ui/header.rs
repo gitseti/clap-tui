@@ -90,6 +90,8 @@ fn header_lines(config: &TuiConfig, vm: &ScreenView<'_>, height: u16) -> Vec<Lin
 
 #[cfg(test)]
 mod tests {
+    use ratatui::text::Span;
+
     use super::{header_height, header_lines};
     use crate::config::TuiConfig;
     use crate::spec::{CommandPath, CommandSpec};
@@ -166,7 +168,7 @@ mod tests {
         let lines = header_lines(&TuiConfig::default(), &view(&cmd), 2);
 
         assert_eq!(lines.len(), 2);
-        assert!(lines[1].spans.is_empty());
+        assert_eq!(lines[1].spans, Vec::<Span<'_>>::new());
     }
 
     #[test]
@@ -174,7 +176,7 @@ mod tests {
         let cmd = command("serve", Some("Run server"));
         let lines = header_lines(&TuiConfig::default(), &view(&cmd), 3);
 
-        assert!(lines[2].spans.is_empty());
+        assert_eq!(lines[2].spans, Vec::<Span<'_>>::new());
     }
 
     #[test]

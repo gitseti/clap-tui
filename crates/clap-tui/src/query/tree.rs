@@ -199,7 +199,7 @@ mod tests {
 
         let items = tree_items(&root, &HashSet::new(), "");
 
-        assert!(items.is_empty());
+        assert_eq!(items, Vec::<TreeItem>::new());
     }
 
     #[test]
