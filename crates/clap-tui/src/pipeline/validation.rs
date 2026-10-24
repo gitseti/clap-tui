@@ -10,6 +10,9 @@ use crate::input::{AppState, ArgInput, ArgInputState, ArgValue, CommandFormState
 use crate::pipeline::{ValidationIssue, ValidationState, ValidationTarget};
 use crate::spec::{ArgModel, CommandModel};
 
+mod references;
+use references::{ArgumentReference, Reference};
+
 #[cfg(test)]
 thread_local! {
     static VALIDATION_CALL_COUNT: Cell<usize> = const { Cell::new(0) };
@@ -76,8 +79,14 @@ fn suppress_help_on_empty(command: Command, path: &[String]) -> Command {
 }
 
 fn adapt_clap_error(state: &AppState, error: &clap::Error, command: &Command) -> ValidationState {
+    let references = context_reference_values(error)
+        .iter()
+        .filter_map(|value| Reference::parse(value))
+        .collect::<Vec<_>>();
     let issues = match error.kind() {
-        ErrorKind::MissingRequiredArgument => missing_requirement_issues(state, error, command),
+        ErrorKind::MissingRequiredArgument => {
+            missing_requirement_issues(state, &references, command)
+        }
         ErrorKind::MissingSubcommand => vec![ValidationIssue {
             message: "Choose a command".into(),
             target: ValidationTarget::CommandSelection,
@@ -99,7 +108,10 @@ fn adapt_clap_error(state: &AppState, error: &clap::Error, command: &Command) ->
     }
     .or_else(|| clean_diagnostic_line(&error.to_string(), current_about(state)))
     .unwrap_or_else(|| "Invalid input".into());
-    let ids = referenced_arg_ids(state, error);
+    let ids = resolve_reference_args(state, &references)
+        .into_iter()
+        .map(|arg| arg.id.clone())
+        .collect::<Vec<_>>();
     let target = if error.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         && state
             .domain
@@ -120,17 +132,16 @@ fn adapt_clap_error(state: &AppState, error: &clap::Error, command: &Command) ->
 
 fn missing_requirement_issues(
     state: &AppState,
-    error: &clap::Error,
+    references: &[Reference],
     command: &Command,
 ) -> Vec<ValidationIssue> {
-    let mut issues = missing_group_issues(state, error, command);
+    let mut issues = missing_group_issues(state, references, command);
     let group_members = issues
         .iter()
         .flat_map(ValidationIssue::argument_ids)
         .cloned()
         .collect::<BTreeSet<_>>();
-    let ids = referenced_arg_ids(state, error);
-    for arg in visible_arg_models(state).filter(|arg| ids.contains(&arg.id)) {
+    for arg in resolve_reference_args(state, references) {
         if group_members.contains(&arg.id) {
             continue;
         }
@@ -157,10 +168,8 @@ fn summary_for_help_style_missing(state: &AppState) -> Option<String> {
 }
 
 fn summary_from_conflict_context(error: &clap::Error) -> Option<String> {
-    let invalid =
-        context_string(error, ContextKind::InvalidArg).map(|value| compact_arg_reference(&value));
-    let prior =
-        context_string(error, ContextKind::PriorArg).map(|value| compact_arg_reference(&value));
+    let invalid = context_arg_label(error, ContextKind::InvalidArg);
+    let prior = context_arg_label(error, ContextKind::PriorArg);
     match (invalid, prior) {
         (Some(invalid), Some(prior)) => Some(format!("Remove one of: {invalid} or {prior}")),
         _ => None,
@@ -168,7 +177,7 @@ fn summary_from_conflict_context(error: &clap::Error) -> Option<String> {
 }
 
 fn summary_from_value_context(error: &clap::Error) -> Option<String> {
-    let arg = compact_arg_reference(&context_string(error, ContextKind::InvalidArg)?);
+    let arg = context_arg_label(error, ContextKind::InvalidArg)?;
     let value = context_string(error, ContextKind::InvalidValue)?;
     let mut message = format!("Invalid value for {arg}: {value}");
     if let Some(ContextValue::Strings(values)) = error.get(ContextKind::ValidValue)
@@ -181,14 +190,14 @@ fn summary_from_value_context(error: &clap::Error) -> Option<String> {
 }
 
 fn summary_from_validator(error: &clap::Error) -> Option<String> {
-    let arg = compact_arg_reference(&context_string(error, ContextKind::InvalidArg)?);
+    let arg = context_arg_label(error, ContextKind::InvalidArg)?;
     let value = context_string(error, ContextKind::InvalidValue)?;
     let explanation = std::error::Error::source(error)?;
     Some(format!("Invalid value for {arg}: {value}. {explanation}"))
 }
 
 fn summary_from_no_equals_context(error: &clap::Error) -> Option<String> {
-    let arg = compact_arg_reference(&context_string(error, ContextKind::InvalidArg)?);
+    let arg = context_arg_label(error, ContextKind::InvalidArg)?;
     Some(format!("Option requires '=': {arg}"))
 }
 
@@ -228,50 +237,6 @@ fn clean_diagnostic_line(error_text: &str, current_about: Option<&str>) -> Optio
         })
 }
 
-fn referenced_arg_ids(state: &AppState, error: &clap::Error) -> Vec<String> {
-    // Only clap's structured argument references identify controls. Diagnostic
-    // prose can mention unrelated flags, examples, or suggested spellings.
-    let tokens = context_reference_values(error)
-        .iter()
-        .flat_map(|value| reference_tokens(value))
-        .collect::<BTreeSet<_>>();
-    visible_arg_models(state)
-        .filter(|arg| {
-            arg_reference_candidates(arg)
-                .iter()
-                .any(|candidate| tokens.contains(candidate))
-        })
-        .map(|arg| arg.id.clone())
-        .collect()
-}
-
-fn arg_reference_candidates(arg: &ArgModel) -> Vec<String> {
-    let mut candidates = vec![
-        arg.id.clone(),
-        arg.display_name.clone(),
-        arg.display_label().to_string(),
-    ];
-    if let Some(long) = arg.long() {
-        candidates.push(format!("--{long}"));
-    }
-    if let Some(short) = arg.short() {
-        candidates.push(format!("-{short}"));
-    }
-    candidates.extend(
-        arg.visible_aliases()
-            .iter()
-            .map(|alias| format!("--{alias}")),
-    );
-    candidates.extend(
-        arg.visible_short_aliases()
-            .iter()
-            .map(|alias| format!("-{alias}")),
-    );
-    candidates.sort();
-    candidates.dedup();
-    candidates
-}
-
 fn context_reference_values(error: &clap::Error) -> Vec<String> {
     let mut values = Vec::new();
 
@@ -296,45 +261,6 @@ fn context_reference_values(error: &clap::Error) -> Vec<String> {
     values
 }
 
-fn reference_tokens(value: &str) -> BTreeSet<String> {
-    let compact = compact_arg_reference(value);
-    let mut tokens = BTreeSet::new();
-    if !compact.is_empty() {
-        tokens.insert(compact.clone());
-    }
-    if !compact.contains('|')
-        && let Some(inner) = compact.strip_prefix('<').and_then(|v| v.strip_suffix('>'))
-    {
-        tokens.insert(inner.to_string());
-    }
-    if let Some(members) = composite_reference_members(&compact) {
-        tokens.extend(members);
-    }
-    tokens
-}
-
-fn composite_reference_members(value: &str) -> Option<Vec<String>> {
-    let trimmed = value.trim();
-    let inner = trimmed
-        .strip_prefix('<')
-        .and_then(|rest| rest.strip_suffix('>'))
-        .or_else(|| {
-            trimmed
-                .strip_prefix('[')
-                .and_then(|rest| rest.strip_suffix(']'))
-        })?;
-    if !inner.contains('|') {
-        return None;
-    }
-
-    let members = inner
-        .split('|')
-        .map(compact_arg_reference)
-        .filter(|member| !member.is_empty())
-        .collect::<Vec<_>>();
-    (!members.is_empty()).then_some(members)
-}
-
 fn context_string(error: &clap::Error, key: ContextKind) -> Option<String> {
     match error.get(key) {
         Some(ContextValue::String(value)) => Some(value.clone()),
@@ -343,33 +269,8 @@ fn context_string(error: &clap::Error, key: ContextKind) -> Option<String> {
     }
 }
 
-fn compact_arg_reference(value: &str) -> String {
-    let without_value_name = value.split_once(" <").map_or(value, |(prefix, _)| prefix);
-    let without_value_name = without_value_name
-        .split_once(" [")
-        .map_or(without_value_name, |(prefix, _)| prefix);
-    let without_equals_value = without_value_name
-        .split_once("=<")
-        .map_or(without_value_name, |(prefix, _)| prefix);
-    let without_equals_value = without_equals_value
-        .split_once("=[")
-        .map_or(without_equals_value, |(prefix, _)| prefix);
-    without_equals_value.trim().to_string()
-}
-
-fn extract_arg_token(token: &str) -> Option<String> {
-    let trimmed = token.trim_matches(|ch: char| {
-        ch == ','
-            || ch == ':'
-            || ch == ';'
-            || ch == ')'
-            || ch == '('
-            || ch == '.'
-            || ch == '>'
-            || ch == ']'
-    });
-    (trimmed.starts_with('-') || trimmed.starts_with('<') || trimmed.starts_with('['))
-        .then(|| trimmed.to_string())
+fn context_arg_label(error: &clap::Error, key: ContextKind) -> Option<String> {
+    Reference::parse(&context_string(error, key)?).map(|reference| reference.to_string())
 }
 
 // A group belongs to the command that defines it. A child's selection does not
@@ -381,23 +282,21 @@ struct GroupDefinition<'a> {
 }
 
 impl<'a> GroupDefinition<'a> {
-    fn matching_args(&self, tokens: &[String]) -> Option<Vec<&'a ArgModel>> {
+    fn matching_args(&self, references: &[ArgumentReference]) -> Option<Vec<&'a ArgModel>> {
         let args = self
             .owner
             .all_args()
             .into_iter()
             .filter(|arg| {
                 self.members.contains(arg.id.as_str())
-                    && arg_reference_candidates(arg)
-                        .iter()
-                        .any(|candidate| tokens.contains(candidate))
+                    && references.iter().any(|reference| reference.matches(arg))
             })
             .collect::<Vec<_>>();
         let matched = args
             .iter()
             .map(|arg| arg.id.as_str())
             .collect::<BTreeSet<_>>();
-        (matched == self.members && tokens.len() == self.members.len()).then_some(args)
+        (matched == self.members && references.len() == self.members.len()).then_some(args)
     }
 }
 
@@ -429,19 +328,21 @@ fn group_definitions<'a>(state: &'a AppState, command: &'a Command) -> Vec<Group
 
 fn missing_group_issues(
     state: &AppState,
-    error: &clap::Error,
+    references: &[Reference],
     command: &Command,
 ) -> Vec<ValidationIssue> {
     let definitions = group_definitions(state, command);
-    composite_references(error)
-        .into_iter()
+    references
+        .iter()
         .filter_map(|reference| {
-            let tokens = composite_reference_members(&reference)?;
+            let Reference::Group(members) = reference else {
+                return None;
+            };
             let matches = definitions
                 .iter()
                 .filter_map(|group| {
                     group
-                        .matching_args(&tokens)
+                        .matching_args(members)
                         .map(|args| (args, group.multiple))
                 })
                 .collect::<Vec<_>>();
@@ -456,7 +357,10 @@ fn missing_group_issues(
                         "Choose one"
                     },
                 ),
-                _ => (resolve_reference_args(state, &tokens), "Choose from"),
+                _ => (
+                    resolve_reference_args(state, std::slice::from_ref(reference)),
+                    "Choose from",
+                ),
             };
             if args.is_empty() {
                 return None;
@@ -476,45 +380,11 @@ fn missing_group_issues(
         .collect()
 }
 
-fn composite_references(error: &clap::Error) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    let mut references = Vec::new();
-
-    for value in context_reference_values(error) {
-        for token in reference_tokens(&value) {
-            if composite_reference_members(&token).is_some() && seen.insert(token.clone()) {
-                references.push(token);
-            }
-        }
-    }
-
-    if let Some(diagnostic) = diagnostic_text(error) {
-        for token in diagnostic.split_whitespace().filter_map(extract_arg_token) {
-            for reference in reference_tokens(&token) {
-                if composite_reference_members(&reference).is_some()
-                    && seen.insert(reference.clone())
-                {
-                    references.push(reference);
-                }
-            }
-        }
-    }
-
-    references
-}
-
-fn diagnostic_text(error: &clap::Error) -> Option<String> {
-    clean_diagnostic_line(&error.to_string(), None)
-}
-
-fn resolve_reference_args<'a>(state: &'a AppState, tokens: &[String]) -> Vec<&'a ArgModel> {
-    let token_set = tokens.iter().cloned().collect::<BTreeSet<_>>();
+fn resolve_reference_args<'a>(state: &'a AppState, references: &[Reference]) -> Vec<&'a ArgModel> {
+    // Only structured argument contexts identify controls; diagnostic prose
+    // can mention unrelated flags, examples, or suggested spellings.
     visible_arg_models(state)
-        .filter(|arg| {
-            arg_reference_candidates(arg)
-                .iter()
-                .any(|candidate| token_set.contains(candidate))
-        })
+        .filter(|arg| references.iter().any(|reference| reference.matches(arg)))
         .collect()
 }
 

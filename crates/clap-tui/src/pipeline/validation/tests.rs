@@ -41,6 +41,113 @@ fn empty_groups_use_clap_requirements_with_correct_multiplicity() {
 }
 
 #[test]
+fn value_option_groups_retain_requirements_and_targets() {
+    for help in [false, true] {
+        for multiple in [false, true] {
+            let command = Command::new("tool")
+                .arg_required_else_help(help)
+                .arg(Arg::new("token").long("token").display_order(0))
+                .arg(Arg::new("config").long("config").display_order(1))
+                .group(
+                    ArgGroup::new("auth")
+                        .args(["token", "config"])
+                        .required(true)
+                        .multiple(multiple),
+                );
+            let mut state = AppState::from_command(&command);
+            let validation = derive(&state).validation;
+            let prefix = if multiple {
+                "Choose at least one"
+            } else {
+                "Choose one"
+            };
+            assert_eq!(
+                validation.summary().as_deref(),
+                Some(format!("{prefix}: --token or --config").as_str())
+            );
+            assert_eq!(validation.issues[0].argument_ids(), ["token", "config"]);
+            assert!(validation.field_error("config").is_some());
+            assert!(validation.inline_message("token").is_some());
+            state.domain.set_text_value("token", "secret");
+            assert!(derive(&state).validation.is_valid());
+        }
+    }
+}
+
+#[test]
+fn mixed_groups_handle_nested_placeholders_and_repeated_flags() {
+    for token in [
+        Arg::new("token")
+            .long("token")
+            .num_args(0..=1)
+            .require_equals(true),
+        Arg::new("token")
+            .long("token")
+            .num_args(2)
+            .value_names(["USER|ALIAS", "KEY"]),
+        Arg::new("token").long("token").action(ArgAction::Count),
+    ] {
+        let command = Command::new("tool")
+            .arg(token)
+            .arg(Arg::new("config").value_name("PATH"))
+            .group(
+                ArgGroup::new("auth")
+                    .args(["token", "config"])
+                    .required(true),
+            );
+        let validation = derive(&AppState::from_command(&command)).validation;
+        assert_eq!(validation.issues.len(), 1);
+        assert_eq!(validation.issues[0].argument_ids(), ["config", "token"]);
+        let summary = validation.summary().unwrap();
+        assert!(
+            summary.starts_with("Choose one:")
+                && summary.contains("--token")
+                && summary.contains("config")
+        );
+    }
+}
+
+#[test]
+fn single_option_groups_still_resolve_to_their_member() {
+    for token in [
+        Arg::new("token").long("token"),
+        Arg::new("token").long("token").action(ArgAction::SetTrue),
+        Arg::new("token").long("token").action(ArgAction::Count),
+    ] {
+        let command = Command::new("tool")
+            .arg(token)
+            .group(ArgGroup::new("auth").arg("token").required(true));
+        let validation = derive(&AppState::from_command(&command)).validation;
+        assert_eq!(validation.summary().as_deref(), Some("Choose one: --token"));
+        assert_eq!(validation.issues[0].argument_ids(), ["token"]);
+    }
+}
+
+#[test]
+fn positional_value_names_do_not_target_option_ids() {
+    let command = Command::new("tool")
+        .arg(
+            Arg::new("input")
+                .value_name("config")
+                .required(true)
+                .value_parser(["valid"]),
+        )
+        .arg(Arg::new("config").long("configuration"));
+    let mut state = AppState::from_command(&command);
+    let validation = derive(&state).validation;
+    assert_eq!(validation.summary().as_deref(), Some("Provide input"));
+    assert_eq!(validation.issues.len(), 1);
+    assert_eq!(validation.issues[0].argument_ids(), ["input"]);
+    assert!(validation.field_error("config").is_none());
+    state.domain.set_text_value("input", "invalid");
+    let validation = derive(&state).validation;
+    assert_eq!(validation.issues[0].argument_ids(), ["input"]);
+    assert!(validation.field_error("config").is_none());
+    state.domain.set_text_value("input", "valid");
+    assert!(derive(&state).validation.is_valid());
+}
+
+#[test]
 fn ambiguous_group_references_do_not_guess_multiplicity() {
     for help in [false, true] {
         for policies in [[true, false], [false, true]] {
