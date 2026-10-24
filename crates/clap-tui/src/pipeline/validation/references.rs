@@ -32,15 +32,24 @@ impl Reference {
         ArgumentReference::parse(value).map(Self::Argument)
     }
 
-    pub(super) fn matches(&self, arg: &ArgModel) -> bool {
+    pub(super) fn resolve<'a>(&self, candidates: &[&'a ArgModel]) -> Option<Vec<&'a ArgModel>> {
         match self {
-            Self::Argument(reference) => reference.matches(arg),
-            Self::Group(members) => members.iter().any(|member| member.matches(arg)),
+            Self::Argument(reference) => reference.resolve(candidates).map(|arg| vec![arg]),
+            Self::Group(members) => members
+                .iter()
+                .map(|member| member.resolve(candidates))
+                .collect(),
         }
     }
 }
 
 impl ArgumentReference {
+    fn resolve<'a>(&self, candidates: &[&'a ArgModel]) -> Option<&'a ArgModel> {
+        let mut matches = candidates.iter().copied().filter(|arg| self.matches(arg));
+        let arg = matches.next()?;
+        matches.next().is_none().then_some(arg)
+    }
+
     fn parse(value: &str) -> Option<Self> {
         let value = value.trim();
         let value = value.strip_suffix("...").unwrap_or(value);

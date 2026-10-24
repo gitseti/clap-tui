@@ -7,7 +7,7 @@ use clap::Command;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 
 use crate::input::{AppState, ArgInput, ArgInputState, ArgValue, CommandFormState, InputSource};
-use crate::pipeline::{ValidationIssue, ValidationState, ValidationTarget};
+use crate::pipeline::{FieldInstanceId, ValidationIssue, ValidationState, ValidationTarget};
 use crate::spec::{ArgModel, CommandModel};
 
 mod references;
@@ -136,18 +136,19 @@ fn missing_requirement_issues(
     command: &Command,
 ) -> Vec<ValidationIssue> {
     let mut issues = missing_group_issues(state, references, command);
-    let group_members = issues
-        .iter()
-        .flat_map(ValidationIssue::argument_ids)
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    for arg in resolve_reference_args(state, references) {
-        if group_members.contains(&arg.id) {
+    let candidates = visible_arg_models(state).collect::<Vec<_>>();
+    for reference in references {
+        if !matches!(reference, Reference::Argument(_)) {
             continue;
         }
+        let args = reference.resolve(&candidates).unwrap_or_default();
+        let message = args.first().map_or_else(
+            || format!("Provide {reference}"),
+            |arg| format!("Provide {}", arg.display_name),
+        );
         issues.push(ValidationIssue::arguments(
-            format!("Provide {}", arg.display_name),
-            vec![arg.id.clone()],
+            message,
+            args.into_iter().map(|arg| arg.id.clone()).collect(),
         ));
     }
     issues
@@ -383,8 +384,16 @@ fn missing_group_issues(
 fn resolve_reference_args<'a>(state: &'a AppState, references: &[Reference]) -> Vec<&'a ArgModel> {
     // Only structured argument contexts identify controls; diagnostic prose
     // can mention unrelated flags, examples, or suggested spellings.
-    visible_arg_models(state)
-        .filter(|arg| references.iter().any(|reference| reference.matches(arg)))
+    let candidates = visible_arg_models(state).collect::<Vec<_>>();
+    let resolved = references
+        .iter()
+        .filter_map(|reference| reference.resolve(&candidates))
+        .flatten()
+        .map(FieldInstanceId::from_arg)
+        .collect::<BTreeSet<_>>();
+    candidates
+        .into_iter()
+        .filter(|arg| resolved.contains(&FieldInstanceId::from_arg(arg)))
         .collect()
 }
 

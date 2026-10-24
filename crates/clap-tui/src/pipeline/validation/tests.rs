@@ -148,6 +148,79 @@ fn positional_value_names_do_not_target_option_ids() {
 }
 
 #[test]
+fn duplicate_positional_names_keep_missing_requirements_unmapped() {
+    let command = Command::new("tool")
+        .arg(Arg::new("first").value_name("PATH").required(true))
+        .arg(Arg::new("second").value_name("PATH"));
+    let mut state = AppState::from_command(&command);
+    let validation = derive(&state).validation;
+    assert_eq!(validation.summary().as_deref(), Some("Provide <PATH>"));
+    assert_eq!(validation.issues.len(), 1);
+    assert!(!validation.has_target());
+    assert!(validation.field_errors().is_empty());
+    state.domain.set_text_value("first", "valid");
+    assert!(derive(&state).validation.is_valid());
+}
+
+#[test]
+fn duplicate_positional_names_keep_invalid_values_unmapped() {
+    let command = Command::new("tool")
+        .arg(Arg::new("first").value_name("PATH").required(true))
+        .arg(
+            Arg::new("second")
+                .value_name("PATH")
+                .value_parser(["allowed"]),
+        );
+    let mut state = AppState::from_command(&command);
+    state.domain.set_text_value("first", "valid");
+    state.domain.set_text_value("second", "invalid");
+    let validation = derive(&state).validation;
+    assert!(!validation.is_valid());
+    assert!(!validation.has_target());
+    assert!(validation.field_errors().is_empty());
+    assert!(validation.summary().unwrap().contains("Choose: allowed"));
+    state.domain.set_text_value("second", "allowed");
+    assert!(derive(&state).validation.is_valid());
+}
+
+#[test]
+fn ambiguous_requirements_do_not_hide_independent_actionable_issues() {
+    let command = Command::new("tool")
+        .arg(Arg::new("first").value_name("PATH").required(true))
+        .arg(Arg::new("second").value_name("PATH"))
+        .arg(Arg::new("name").long("name").required(true));
+    let mut state = AppState::from_command(&command);
+    let validation = derive(&state).validation;
+    assert_eq!(
+        validation.summary().as_deref(),
+        Some("Provide --name (+1 more)")
+    );
+    assert_eq!(validation.issues[0].argument_ids(), ["name"]);
+    assert_eq!(validation.issues[1].target, ValidationTarget::None);
+    state.domain.set_text_value("name", "valid");
+    let validation = derive(&state).validation;
+    assert_eq!(validation.summary().as_deref(), Some("Provide <PATH>"));
+    assert!(!validation.has_target());
+}
+
+#[test]
+fn known_group_members_remain_scoped_when_positional_names_repeat() {
+    let command = Command::new("tool")
+        .arg(Arg::new("first").value_name("PATH"))
+        .arg(Arg::new("second").value_name("PATH"))
+        .arg(Arg::new("third").value_name("PATH"))
+        .group(
+            ArgGroup::new("paths")
+                .args(["first", "second"])
+                .required(true),
+        );
+    let validation = derive(&AppState::from_command(&command)).validation;
+    assert_eq!(validation.issues.len(), 1);
+    assert_eq!(validation.issues[0].argument_ids(), ["first", "second"]);
+    assert!(validation.field_error("third").is_none());
+}
+
+#[test]
 fn ambiguous_group_references_do_not_guess_multiplicity() {
     for help in [false, true] {
         for policies in [[true, false], [false, true]] {

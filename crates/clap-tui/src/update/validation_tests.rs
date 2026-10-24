@@ -194,6 +194,39 @@ fn missing_subcommand_targets_sidebar_and_unknown_target_is_a_noop() {
 }
 
 #[test]
+fn ambiguous_errors_offer_no_jump_and_preserve_focus_on_invalid_run() {
+    let command = Command::new("tool")
+        .arg(Arg::new("first").value_name("PATH").required(true))
+        .arg(
+            Arg::new("second")
+                .value_name("PATH")
+                .value_parser(["allowed"]),
+        );
+    for (width, height) in [(80, 24), (60, 20)] {
+        let mut state = AppState::from_command(&command);
+        state.domain.set_text_value("first", "valid");
+        state.domain.set_text_value("second", "invalid");
+        let (backend, snapshot) = draw(&mut state, width, height);
+        let text = backend
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        assert!(!text.contains("F8 ·"));
+        state.ui.focus_sidebar();
+        for action in [
+            jump_action(&state, &snapshot),
+            Action::ClickFooter(HoverTarget::FooterStatus),
+            Action::Run,
+        ] {
+            assert_eq!(apply_action(&action, &mut state, &snapshot), Effect::None);
+            assert_eq!(state.ui.focus, Focus::Sidebar);
+        }
+    }
+}
+
+#[test]
 fn long_group_instruction_wraps_once_and_highlights_every_alternative() {
     let command = Command::new("tool")
         .arg_required_else_help(true)
