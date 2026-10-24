@@ -176,22 +176,17 @@ fn preview_header_line(
     hidden: bool,
 ) -> Line<'static> {
     let title = if hidden {
-        "Command Preview · more ↓"
+        "Command Preview · more ↓ Ctrl+P expand"
     } else {
         "Command Preview"
     };
-    let hint = match (hidden, hovered) {
-        (true, true) => "Ctrl+P expand · Click or Ctrl+Y copies",
-        (true, false) => "Ctrl+P expand · Click/Ctrl+Y copy",
-        (false, true) => "Click or Ctrl+Y copies",
-        (false, false) => "Click/Ctrl+Y copy",
+    let hint = if hovered {
+        "Click or Ctrl+Y copies"
+    } else {
+        "Click/Ctrl+Y copy"
     };
     let hint = if usize::from(width) < title.chars().count() + hint.chars().count() + 4 {
-        if hidden {
-            "Ctrl+P expand"
-        } else {
-            "Ctrl+Y copy"
-        }
+        "Ctrl+Y copy"
     } else {
         hint
     };

@@ -57,7 +57,7 @@ fn dock_uses_spare_rows_and_marks_overflow() {
         let row = |y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>();
         assert!(row(1).contains("$ tool"));
         assert!(row(2).contains('x'));
-        assert_eq!(row(0).contains("more ↓"), hidden);
+        assert_eq!(row(0).contains("more ↓ Ctrl+P expand"), hidden);
         assert_eq!(row(0).contains("Ctrl+P expand"), hidden);
     }
 }
