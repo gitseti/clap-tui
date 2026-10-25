@@ -1,5 +1,6 @@
+use crate::sidebar::sections as sidebar_sections;
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -18,19 +19,9 @@ use super::styles::{self, SidebarRowState};
 
 pub(crate) fn populate_layout(area: Rect, vm: &ScreenView<'_>, frame_layout: &mut FrameLayout) {
     frame_layout.sidebar = Some(area);
-    let inner = area;
-    let sidebar = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Min(0),
-        ])
-        .split(inner);
-
-    frame_layout.search = Some(sidebar[1]);
+    let (_, search, list_area) = sidebar_sections(area);
+    frame_layout.search = Some(search);
     frame_layout.sidebar_items.clear();
-    let list_area = sidebar[2];
     frame_layout.sidebar_list = Some(list_area);
     let content_y = list_area.y;
     let content_x = list_area.x;
@@ -119,19 +110,6 @@ impl SidebarListView {
             needs_scrollbar,
         }
     }
-}
-
-fn sidebar_sections(area: Rect) -> (Rect, Rect, Rect) {
-    let inner = area;
-    let sidebar = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Min(0),
-        ])
-        .split(inner);
-    (sidebar[0], sidebar[1], sidebar[2])
 }
 
 fn render_title(
@@ -472,6 +450,7 @@ mod tests {
             dropdown_open: None,
             dropdown_scroll: 0,
             dropdown_cursor: 0,
+            sidebar: crate::sidebar::SidebarState::default(),
             sidebar_scroll: 1,
             form_scroll: 0,
             hover: None,

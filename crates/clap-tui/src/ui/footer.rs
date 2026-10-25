@@ -102,6 +102,12 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
     ];
     let candidates = vec![
         build_chip(ui, HoverTarget::Search, "/ Search", FooterChipKind::Subtle),
+        build_chip(
+            ui,
+            HoverTarget::FooterSidebarToggle,
+            "Ctrl+B Sidebar",
+            FooterChipKind::Subtle,
+        ),
         build_chip(ui, HoverTarget::Focus, "Focus", FooterChipKind::Subtle),
         build_chip(ui, HoverTarget::Help, "? Help", FooterChipKind::Subtle),
     ];
@@ -418,6 +424,7 @@ mod tests {
                 HoverTarget::Run,
                 HoverTarget::Exit,
                 HoverTarget::Search,
+                HoverTarget::FooterSidebarToggle,
                 HoverTarget::Focus,
                 HoverTarget::Help,
             ]
@@ -451,7 +458,7 @@ mod tests {
         assert!(view.actions[0].hovered);
         assert!(!view.actions[1].hovered);
         assert!(view.status.is_none());
-        assert_eq!(view.hints.len(), 3);
+        assert_eq!(view.hints.len(), 2);
     }
 
     #[test]
@@ -560,7 +567,7 @@ mod tests {
         );
 
         assert_eq!(view.status_offset, Some(28));
-        assert_eq!(view.hints_offset, Some(73));
+        assert_eq!(view.hints_offset, Some(56));
         assert!(view.status_offset.unwrap() < 50);
     }
 

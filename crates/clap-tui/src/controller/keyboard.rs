@@ -20,6 +20,9 @@ pub(crate) fn handle_key_event(
     if key.code == AppKeyCode::F(8) {
         return Some(Action::JumpToError);
     }
+    if key.code == AppKeyCode::Char('b') && key.modifiers.control {
+        return Some(Action::ToggleSidebar);
+    }
     if key.code == AppKeyCode::Char('r') && key.modifiers.control {
         return Some(Action::Run);
     }
@@ -205,7 +208,7 @@ fn is_form_text_input(key: AppKeyEvent, state: &AppState) -> bool {
 
     !matches!(
         key.code,
-        AppKeyCode::Tab | AppKeyCode::Up | AppKeyCode::Down | AppKeyCode::Esc
+        AppKeyCode::Tab | AppKeyCode::BackTab | AppKeyCode::Up | AppKeyCode::Down | AppKeyCode::Esc
     )
 }
 

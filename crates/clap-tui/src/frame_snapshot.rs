@@ -19,6 +19,9 @@ pub(crate) struct DropdownGeometry {
 
 #[derive(Debug, Default, Clone)]
 pub struct FrameLayout {
+    pub workspace: Option<Rect>,
+    pub sidebar_divider: Option<Rect>,
+    pub sidebar_toggle: Option<Rect>,
     pub sidebar: Option<Rect>,
     pub sidebar_list: Option<Rect>,
     pub form: Option<Rect>,
@@ -38,6 +41,7 @@ pub struct FrameLayout {
 #[derive(Debug, Default, Clone)]
 pub struct FrameSnapshot {
     pub layout: FrameLayout,
+    pub mouse_pointer: crate::runtime::MousePointer,
     pub form_scroll_max: u16,
     pub help_scroll_max: u16,
     pub preview_scroll_max: u16,
@@ -45,6 +49,24 @@ pub struct FrameSnapshot {
 }
 
 impl FrameSnapshot {
+    pub fn sidebar_control_at(&self, x: u16, y: u16) -> Option<HoverTarget> {
+        if self
+            .layout
+            .sidebar_toggle
+            .is_some_and(|area| contains(area, x, y))
+        {
+            Some(HoverTarget::SidebarToggle)
+        } else if self
+            .layout
+            .sidebar_divider
+            .is_some_and(|area| contains(area, x, y))
+        {
+            Some(HoverTarget::SidebarDivider)
+        } else {
+            None
+        }
+    }
+
     pub fn first_invalid_field_id(&self) -> Option<&str> {
         self.layout.invalid_field_ids.first().map(String::as_str)
     }
@@ -133,6 +155,11 @@ impl FrameSnapshot {
     pub fn sidebar_visible_rows(&self) -> Option<usize> {
         self.layout
             .sidebar_list
+            .or_else(|| {
+                self.layout
+                    .workspace
+                    .map(|area| crate::sidebar::sections(area).2)
+            })
             .map(|area| usize::from(area.height))
     }
 
@@ -512,6 +539,7 @@ mod tests {
             dropdown_open: None,
             dropdown_scroll: 0,
             dropdown_cursor: 0,
+            sidebar: crate::sidebar::SidebarState::default(),
             sidebar_scroll: 0,
             form_scroll: 0,
             hover: None,
@@ -574,6 +602,7 @@ mod tests {
             dropdown_open: None,
             dropdown_scroll: 0,
             dropdown_cursor: 0,
+            sidebar: crate::sidebar::SidebarState::default(),
             sidebar_scroll: 0,
             form_scroll: 0,
             hover: None,

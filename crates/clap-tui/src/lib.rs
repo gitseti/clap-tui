@@ -165,6 +165,7 @@ mod pipeline;
 mod query;
 mod repeated_field;
 mod runtime;
+mod sidebar;
 mod spec;
 mod ui;
 mod update;
@@ -178,5 +179,5 @@ pub use error::TuiError;
 /// Runtime customization surface for advanced integrations.
 pub use runtime::{
     AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, AppMouseButton, AppMouseEvent,
-    AppMouseEventKind, CrosstermRuntime, Runtime,
+    AppMouseEventKind, CrosstermRuntime, MousePointer, Runtime,
 };

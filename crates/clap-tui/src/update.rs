@@ -16,6 +16,8 @@ pub(crate) enum Action {
     Exit,
     Run,
     JumpToError,
+    ToggleSidebar,
+    ResizeSidebar(AppMouseEvent),
     CopyPreview,
     TogglePreview,
     ScrollPreview(i16),
@@ -71,6 +73,7 @@ pub(crate) fn apply_action(
             command::apply(action, state, frame_snapshot)
         }
         Action::JumpToError
+        | Action::ToggleSidebar
         | Action::TogglePreview
         | Action::ScrollPreview(_)
         | Action::PreviewBoundary { .. }
@@ -89,6 +92,7 @@ pub(crate) fn apply_action(
         | Action::CollapseSelected
         | Action::SelectSidebar
         | Action::ClickSidebar { .. }
+        | Action::ResizeSidebar(_)
         | Action::ScrollSidebar(_) => sidebar::apply(action, state, frame_snapshot),
         Action::ChoiceInput { .. }
         | Action::FormTextInput(_)

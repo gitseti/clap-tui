@@ -35,6 +35,7 @@ pub(super) fn ui_state() -> UiState {
         dropdown_open: None,
         dropdown_scroll: 0,
         dropdown_cursor: 0,
+        sidebar: crate::sidebar::SidebarState::default(),
         sidebar_scroll: 0,
         form_scroll: 0,
         hover: None,

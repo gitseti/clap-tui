@@ -10,6 +10,14 @@ pub(crate) fn handle_mouse_event(
     frame_snapshot: &FrameSnapshot,
     _config: &TuiConfig,
 ) -> Option<Action> {
+    if state.ui.sidebar.is_resizing()
+        || (matches!(event.kind, AppMouseEventKind::Down(AppMouseButton::Left))
+            && frame_snapshot
+                .sidebar_control_at(event.column, event.row)
+                .is_some())
+    {
+        return handle_sidebar_event(event, state, frame_snapshot);
+    }
     if let AppMouseEventKind::Moved = event.kind {
         return state.ui.mouse_select.as_ref().map_or(
             Some(Action::UpdateHover {
@@ -100,6 +108,27 @@ pub(crate) fn handle_mouse_event(
         return Some(Action::ScrollForm(-2));
     }
     None
+}
+
+fn handle_sidebar_event(
+    event: AppMouseEvent,
+    state: &AppState,
+    snapshot: &FrameSnapshot,
+) -> Option<Action> {
+    if state.ui.sidebar.is_resizing() {
+        return matches!(
+            event.kind,
+            AppMouseEventKind::Moved
+                | AppMouseEventKind::Drag(AppMouseButton::Left)
+                | AppMouseEventKind::Up(AppMouseButton::Left)
+        )
+        .then_some(Action::ResizeSidebar(event));
+    }
+    match snapshot.sidebar_control_at(event.column, event.row) {
+        Some(crate::input::HoverTarget::SidebarToggle) => Some(Action::ToggleSidebar),
+        Some(crate::input::HoverTarget::SidebarDivider) => Some(Action::ResizeSidebar(event)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

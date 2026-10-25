@@ -34,20 +34,25 @@ pub(crate) fn header_height(command: &CommandSpec, compact: bool) -> u16 {
 pub(crate) fn render_header(
     frame: &mut Frame<'_>,
     config: &TuiConfig,
-    area: Rect,
-    _focused: bool,
+    mut area: Rect,
+    toggle: Option<Rect>,
     vm: &ScreenView<'_>,
 ) {
     if area.height == 0 || area.width == 0 {
         return;
     }
+    if let Some(button) = toggle {
+        let inset = button
+            .right()
+            .saturating_add(1)
+            .saturating_sub(area.x)
+            .min(area.width);
+        area.x = area.x.saturating_add(inset);
+        area.width -= inset;
+    }
     frame.render_widget(
         Paragraph::new(header_lines(config, vm, area.height))
-            .style(styles::surface(config, styles::Surface::Workspace))
-            .block(
-                ratatui::widgets::Block::default()
-                    .style(styles::surface(config, styles::Surface::Workspace)),
-            ),
+            .style(styles::surface(config, styles::Surface::Workspace)),
         area,
     );
 }

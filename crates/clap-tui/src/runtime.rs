@@ -1,3 +1,5 @@
+#[cfg(feature = "mouse")]
+use std::io::Write;
 use std::io::{self, Stdout};
 use std::time::Duration;
 
@@ -248,6 +250,19 @@ impl From<Event> for AppEvent {
     }
 }
 
+/// Mouse pointer shape requested by the rendered interface.
+///
+/// Additional shapes may be added as more controls expose mouse affordances.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MousePointer {
+    /// Restore the terminal's normal pointer behavior.
+    #[default]
+    Default,
+    /// Horizontal resizing, such as dragging a pane divider.
+    ResizeHorizontal,
+}
+
 /// Runtime services required by `TuiApp`.
 ///
 /// Most applications should use [`CrosstermRuntime`]. Implement this trait only when you need
@@ -286,6 +301,12 @@ pub trait Runtime {
     ///
     /// Returns an error when event reading fails.
     fn read_event(&mut self) -> Result<AppEvent, TuiError>;
+
+    /// Request a mouse pointer shape, or restore the terminal's default pointer.
+    ///
+    /// This optional, best-effort capability defaults to doing nothing. Terminals without
+    /// mouse pointer shape support may ignore it.
+    fn set_mouse_pointer(&mut self, _pointer: MousePointer) {}
 
     /// Copy text to the system clipboard.
     ///
@@ -374,6 +395,23 @@ impl Runtime for CrosstermRuntime {
 
     fn read_event(&mut self) -> Result<AppEvent, TuiError> {
         event::read().map(AppEvent::from).map_err(TuiError::from)
+    }
+
+    #[cfg(feature = "mouse")]
+    fn set_mouse_pointer(&mut self, pointer: MousePointer) {
+        // OSC 22 mouse pointer shapes: https://sw.kovidgoyal.net/kitty/pointer-shapes/
+        let shape = match pointer {
+            MousePointer::Default => "default",
+            MousePointer::ResizeHorizontal => "ew-resize",
+        };
+        let mut stdout = io::stdout().lock();
+        let _ = write!(stdout, "\x1b]22;{shape}\x1b\\");
+        if pointer == MousePointer::Default {
+            // Older Ghostty versions ignore an empty reset. Set a usable fallback first,
+            // then let supporting terminals restore their own pointer policy.
+            let _ = stdout.write_all(b"\x1b]22;\x1b\\");
+        }
+        let _ = stdout.flush();
     }
 
     fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {

@@ -11,7 +11,7 @@ use crate::controller;
 use crate::error::TuiError;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
-use crate::runtime::{AppEvent, CrosstermRuntime, Runtime};
+use crate::runtime::{AppEvent, CrosstermRuntime, MousePointer, Runtime};
 use crate::ui;
 use crate::update::{self, Effect};
 
@@ -304,6 +304,7 @@ where
             session.draw(|frame| {
                 frame_snapshot = render_frame(frame, &mut state, config);
             })?;
+            session.set_mouse_pointer(frame_snapshot.mouse_pointer);
             observer.observe(session.backend(), &frame_snapshot)?;
             needs_redraw = false;
         }
@@ -448,6 +449,7 @@ enum EventOutcome {
 struct TerminalSession<'a, R: Runtime> {
     runtime: &'a mut R,
     terminal: Option<ratatui::Terminal<R::Backend>>,
+    mouse_pointer: MousePointer,
 }
 
 impl<'a, R: Runtime> TerminalSession<'a, R> {
@@ -455,6 +457,7 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
         Self {
             runtime,
             terminal: Some(terminal),
+            mouse_pointer: MousePointer::Default,
         }
     }
 
@@ -477,6 +480,13 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
             .backend()
     }
 
+    fn set_mouse_pointer(&mut self, pointer: MousePointer) {
+        if pointer != self.mouse_pointer {
+            self.runtime.set_mouse_pointer(pointer);
+            self.mouse_pointer = pointer;
+        }
+    }
+
     fn poll_event(&mut self, timeout: Duration) -> Result<bool, TuiError> {
         self.runtime.poll_event(timeout)
     }
@@ -492,6 +502,9 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
 
 impl<R: Runtime> Drop for TerminalSession<'_, R> {
     fn drop(&mut self) {
+        if self.mouse_pointer != MousePointer::Default {
+            self.runtime.set_mouse_pointer(MousePointer::Default);
+        }
         if let Some(mut terminal) = self.terminal.take() {
             self.runtime.restore_terminal(&mut terminal);
         }
@@ -521,7 +534,9 @@ mod tests {
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{AppState, Toast};
     use crate::pipeline;
-    use crate::runtime::{AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, Runtime};
+    use crate::runtime::{
+        AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, MousePointer, Runtime,
+    };
     use crate::spec::CommandSpec;
     use crate::update::Effect;
     use crate::{TuiConfig, TuiError};
@@ -535,6 +550,7 @@ mod tests {
         events: VecDeque<AppEvent>,
         clipboard_result: Result<(), String>,
         copied_text: Option<String>,
+        mouse_pointers: Vec<MousePointer>,
     }
 
     impl TestRuntime {
@@ -543,6 +559,7 @@ mod tests {
                 events: events.into_iter().collect(),
                 clipboard_result: Ok(()),
                 copied_text: None,
+                mouse_pointers: Vec::new(),
             }
         }
     }
@@ -565,6 +582,10 @@ mod tests {
             Ok(self.events.pop_front().expect("queued event"))
         }
 
+        fn set_mouse_pointer(&mut self, pointer: MousePointer) {
+            self.mouse_pointers.push(pointer);
+        }
+
         fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
             self.copied_text = Some(text.to_string());
             self.clipboard_result.clone()
@@ -582,6 +603,31 @@ mod tests {
 
     fn app_state_from_command(command: &Command) -> AppState {
         AppState::from_command(command)
+    }
+
+    #[test]
+    fn mouse_pointer_changes_are_deduplicated_and_reset_on_drop() {
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        session.set_mouse_pointer(MousePointer::ResizeHorizontal);
+        session.set_mouse_pointer(MousePointer::ResizeHorizontal);
+        assert_eq!(
+            session.runtime.mouse_pointers,
+            [MousePointer::ResizeHorizontal]
+        );
+        session.set_mouse_pointer(MousePointer::Default);
+        session.set_mouse_pointer(MousePointer::Default);
+        session.set_mouse_pointer(MousePointer::ResizeHorizontal);
+        drop(session);
+        assert_eq!(
+            runtime.mouse_pointers,
+            [
+                MousePointer::ResizeHorizontal,
+                MousePointer::Default,
+                MousePointer::ResizeHorizontal,
+                MousePointer::Default,
+            ]
+        );
     }
 
     #[test]
