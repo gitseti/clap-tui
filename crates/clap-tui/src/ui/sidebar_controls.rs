@@ -37,19 +37,14 @@ pub(crate) fn render(
     if let Some(toggle) = snapshot.layout.sidebar_toggle {
         let hovered = ui.hover == Some(HoverTarget::SidebarToggle);
         frame.render_widget(
-            Paragraph::new(if ui.sidebar.collapsed { "›" } else { "‹" }).style(
-                Style::default()
-                    .fg(if hovered {
-                        config.theme.accent
-                    } else {
-                        config.theme.metadata
-                    })
-                    .bg(if hovered {
-                        config.theme.badge_bg
-                    } else {
-                        config.theme.workspace_bg
-                    }),
-            ),
+            Paragraph::new(if ui.sidebar.collapsed {
+                " › "
+            } else {
+                " ‹ "
+            })
+            .style(super::styles::compact_control_affordance(
+                config, hovered, false,
+            )),
             toggle,
         );
     }

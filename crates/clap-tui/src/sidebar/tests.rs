@@ -118,12 +118,13 @@ fn drag_collapse_and_reopen_keep_width_and_form_values() {
             assert!(state.ui.sidebar.collapsed);
         }
         let control = hidden.layout.sidebar_toggle.unwrap();
+        assert_eq!(control.width, 3);
         event(
             &mut state,
             &hidden,
             &mouse(
                 AppMouseEventKind::Down(AppMouseButton::Left),
-                control.x,
+                control.right() - 1,
                 control.y,
             ),
         );

@@ -137,7 +137,12 @@ pub(crate) fn build_screen_layout(
     if body_area.width > 0 && body_area.height > 0 {
         snapshot.layout.sidebar_divider =
             Some(Rect::new(main_area.x, body_area.y, 1, body_area.height));
-        snapshot.layout.sidebar_toggle = Some(Rect::new(main_area.x, body_area.y, 1, 1));
+        snapshot.layout.sidebar_toggle = Some(Rect::new(
+            main_area.x,
+            body_area.y,
+            crate::sidebar::TOGGLE_WIDTH.min(main_area.width),
+            1,
+        ));
     }
     if sidebar_area.width > 0 {
         sidebar::populate_layout(sidebar_area, vm, &mut snapshot.layout);

@@ -2,6 +2,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 const MIN_SIDEBAR_WIDTH: u16 = 16;
 const MIN_MAIN_WIDTH: u16 = 20;
+pub(crate) const TOGGLE_WIDTH: u16 = 3;
 
 #[derive(Debug, Default)]
 pub struct SidebarState {
