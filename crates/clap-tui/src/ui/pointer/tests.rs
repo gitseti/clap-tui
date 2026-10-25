@@ -182,6 +182,16 @@ fn repeated_row_buttons_and_optional_value_modes_follow_current_state() {
     ui.mouse(Down(Left), add);
     ui.mouse(Up(Left), add);
     assert_eq!(ui.field("items").full_input_height, 6);
+    // The former Add position is blank once this is no longer the last row.
+    ui.hover(add, Normal);
+    ui.mouse(Down(Left), add);
+    ui.mouse(Up(Left), add);
+    assert_eq!(ui.field("items").full_input_height, 6);
+    let last_add = Position::new(add.x, add.y + 3);
+    ui.hover(last_add, Hand);
+    ui.mouse(Down(Left), last_add);
+    ui.mouse(Up(Left), last_add);
+    assert_eq!(ui.field("items").full_input_height, 9);
     let repeated = ui.field("items").input;
     ui.hover(Position::new(repeated.right() - 5, repeated.y + 1), Hand);
     ui.hover(Position::new(repeated.x + 1, repeated.y + 4), Text);

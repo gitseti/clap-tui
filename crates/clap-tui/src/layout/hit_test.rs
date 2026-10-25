@@ -84,7 +84,8 @@ pub(crate) fn repeated_input_target_from_point(
     {
         return Some(RepeatedInputTarget::Remove { row });
     }
-    if let Some(add) = repeated_child_rect(row_rect, repeated_add_rect(row_rect.rect()))
+    if show_add
+        && let Some(add) = repeated_child_rect(row_rect, repeated_add_rect(row_rect.rect()))
         && add.contains(x, y)
     {
         return Some(RepeatedInputTarget::Add { row });
