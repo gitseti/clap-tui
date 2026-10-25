@@ -387,9 +387,14 @@ impl Runtime for CrosstermRuntime {
     #[cfg(feature = "mouse")]
     fn set_resize_cursor(&mut self, active: bool) {
         // OSC 22 mouse pointer shapes: https://sw.kovidgoyal.net/kitty/pointer-shapes/
-        let shape = if active { "ew-resize" } else { "" };
+        let shape = if active { "ew-resize" } else { "default" };
         let mut stdout = io::stdout().lock();
         let _ = write!(stdout, "\x1b]22;{shape}\x1b\\");
+        if !active {
+            // Older Ghostty versions ignore an empty reset. Set a usable fallback first,
+            // then let supporting terminals restore their own pointer policy.
+            let _ = stdout.write_all(b"\x1b]22;\x1b\\");
+        }
         let _ = stdout.flush();
     }
 
