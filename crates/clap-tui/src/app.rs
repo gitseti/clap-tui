@@ -304,6 +304,7 @@ where
             session.draw(|frame| {
                 frame_snapshot = render_frame(frame, &mut state, config);
             })?;
+            session.update_resize_cursor(&state.ui);
             observer.observe(session.backend(), &frame_snapshot)?;
             needs_redraw = false;
         }
@@ -448,6 +449,7 @@ enum EventOutcome {
 struct TerminalSession<'a, R: Runtime> {
     runtime: &'a mut R,
     terminal: Option<ratatui::Terminal<R::Backend>>,
+    resize_cursor: bool,
 }
 
 impl<'a, R: Runtime> TerminalSession<'a, R> {
@@ -455,6 +457,7 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
         Self {
             runtime,
             terminal: Some(terminal),
+            resize_cursor: false,
         }
     }
 
@@ -477,6 +480,18 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
             .backend()
     }
 
+    fn update_resize_cursor(&mut self, ui: &crate::input::UiState) {
+        let active = !ui.sidebar.collapsed
+            && !ui.preview_open
+            && !ui.help_open
+            && (ui.sidebar.is_resizing()
+                || ui.hover == Some(crate::input::HoverTarget::SidebarDivider));
+        if active != self.resize_cursor {
+            self.runtime.set_resize_cursor(active);
+            self.resize_cursor = active;
+        }
+    }
+
     fn poll_event(&mut self, timeout: Duration) -> Result<bool, TuiError> {
         self.runtime.poll_event(timeout)
     }
@@ -492,6 +507,9 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
 
 impl<R: Runtime> Drop for TerminalSession<'_, R> {
     fn drop(&mut self) {
+        if self.resize_cursor {
+            self.runtime.set_resize_cursor(false);
+        }
         if let Some(mut terminal) = self.terminal.take() {
             self.runtime.restore_terminal(&mut terminal);
         }
@@ -535,6 +553,7 @@ mod tests {
         events: VecDeque<AppEvent>,
         clipboard_result: Result<(), String>,
         copied_text: Option<String>,
+        resize_cursors: Vec<bool>,
     }
 
     impl TestRuntime {
@@ -543,6 +562,7 @@ mod tests {
                 events: events.into_iter().collect(),
                 clipboard_result: Ok(()),
                 copied_text: None,
+                resize_cursors: Vec::new(),
             }
         }
     }
@@ -565,6 +585,10 @@ mod tests {
             Ok(self.events.pop_front().expect("queued event"))
         }
 
+        fn set_resize_cursor(&mut self, active: bool) {
+            self.resize_cursors.push(active);
+        }
+
         fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
             self.copied_text = Some(text.to_string());
             self.clipboard_result.clone()
@@ -582,6 +606,43 @@ mod tests {
 
     fn app_state_from_command(command: &Command) -> AppState {
         AppState::from_command(command)
+    }
+
+    #[test]
+    fn resize_cursor_tracks_hover_drag_overlays_and_session_cleanup() {
+        let mut runtime = TestRuntime::with_events([]);
+        let mut session = terminal_session(&mut runtime);
+        let mut state = app_state();
+        state.ui.hover = Some(crate::input::HoverTarget::SidebarDivider);
+        session.update_resize_cursor(&state.ui);
+        session.update_resize_cursor(&state.ui);
+        assert_eq!(session.runtime.resize_cursors, [true]);
+
+        state.ui.sidebar.start_resize(22, 22);
+        state.ui.hover = None;
+        session.update_resize_cursor(&state.ui);
+        assert_eq!(session.runtime.resize_cursors, [true]);
+        state.ui.sidebar.stop_resize();
+        session.update_resize_cursor(&state.ui);
+
+        state.ui.hover = Some(crate::input::HoverTarget::SidebarDivider);
+        session.update_resize_cursor(&state.ui);
+        state.ui.preview_open = true;
+        session.update_resize_cursor(&state.ui);
+        state.ui.preview_open = false;
+        state.ui.help_open = true;
+        session.update_resize_cursor(&state.ui);
+        state.ui.help_open = false;
+        state.ui.sidebar.collapsed = true;
+        session.update_resize_cursor(&state.ui);
+        state.ui.sidebar.collapsed = false;
+        session.update_resize_cursor(&state.ui);
+        drop(session);
+
+        assert_eq!(
+            runtime.resize_cursors,
+            [true, false, true, false, true, false]
+        );
     }
 
     #[test]

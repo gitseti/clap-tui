@@ -1,3 +1,5 @@
+#[cfg(feature = "mouse")]
+use std::io::Write;
 use std::io::{self, Stdout};
 use std::time::Duration;
 
@@ -287,6 +289,12 @@ pub trait Runtime {
     /// Returns an error when event reading fails.
     fn read_event(&mut self) -> Result<AppEvent, TuiError>;
 
+    /// Request a horizontal resize pointer, or restore the terminal's default pointer.
+    ///
+    /// This optional, best-effort capability defaults to doing nothing. Terminals without
+    /// mouse pointer shape support may ignore it.
+    fn set_resize_cursor(&mut self, _active: bool) {}
+
     /// Copy text to the system clipboard.
     ///
     /// # Errors
@@ -374,6 +382,15 @@ impl Runtime for CrosstermRuntime {
 
     fn read_event(&mut self) -> Result<AppEvent, TuiError> {
         event::read().map(AppEvent::from).map_err(TuiError::from)
+    }
+
+    #[cfg(feature = "mouse")]
+    fn set_resize_cursor(&mut self, active: bool) {
+        // OSC 22 mouse pointer shapes: https://sw.kovidgoyal.net/kitty/pointer-shapes/
+        let shape = if active { "ew-resize" } else { "" };
+        let mut stdout = io::stdout().lock();
+        let _ = write!(stdout, "\x1b]22;{shape}\x1b\\");
+        let _ = stdout.flush();
     }
 
     fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
