@@ -1,3 +1,5 @@
+mod pointer;
+
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
@@ -124,6 +126,7 @@ pub struct UiState {
     pub sidebar_scroll: usize,
     pub sidebar: crate::sidebar::SidebarState,
     pub form_scroll: u16,
+    pub mouse_position: Option<ratatui::layout::Position>,
     pub hover: Option<HoverTarget>,
     pub hover_tab: Option<ActiveTab>,
     pub mouse_select: Option<MouseSelection>,
@@ -1098,6 +1101,7 @@ impl AppState {
                 sidebar: crate::sidebar::SidebarState::default(),
                 sidebar_scroll: 0,
                 form_scroll: 0,
+                mouse_position: None,
                 hover: None,
                 hover_tab: None,
                 mouse_select: None,

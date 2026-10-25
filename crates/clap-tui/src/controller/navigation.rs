@@ -221,27 +221,17 @@ pub(crate) fn activate_form_field(state: &mut AppState, frame_snapshot: &FrameSn
         state.domain.increment_counter(&arg.id);
     } else if matches!(item.widget, FieldWidget::OptionalValue) {
         let owner_key = state.domain.command_path_key_for(arg.owner_path());
-        let state_kind = state
+        let input = state
             .domain
             .forms
             .get(&owner_key)
-            .and_then(|form| form.input(&arg.id))
-            .map(|input| match &input.value {
-                crate::input::ArgInput::Flag { present: true, .. } => "flag",
-                crate::input::ArgInput::Values { occurrences }
-                    if input.touched
-                        && occurrences.iter().any(|occurrence| {
-                            occurrence.values.iter().any(|value| !value.is_empty())
-                        }) =>
-                {
-                    "value"
-                }
-                _ => "empty",
-            });
-        match state_kind {
-            Some("flag") => state.domain.clear_value_and_untouch(&arg.id),
-            Some("value") => state.ui.focus_form(),
-            _ => state.domain.toggle_optional_value_flag(&arg.id, true),
+            .and_then(|form| form.input(&arg.id));
+        match form::optional_value_action(input) {
+            form::OptionalValueAction::Disable => state.domain.clear_value_and_untouch(&arg.id),
+            form::OptionalValueAction::Edit => state.ui.focus_form(),
+            form::OptionalValueAction::Enable => {
+                state.domain.toggle_optional_value_flag(&arg.id, true);
+            }
         }
     } else {
         state.ui.focus_form();

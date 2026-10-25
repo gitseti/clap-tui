@@ -1,7 +1,6 @@
 use std::ffi::OsString;
 
 mod command;
-mod field_hit;
 mod form;
 mod global;
 mod pointer;

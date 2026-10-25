@@ -1,4 +1,4 @@
-use crate::input::ActiveTab;
+use crate::input::{ActiveTab, ArgInput, ArgInputState};
 use crate::spec::{ArgActionKind, ArgSpec, CommandPath, CommandSpec, format_command_path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +22,32 @@ impl FieldWidget {
 
     pub(crate) fn uses_choice_popup(self) -> bool {
         matches!(self, Self::SingleChoice | Self::MultiChoice)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OptionalValueAction {
+    Enable,
+    Disable,
+    Edit,
+}
+
+pub(crate) fn optional_value_action(input: Option<&ArgInputState>) -> OptionalValueAction {
+    match input {
+        Some(ArgInputState {
+            value: ArgInput::Flag { present: true, .. },
+            ..
+        }) => OptionalValueAction::Disable,
+        Some(ArgInputState {
+            value: ArgInput::Values { occurrences },
+            touched: true,
+        }) if occurrences
+            .iter()
+            .any(|occurrence| occurrence.values.iter().any(|value| !value.is_empty())) =>
+        {
+            OptionalValueAction::Edit
+        }
+        _ => OptionalValueAction::Enable,
     }
 }
 

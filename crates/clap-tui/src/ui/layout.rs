@@ -145,7 +145,6 @@ pub(crate) fn build_screen_layout(
     }
     form::populate_layout(ui, areas.form, vm, &mut snapshot);
     footer::populate_layout(ui, footer_area, &vm.validation, &mut snapshot.layout);
-    snapshot.mouse_pointer = super::pointer::resolve(ui, &snapshot);
 
     ScreenLayout {
         areas: Some(areas),
@@ -183,6 +182,7 @@ mod tests {
             sidebar: crate::sidebar::SidebarState::default(),
             sidebar_scroll: 0,
             form_scroll: 0,
+            mouse_position: None,
             hover: None,
             hover_tab: None,
             mouse_select: None,

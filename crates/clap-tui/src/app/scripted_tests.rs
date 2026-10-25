@@ -372,3 +372,34 @@ fn f8_and_invalid_run_recover_without_losing_form_edits() {
         );
     }
 }
+
+#[test]
+fn mouse_motion_owned_by_preview_still_updates_pointer_and_survives_close() {
+    use crate::runtime::{AppMouseEvent, AppMouseEventKind, MousePointer};
+
+    let run = ScriptedHarness::new(Command::new("tool").arg(Arg::new("name").long("name")))
+        .script([
+            ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::key(AppKeyCode::Tab),
+            ScriptedStep::paste("x".repeat(400)),
+            ScriptedStep::ctrl(AppKeyCode::Char('p')),
+            ScriptedStep::raw(AppEvent::Mouse(AppMouseEvent {
+                kind: AppMouseEventKind::Moved,
+                column: 2,
+                row: 2,
+                modifiers: AppKeyModifiers::default(),
+            })),
+            ScriptedStep::key(AppKeyCode::Esc),
+            ScriptedStep::ctrl(AppKeyCode::Char('c')),
+        ])
+        .run()
+        .unwrap();
+    assert_eq!(run.outcome, ScriptedOutcome::Cancelled);
+    assert!(
+        run.frames
+            .iter()
+            .any(|frame| frame.snapshot.layout.sidebar.is_none()
+                && frame.snapshot.mouse_pointer == MousePointer::PointingHand)
+    );
+    assert_eq!(last_frame(&run).snapshot.mouse_pointer, MousePointer::Text);
+}

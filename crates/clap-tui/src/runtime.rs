@@ -261,6 +261,10 @@ pub enum MousePointer {
     Default,
     /// Horizontal resizing, such as dragging a pane divider.
     ResizeHorizontal,
+    /// A clickable control, such as a button or command row.
+    PointingHand,
+    /// Editable text content.
+    Text,
 }
 
 /// Runtime services required by `TuiApp`.
@@ -403,6 +407,8 @@ impl Runtime for CrosstermRuntime {
         let shape = match pointer {
             MousePointer::Default => "default",
             MousePointer::ResizeHorizontal => "ew-resize",
+            MousePointer::PointingHand => "pointer",
+            MousePointer::Text => "text",
         };
         let mut stdout = io::stdout().lock();
         let _ = write!(stdout, "\x1b]22;{shape}\x1b\\");

@@ -401,7 +401,8 @@ fn handle_app_event<R: Runtime>(
     config: &TuiConfig,
     session: &mut TerminalSession<'_, R>,
 ) -> EventOutcome {
-    let needs_redraw = clear_expired_toast_and_request_redraw(state);
+    let pointer_changed = state.ui.observe_pointer(event);
+    let needs_redraw = clear_expired_toast_and_request_redraw(state) || pointer_changed;
 
     match controller::handle_event(event, state, frame_snapshot, config) {
         controller::EventDecision::Action(action) => {
@@ -609,20 +610,23 @@ mod tests {
     fn mouse_pointer_changes_are_deduplicated_and_reset_on_drop() {
         let mut runtime = TestRuntime::with_events([]);
         let mut session = terminal_session(&mut runtime);
-        session.set_mouse_pointer(MousePointer::ResizeHorizontal);
-        session.set_mouse_pointer(MousePointer::ResizeHorizontal);
-        assert_eq!(
-            session.runtime.mouse_pointers,
-            [MousePointer::ResizeHorizontal]
-        );
-        session.set_mouse_pointer(MousePointer::Default);
-        session.set_mouse_pointer(MousePointer::Default);
+        for pointer in [
+            MousePointer::ResizeHorizontal,
+            MousePointer::PointingHand,
+            MousePointer::Text,
+            MousePointer::Default,
+        ] {
+            session.set_mouse_pointer(pointer);
+            session.set_mouse_pointer(pointer);
+        }
         session.set_mouse_pointer(MousePointer::ResizeHorizontal);
         drop(session);
         assert_eq!(
             runtime.mouse_pointers,
             [
                 MousePointer::ResizeHorizontal,
+                MousePointer::PointingHand,
+                MousePointer::Text,
                 MousePointer::Default,
                 MousePointer::ResizeHorizontal,
                 MousePointer::Default,

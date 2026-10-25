@@ -38,6 +38,7 @@ pub(super) fn ui_state() -> UiState {
         sidebar: crate::sidebar::SidebarState::default(),
         sidebar_scroll: 0,
         form_scroll: 0,
+        mouse_position: None,
         hover: None,
         hover_tab: None,
         mouse_select: None,

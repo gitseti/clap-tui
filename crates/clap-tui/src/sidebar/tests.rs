@@ -25,6 +25,7 @@ fn draw(state: &mut AppState, width: u16, height: u16) -> FrameSnapshot {
 }
 
 fn event(state: &mut AppState, snapshot: &FrameSnapshot, event: &AppEvent) {
+    state.ui.observe_pointer(event);
     let controller::EventDecision::Action(action) =
         controller::handle_event(event, state, snapshot, &TuiConfig::default())
     else {
@@ -153,7 +154,7 @@ fn button_free_motion_recovers_from_a_missing_release_without_resizing() {
             if target == HoverTarget::SidebarDivider {
                 MousePointer::ResizeHorizontal
             } else {
-                MousePointer::Default
+                MousePointer::PointingHand
             }
         );
         let button = recovered.layout.sidebar_toggle.unwrap();
@@ -194,7 +195,7 @@ fn rendered_pointer_matches_divider_interaction_during_help_and_dragging() {
     send_mouse(&mut state, &dragged, Up(Left), divider.x + 4, 4);
     assert_eq!(
         draw(&mut state, 80, 24).mouse_pointer,
-        MousePointer::Default
+        MousePointer::ResizeHorizontal
     );
     state.ui.hover = Some(HoverTarget::SidebarDivider);
     state.ui.toggle_sidebar();
@@ -206,7 +207,7 @@ fn rendered_pointer_matches_divider_interaction_during_help_and_dragging() {
     state.ui.hover = Some(HoverTarget::SidebarDivider);
     assert_eq!(
         draw(&mut state, 80, 24).mouse_pointer,
-        MousePointer::Default
+        MousePointer::PointingHand
     );
 }
 

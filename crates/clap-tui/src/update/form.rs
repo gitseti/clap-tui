@@ -9,10 +9,13 @@ use crate::query::{
 };
 use crate::repeated_field::repeated_input_height;
 use crate::runtime::{AppKeyCode, AppKeyEvent, AppMouseEvent};
+#[cfg(test)]
 use ratatui::layout::Rect;
 
-use super::field_hit::{self, RepeatedInputTarget};
 use super::{Action, Effect};
+use crate::layout::hit_test::{
+    self as field_hit, CounterClickTarget, RepeatedInputTarget, counter_click_target,
+};
 
 pub(crate) fn apply(
     action: &Action,
@@ -453,37 +456,6 @@ fn apply_counter_click(
         Some(CounterClickTarget::Decrement) => state.domain.decrement_counter(arg_id),
         Some(CounterClickTarget::Increment) => state.domain.increment_counter(arg_id),
         None => {}
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CounterClickTarget {
-    Decrement,
-    Increment,
-}
-
-fn counter_click_target(input: Rect, column: u16) -> Option<CounterClickTarget> {
-    if column < input.x || column >= input.x.saturating_add(input.width) || input.width == 0 {
-        return None;
-    }
-
-    let relative = column.saturating_sub(input.x);
-    if input.width < 7 {
-        return if relative < input.width / 2 {
-            Some(CounterClickTarget::Decrement)
-        } else {
-            Some(CounterClickTarget::Increment)
-        };
-    }
-
-    let minus_start = input.width.saturating_sub(7);
-    let plus_start = input.width.saturating_sub(3);
-    if relative >= minus_start && relative < minus_start.saturating_add(3) {
-        Some(CounterClickTarget::Decrement)
-    } else if relative >= plus_start && relative < input.width {
-        Some(CounterClickTarget::Increment)
-    } else {
-        None
     }
 }
 

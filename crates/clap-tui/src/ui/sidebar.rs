@@ -453,6 +453,7 @@ mod tests {
             sidebar: crate::sidebar::SidebarState::default(),
             sidebar_scroll: 1,
             form_scroll: 0,
+            mouse_position: None,
             hover: None,
             hover_tab: None,
             mouse_select: None,
