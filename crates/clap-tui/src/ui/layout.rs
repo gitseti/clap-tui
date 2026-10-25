@@ -145,6 +145,7 @@ pub(crate) fn build_screen_layout(
     }
     form::populate_layout(ui, areas.form, vm, &mut snapshot);
     footer::populate_layout(ui, footer_area, &vm.validation, &mut snapshot.layout);
+    snapshot.mouse_pointer = super::pointer::resolve(ui, &snapshot);
 
     ScreenLayout {
         areas: Some(areas),

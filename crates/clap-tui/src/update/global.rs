@@ -143,7 +143,9 @@ fn apply_footer_click(
             Effect::None
         }
         HoverTarget::FooterStatus => apply(&Action::JumpToError, state, frame_snapshot),
-        HoverTarget::SidebarToggle => apply(&Action::ToggleSidebar, state, frame_snapshot),
+        HoverTarget::SidebarToggle | HoverTarget::FooterSidebarToggle => {
+            apply(&Action::ToggleSidebar, state, frame_snapshot)
+        }
         HoverTarget::SidebarDivider | HoverTarget::Preview => Effect::None,
     }
 }

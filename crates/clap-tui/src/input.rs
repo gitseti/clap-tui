@@ -77,6 +77,7 @@ pub enum HoverTarget {
     Preview,
     FooterStatus,
     SidebarToggle,
+    FooterSidebarToggle,
     SidebarDivider,
 }
 

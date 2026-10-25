@@ -41,6 +41,7 @@ pub struct FrameLayout {
 #[derive(Debug, Default, Clone)]
 pub struct FrameSnapshot {
     pub layout: FrameLayout,
+    pub mouse_pointer: crate::runtime::MousePointer,
     pub form_scroll_max: u16,
     pub help_scroll_max: u16,
     pub preview_scroll_max: u16,

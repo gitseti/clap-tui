@@ -3,6 +3,7 @@ mod footer;
 mod form;
 mod header;
 mod layout;
+mod pointer;
 mod preview;
 pub(crate) mod screen;
 mod sidebar;

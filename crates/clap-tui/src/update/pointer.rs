@@ -85,7 +85,12 @@ fn apply_mouse_selection(
     state.ui.set_mouse_selection(Some(selection));
 }
 
-fn apply_hover_update(state: &mut AppState, frame_snapshot: &FrameSnapshot, x: u16, y: u16) {
+pub(super) fn apply_hover_update(
+    state: &mut AppState,
+    frame_snapshot: &FrameSnapshot,
+    x: u16,
+    y: u16,
+) {
     let hover = if let Some(control) = frame_snapshot.sidebar_control_at(x, y) {
         Some(control)
     } else if frame_snapshot.preview_contains(x, y) {

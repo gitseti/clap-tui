@@ -37,8 +37,12 @@ fn resize_sidebar(event: AppMouseEvent, state: &mut AppState, snapshot: &FrameSn
                 state.ui.sidebar.start_resize(event.column, area.width);
             }
         }
-        AppMouseEventKind::Drag(AppMouseButton::Left) | AppMouseEventKind::Moved => {
+        AppMouseEventKind::Drag(AppMouseButton::Left) => {
             state.ui.sidebar.resize_to(event.column, workspace.width);
+        }
+        AppMouseEventKind::Moved => {
+            state.ui.sidebar.stop_resize();
+            super::pointer::apply_hover_update(state, snapshot, event.column, event.row);
         }
         AppMouseEventKind::Up(AppMouseButton::Left) => {
             state.ui.sidebar.resize_to(event.column, workspace.width);

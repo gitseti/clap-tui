@@ -7,7 +7,7 @@ use crate::{
     input::{AppState, Focus, HoverTarget, MouseSelection},
     runtime::{
         AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, AppMouseButton, AppMouseEvent,
-        AppMouseEventKind,
+        AppMouseEventKind, MousePointer,
     },
     update::{Effect, apply_action},
 };
@@ -47,6 +47,214 @@ fn toggle() -> AppEvent {
             ..AppKeyModifiers::default()
         },
     ))
+}
+
+#[test]
+fn header_and_footer_toggles_highlight_independently_but_share_the_action() {
+    let mut state = AppState::from_command(&Command::new("tool"));
+    let config = TuiConfig::default();
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+    let mut snapshot = FrameSnapshot::default();
+    terminal
+        .draw(|frame| snapshot = crate::ui::render(frame, &mut state, &config))
+        .unwrap();
+    let header = snapshot.layout.sidebar_toggle.unwrap();
+    let footer = snapshot
+        .layout
+        .footer_buttons
+        .iter()
+        .find(|button| button.target == HoverTarget::FooterSidebarToggle)
+        .unwrap()
+        .rect;
+    for (target, area) in [
+        (HoverTarget::SidebarToggle, header),
+        (HoverTarget::FooterSidebarToggle, footer),
+    ] {
+        event(
+            &mut state,
+            &snapshot,
+            &mouse(AppMouseEventKind::Moved, area.x, area.y),
+        );
+        assert_eq!(state.ui.hover, Some(target));
+        terminal
+            .draw(|frame| snapshot = crate::ui::render(frame, &mut state, &config))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(header.x + 1, header.y)].fg,
+            if target == HoverTarget::SidebarToggle {
+                config.theme.accent
+            } else {
+                config.theme.metadata
+            }
+        );
+        assert_eq!(
+            buffer[(header.x + 1, header.y)].bg,
+            config.theme.workspace_bg
+        );
+        assert_eq!(
+            buffer[(footer.x, footer.y)].fg,
+            if target == HoverTarget::FooterSidebarToggle {
+                config.theme.metadata
+            } else {
+                config.theme.dim
+            }
+        );
+    }
+    event(
+        &mut state,
+        &snapshot,
+        &mouse(
+            AppMouseEventKind::Down(AppMouseButton::Left),
+            footer.x,
+            footer.y,
+        ),
+    );
+    assert!(state.ui.sidebar.collapsed);
+}
+
+#[test]
+fn button_free_motion_recovers_from_a_missing_release_without_resizing() {
+    for target in [
+        HoverTarget::Run,
+        HoverTarget::SidebarToggle,
+        HoverTarget::SidebarDivider,
+    ] {
+        let mut state = AppState::from_command(&Command::new("tool"));
+        let before = draw(&mut state, 80, 24);
+        let divider = before.layout.sidebar_divider.unwrap();
+        event(
+            &mut state,
+            &before,
+            &mouse(AppMouseEventKind::Down(AppMouseButton::Left), divider.x, 4),
+        );
+        event(
+            &mut state,
+            &before,
+            &mouse(
+                AppMouseEventKind::Drag(AppMouseButton::Left),
+                divider.x + 4,
+                4,
+            ),
+        );
+        let dragged = draw(&mut state, 80, 24);
+        let width = dragged.layout.sidebar.unwrap().width;
+        assert_eq!(dragged.mouse_pointer, MousePointer::ResizeHorizontal);
+        let area = match target {
+            HoverTarget::Run => {
+                dragged
+                    .layout
+                    .footer_buttons
+                    .iter()
+                    .find(|button| button.target == target)
+                    .unwrap()
+                    .rect
+            }
+            HoverTarget::SidebarToggle => dragged.layout.sidebar_toggle.unwrap(),
+            HoverTarget::SidebarDivider => dragged.layout.sidebar_divider.unwrap(),
+            _ => unreachable!(),
+        };
+        event(
+            &mut state,
+            &dragged,
+            &mouse(AppMouseEventKind::Moved, area.x, area.y),
+        );
+        assert!(!state.ui.sidebar.is_resizing());
+        assert_eq!(state.ui.hover, Some(target));
+        let recovered = draw(&mut state, 80, 24);
+        assert_eq!(recovered.layout.sidebar.unwrap().width, width);
+        assert_eq!(
+            recovered.mouse_pointer,
+            if target == HoverTarget::SidebarDivider {
+                MousePointer::ResizeHorizontal
+            } else {
+                MousePointer::Default
+            }
+        );
+        let button = recovered.layout.sidebar_toggle.unwrap();
+        event(
+            &mut state,
+            &recovered,
+            &mouse(
+                AppMouseEventKind::Down(AppMouseButton::Left),
+                button.x,
+                button.y,
+            ),
+        );
+        assert!(
+            state.ui.sidebar.collapsed,
+            "normal clicks resume after capture ends"
+        );
+    }
+}
+
+#[test]
+fn rendered_pointer_matches_divider_interaction_during_help_and_dragging() {
+    let mut state = AppState::from_command(&Command::new("tool"));
+    let before = draw(&mut state, 80, 24);
+    let divider = before.layout.sidebar_divider.unwrap();
+    event(
+        &mut state,
+        &before,
+        &mouse(AppMouseEventKind::Moved, divider.x, 4),
+    );
+    event(
+        &mut state,
+        &before,
+        &AppEvent::Key(AppKeyEvent::new(
+            AppKeyCode::Char('?'),
+            AppKeyModifiers::default(),
+        )),
+    );
+    assert!(state.ui.help_open);
+    let help = draw(&mut state, 80, 24);
+    assert_eq!(help.mouse_pointer, MousePointer::ResizeHorizontal);
+    event(
+        &mut state,
+        &help,
+        &mouse(AppMouseEventKind::Down(AppMouseButton::Left), divider.x, 4),
+    );
+    state.ui.hover = None;
+    event(
+        &mut state,
+        &help,
+        &mouse(
+            AppMouseEventKind::Drag(AppMouseButton::Left),
+            divider.x + 4,
+            4,
+        ),
+    );
+    let dragged = draw(&mut state, 80, 24);
+    assert_eq!(
+        dragged.layout.sidebar.unwrap().width,
+        before.layout.sidebar.unwrap().width + 4
+    );
+    assert_eq!(dragged.mouse_pointer, MousePointer::ResizeHorizontal);
+    event(
+        &mut state,
+        &dragged,
+        &mouse(
+            AppMouseEventKind::Up(AppMouseButton::Left),
+            divider.x + 4,
+            4,
+        ),
+    );
+    assert_eq!(
+        draw(&mut state, 80, 24).mouse_pointer,
+        MousePointer::Default
+    );
+    state.ui.hover = Some(HoverTarget::SidebarDivider);
+    state.ui.toggle_sidebar();
+    assert_eq!(
+        draw(&mut state, 80, 24).mouse_pointer,
+        MousePointer::Default
+    );
+    state.ui.preview_open = true;
+    state.ui.hover = Some(HoverTarget::SidebarDivider);
+    assert_eq!(
+        draw(&mut state, 80, 24).mouse_pointer,
+        MousePointer::Default
+    );
 }
 
 #[test]

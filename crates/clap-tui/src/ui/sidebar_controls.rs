@@ -9,6 +9,7 @@ use crate::{
     config::TuiConfig,
     frame_snapshot::{FrameLayout, FrameSnapshot},
     input::{HoverTarget, UiState},
+    runtime::MousePointer,
 };
 
 pub(crate) fn populate_layout(sidebar: Rect, main: Rect, header: Rect, layout: &mut FrameLayout) {
@@ -28,7 +29,7 @@ pub(crate) fn render(
     snapshot: &FrameSnapshot,
 ) {
     if let Some(divider) = snapshot.layout.sidebar_divider {
-        let active = ui.sidebar.is_resizing() || ui.hover == Some(HoverTarget::SidebarDivider);
+        let active = snapshot.mouse_pointer == MousePointer::ResizeHorizontal;
         frame.render_widget(
             Paragraph::new(
                 (0..divider.height)

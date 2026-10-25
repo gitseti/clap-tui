@@ -11,7 +11,7 @@ use crate::controller;
 use crate::error::TuiError;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
-use crate::runtime::{AppEvent, CrosstermRuntime, Runtime};
+use crate::runtime::{AppEvent, CrosstermRuntime, MousePointer, Runtime};
 use crate::ui;
 use crate::update::{self, Effect};
 
@@ -304,7 +304,7 @@ where
             session.draw(|frame| {
                 frame_snapshot = render_frame(frame, &mut state, config);
             })?;
-            session.update_resize_cursor(&state.ui);
+            session.set_mouse_pointer(frame_snapshot.mouse_pointer);
             observer.observe(session.backend(), &frame_snapshot)?;
             needs_redraw = false;
         }
@@ -449,7 +449,7 @@ enum EventOutcome {
 struct TerminalSession<'a, R: Runtime> {
     runtime: &'a mut R,
     terminal: Option<ratatui::Terminal<R::Backend>>,
-    resize_cursor: bool,
+    mouse_pointer: MousePointer,
 }
 
 impl<'a, R: Runtime> TerminalSession<'a, R> {
@@ -457,7 +457,7 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
         Self {
             runtime,
             terminal: Some(terminal),
-            resize_cursor: false,
+            mouse_pointer: MousePointer::Default,
         }
     }
 
@@ -480,15 +480,10 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
             .backend()
     }
 
-    fn update_resize_cursor(&mut self, ui: &crate::input::UiState) {
-        let active = !ui.sidebar.collapsed
-            && !ui.preview_open
-            && !ui.help_open
-            && (ui.sidebar.is_resizing()
-                || ui.hover == Some(crate::input::HoverTarget::SidebarDivider));
-        if active != self.resize_cursor {
-            self.runtime.set_resize_cursor(active);
-            self.resize_cursor = active;
+    fn set_mouse_pointer(&mut self, pointer: MousePointer) {
+        if pointer != self.mouse_pointer {
+            self.runtime.set_mouse_pointer(pointer);
+            self.mouse_pointer = pointer;
         }
     }
 
@@ -507,8 +502,8 @@ impl<'a, R: Runtime> TerminalSession<'a, R> {
 
 impl<R: Runtime> Drop for TerminalSession<'_, R> {
     fn drop(&mut self) {
-        if self.resize_cursor {
-            self.runtime.set_resize_cursor(false);
+        if self.mouse_pointer != MousePointer::Default {
+            self.runtime.set_mouse_pointer(MousePointer::Default);
         }
         if let Some(mut terminal) = self.terminal.take() {
             self.runtime.restore_terminal(&mut terminal);
@@ -539,7 +534,9 @@ mod tests {
     use crate::frame_snapshot::FrameSnapshot;
     use crate::input::{AppState, Toast};
     use crate::pipeline;
-    use crate::runtime::{AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, Runtime};
+    use crate::runtime::{
+        AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, MousePointer, Runtime,
+    };
     use crate::spec::CommandSpec;
     use crate::update::Effect;
     use crate::{TuiConfig, TuiError};
@@ -553,7 +550,7 @@ mod tests {
         events: VecDeque<AppEvent>,
         clipboard_result: Result<(), String>,
         copied_text: Option<String>,
-        resize_cursors: Vec<bool>,
+        mouse_pointers: Vec<MousePointer>,
     }
 
     impl TestRuntime {
@@ -562,7 +559,7 @@ mod tests {
                 events: events.into_iter().collect(),
                 clipboard_result: Ok(()),
                 copied_text: None,
-                resize_cursors: Vec::new(),
+                mouse_pointers: Vec::new(),
             }
         }
     }
@@ -585,8 +582,8 @@ mod tests {
             Ok(self.events.pop_front().expect("queued event"))
         }
 
-        fn set_resize_cursor(&mut self, active: bool) {
-            self.resize_cursors.push(active);
+        fn set_mouse_pointer(&mut self, pointer: MousePointer) {
+            self.mouse_pointers.push(pointer);
         }
 
         fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
@@ -609,39 +606,27 @@ mod tests {
     }
 
     #[test]
-    fn resize_cursor_tracks_hover_drag_overlays_and_session_cleanup() {
+    fn mouse_pointer_changes_are_deduplicated_and_reset_on_drop() {
         let mut runtime = TestRuntime::with_events([]);
         let mut session = terminal_session(&mut runtime);
-        let mut state = app_state();
-        state.ui.hover = Some(crate::input::HoverTarget::SidebarDivider);
-        session.update_resize_cursor(&state.ui);
-        session.update_resize_cursor(&state.ui);
-        assert_eq!(session.runtime.resize_cursors, [true]);
-
-        state.ui.sidebar.start_resize(22, 22);
-        state.ui.hover = None;
-        session.update_resize_cursor(&state.ui);
-        assert_eq!(session.runtime.resize_cursors, [true]);
-        state.ui.sidebar.stop_resize();
-        session.update_resize_cursor(&state.ui);
-
-        state.ui.hover = Some(crate::input::HoverTarget::SidebarDivider);
-        session.update_resize_cursor(&state.ui);
-        state.ui.preview_open = true;
-        session.update_resize_cursor(&state.ui);
-        state.ui.preview_open = false;
-        state.ui.help_open = true;
-        session.update_resize_cursor(&state.ui);
-        state.ui.help_open = false;
-        state.ui.sidebar.collapsed = true;
-        session.update_resize_cursor(&state.ui);
-        state.ui.sidebar.collapsed = false;
-        session.update_resize_cursor(&state.ui);
-        drop(session);
-
+        session.set_mouse_pointer(MousePointer::ResizeHorizontal);
+        session.set_mouse_pointer(MousePointer::ResizeHorizontal);
         assert_eq!(
-            runtime.resize_cursors,
-            [true, false, true, false, true, false]
+            session.runtime.mouse_pointers,
+            [MousePointer::ResizeHorizontal]
+        );
+        session.set_mouse_pointer(MousePointer::Default);
+        session.set_mouse_pointer(MousePointer::Default);
+        session.set_mouse_pointer(MousePointer::ResizeHorizontal);
+        drop(session);
+        assert_eq!(
+            runtime.mouse_pointers,
+            [
+                MousePointer::ResizeHorizontal,
+                MousePointer::Default,
+                MousePointer::ResizeHorizontal,
+                MousePointer::Default,
+            ]
         );
     }
 

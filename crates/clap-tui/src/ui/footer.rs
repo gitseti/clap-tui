@@ -104,7 +104,7 @@ fn build_footer_view(ui: &UiState, area: Rect, validation: &ValidationState) -> 
         build_chip(ui, HoverTarget::Search, "/ Search", FooterChipKind::Subtle),
         build_chip(
             ui,
-            HoverTarget::SidebarToggle,
+            HoverTarget::FooterSidebarToggle,
             "Ctrl+B Sidebar",
             FooterChipKind::Subtle,
         ),
@@ -424,7 +424,7 @@ mod tests {
                 HoverTarget::Run,
                 HoverTarget::Exit,
                 HoverTarget::Search,
-                HoverTarget::SidebarToggle,
+                HoverTarget::FooterSidebarToggle,
                 HoverTarget::Focus,
                 HoverTarget::Help,
             ]
