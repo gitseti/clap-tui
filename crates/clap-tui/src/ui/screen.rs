@@ -92,7 +92,8 @@ pub(crate) fn render(
     let mut vm = ScreenView::from_state(state, derived);
     vm.sidebar_scroll = state.ui.sidebar_scroll;
     let screen_layout = layout::build_screen_layout(&state.ui, config, size, &vm);
-    let frame_snapshot = screen_layout.snapshot;
+    let mut frame_snapshot = screen_layout.snapshot;
+    frame_snapshot.mouse_pointer = super::pointer::resolve(&state.ui, &frame_snapshot, &vm);
     let Some(areas) = screen_layout.areas else {
         preview::render_preview(frame, config, screen_layout.preview);
         toast::render_toast(frame, state, config, size);

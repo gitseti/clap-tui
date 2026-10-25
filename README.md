@@ -147,6 +147,8 @@ Available presets:
 
 ## Controls
 
+Supporting terminals show a hand over available actions, an I-beam over editable text, and a resize pointer over the sidebar divider. Disabled controls and noninteractive text keep the normal pointer.
+
 - `Ctrl+B` or the button next to the main title collapses/reopens the command sidebar; drag the divider to resize it
 - `Tab` switches focus
 - `Shift+Tab` cycles tabs

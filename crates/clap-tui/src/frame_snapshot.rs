@@ -212,11 +212,7 @@ impl FrameSnapshot {
     }
 
     pub fn dropdown_choice_index(&self, row: u16, scroll: usize) -> Option<usize> {
-        let area = self.layout.dropdown?;
-        if row <= area.y || row >= area.y + area.height - 1 {
-            return None;
-        }
-        Some(usize::from(row.saturating_sub(area.y + 1)) + scroll)
+        crate::layout::hit_test::dropdown_choice_index(self.layout.dropdown?, row, scroll)
     }
 
     pub fn dropdown_visible_rows(&self) -> Option<usize> {
@@ -542,6 +538,7 @@ mod tests {
             sidebar: crate::sidebar::SidebarState::default(),
             sidebar_scroll: 0,
             form_scroll: 0,
+            mouse_position: None,
             hover: None,
             hover_tab: None,
             mouse_select: None,
@@ -605,6 +602,7 @@ mod tests {
             sidebar: crate::sidebar::SidebarState::default(),
             sidebar_scroll: 0,
             form_scroll: 0,
+            mouse_position: None,
             hover: None,
             hover_tab: None,
             mouse_select: None,

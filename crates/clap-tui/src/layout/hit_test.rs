@@ -7,6 +7,13 @@ use crate::repeated_field::{
 
 const COMPACT_INPUT_HEIGHT: u16 = 3;
 
+pub(crate) fn dropdown_choice_index(area: Rect, row: u16, scroll: usize) -> Option<usize> {
+    if area.height < 2 || row <= area.y || row >= area.bottom().saturating_sub(1) {
+        return None;
+    }
+    Some(usize::from(row.saturating_sub(area.y + 1)) + scroll)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RepeatedInputTarget {
     Remove { row: u16 },
@@ -279,5 +286,36 @@ impl SignedRect {
             self.width,
             self.height,
         )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CounterClickTarget {
+    Decrement,
+    Increment,
+}
+
+pub(crate) fn counter_click_target(input: Rect, column: u16) -> Option<CounterClickTarget> {
+    if column < input.x || column >= input.x.saturating_add(input.width) || input.width == 0 {
+        return None;
+    }
+
+    let relative = column.saturating_sub(input.x);
+    if input.width < 7 {
+        return if relative < input.width / 2 {
+            Some(CounterClickTarget::Decrement)
+        } else {
+            Some(CounterClickTarget::Increment)
+        };
+    }
+
+    let minus_start = input.width.saturating_sub(7);
+    let plus_start = input.width.saturating_sub(3);
+    if relative >= minus_start && relative < minus_start.saturating_add(3) {
+        Some(CounterClickTarget::Decrement)
+    } else if relative >= plus_start && relative < input.width {
+        Some(CounterClickTarget::Increment)
+    } else {
+        None
     }
 }

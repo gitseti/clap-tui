@@ -4,8 +4,8 @@ use crate::input::AppState;
 use crate::query::form::{self, FieldWidget};
 use crate::runtime::AppMouseEvent;
 
-use super::field_hit;
 use super::{Action, Effect};
+use crate::layout::hit_test as field_hit;
 
 pub(crate) fn apply(
     action: &Action,
