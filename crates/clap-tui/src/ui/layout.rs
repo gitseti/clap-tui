@@ -90,16 +90,10 @@ pub(crate) fn build_screen_layout(
     let footer_area = vertical[2];
     let sidebar_width = ui.sidebar.width(body_area.width, sidebar_width);
     let sidebar_area = Rect::new(body_area.x, body_area.y, sidebar_width, body_area.height);
-    let rail_width = if ui.sidebar.collapsed {
-        crate::sidebar::TOGGLE_WIDTH.min(body_area.width.saturating_sub(1))
-    } else {
-        0
-    };
-    let main_offset = sidebar_width + rail_width;
     let main_area = Rect::new(
-        body_area.x.saturating_add(main_offset),
+        body_area.x.saturating_add(sidebar_width),
         body_area.y,
-        body_area.width.saturating_sub(main_offset),
+        body_area.width.saturating_sub(sidebar_width),
         body_area.height,
     );
     let main_inner = main_area.inner(Margin {
@@ -140,7 +134,12 @@ pub(crate) fn build_screen_layout(
     preview.populate_snapshot(&mut snapshot);
     snapshot.layout.footer = Some(footer_area);
     snapshot.layout.workspace = Some(body_area);
-    super::sidebar_controls::populate_layout(sidebar_area, main_area, &mut snapshot.layout);
+    super::sidebar_controls::populate_layout(
+        sidebar_area,
+        main_area,
+        areas.header,
+        &mut snapshot.layout,
+    );
     if sidebar_area.width > 0 {
         sidebar::populate_layout(sidebar_area, vm, &mut snapshot.layout);
     }

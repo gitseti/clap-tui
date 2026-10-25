@@ -1,7 +1,7 @@
 use crate::argv_serializer::RenderedCommand;
 use crate::config::TuiConfig;
 use crate::frame_snapshot::FrameSnapshot;
-use crate::input::{AppState, CommandFormState, Focus, UiState};
+use crate::input::{AppState, CommandFormState, UiState};
 use crate::pipeline::{
     self, EffectiveArgValue, FieldInstanceId, FieldSemantics, FieldVisibility, ValidationState,
 };
@@ -151,11 +151,16 @@ fn render_main(
     vm: &ScreenView<'_>,
     frame_snapshot: &FrameSnapshot,
 ) {
-    let workspace_focused = matches!(ui.focus, Focus::Form);
     let workspace = Block::default().style(styles::surface(config, styles::Surface::Workspace));
     frame.render_widget(workspace, area);
     if header_area.height > 0 && header_area.width > 0 {
-        header::render_header(frame, config, header_area, workspace_focused, vm);
+        header::render_header(
+            frame,
+            config,
+            header_area,
+            frame_snapshot.layout.sidebar_toggle,
+            vm,
+        );
     }
     form_ui::render_form(frame, ui, config, vm, frame_snapshot);
 }

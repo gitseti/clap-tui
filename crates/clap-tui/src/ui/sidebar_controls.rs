@@ -1,8 +1,8 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
-    widgets::{Block, Paragraph},
+    style::{Modifier, Style},
+    widgets::Paragraph,
 };
 
 use crate::{
@@ -11,13 +11,14 @@ use crate::{
     input::{HoverTarget, UiState},
 };
 
-pub(crate) fn populate_layout(sidebar: Rect, main: Rect, layout: &mut FrameLayout) {
-    if main.width == 0 || main.height == 0 {
-        return;
+pub(crate) fn populate_layout(sidebar: Rect, main: Rect, header: Rect, layout: &mut FrameLayout) {
+    if sidebar.width > 0 && main.width > 0 && main.height > 0 {
+        layout.sidebar_divider = Some(Rect::new(main.x, main.y, 1, main.height));
     }
-    layout.sidebar_divider = Some(Rect::new(main.x, main.y, 1, main.height));
-    let toggle_width = crate::sidebar::TOGGLE_WIDTH.min(main.x.saturating_sub(sidebar.x));
-    layout.sidebar_toggle = Some(Rect::new(main.x - toggle_width, main.y, toggle_width, 1));
+    if header.width > 0 && header.height > 0 {
+        let width = crate::sidebar::TOGGLE_WIDTH.min(header.width);
+        layout.sidebar_toggle = Some(Rect::new(header.x, header.y, width, 1));
+    }
 }
 
 pub(crate) fn render(
@@ -26,39 +27,27 @@ pub(crate) fn render(
     config: &TuiConfig,
     snapshot: &FrameSnapshot,
 ) {
-    let Some(divider) = snapshot.layout.sidebar_divider else {
-        return;
-    };
-    if ui.sidebar.collapsed
-        && let Some(toggle) = snapshot.layout.sidebar_toggle
-    {
+    if let Some(divider) = snapshot.layout.sidebar_divider {
+        let active = ui.sidebar.is_resizing() || ui.hover == Some(HoverTarget::SidebarDivider);
         frame.render_widget(
-            Block::default().style(super::styles::surface(
-                config,
-                super::styles::Surface::Workspace,
-            )),
-            Rect::new(toggle.x, divider.y, toggle.width, divider.height),
+            Paragraph::new(
+                (0..divider.height)
+                    .map(|_| "│")
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .style(
+                Style::default()
+                    .bg(config.theme.workspace_bg)
+                    .fg(if active {
+                        config.theme.accent
+                    } else {
+                        config.theme.divider
+                    }),
+            ),
+            divider,
         );
     }
-    let active = ui.sidebar.is_resizing() || ui.hover == Some(HoverTarget::SidebarDivider);
-    frame.render_widget(
-        Paragraph::new(
-            (0..divider.height)
-                .map(|_| "│")
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
-        .style(
-            Style::default()
-                .bg(config.theme.workspace_bg)
-                .fg(if active {
-                    config.theme.accent
-                } else {
-                    config.theme.divider
-                }),
-        ),
-        divider,
-    );
     if let Some(toggle) = snapshot.layout.sidebar_toggle {
         let hovered = ui.hover == Some(HoverTarget::SidebarToggle);
         frame.render_widget(
@@ -67,9 +56,13 @@ pub(crate) fn render(
             } else {
                 " ‹ "
             })
-            .style(super::styles::compact_control_affordance(
-                config, hovered, false,
-            )),
+            .style(if hovered {
+                Style::default()
+                    .fg(config.theme.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(config.theme.metadata)
+            }),
             toggle,
         );
     }
