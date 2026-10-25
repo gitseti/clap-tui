@@ -86,7 +86,9 @@ fn apply_mouse_selection(
 }
 
 fn apply_hover_update(state: &mut AppState, frame_snapshot: &FrameSnapshot, x: u16, y: u16) {
-    let hover = if frame_snapshot.preview_contains(x, y) {
+    let hover = if let Some(control) = frame_snapshot.sidebar_control_at(x, y) {
+        Some(control)
+    } else if frame_snapshot.preview_contains(x, y) {
         Some(crate::input::HoverTarget::Preview)
     } else {
         frame_snapshot.footer_target_at(x, y)

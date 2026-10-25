@@ -2,6 +2,7 @@ use crate::controller::navigation;
 use crate::frame_snapshot::FrameSnapshot;
 use crate::input::AppState;
 use crate::query::selectors;
+use crate::runtime::{AppMouseButton, AppMouseEvent, AppMouseEventKind};
 
 use super::{Action, Effect};
 
@@ -11,6 +12,7 @@ pub(crate) fn apply(
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
     match action {
+        Action::ResizeSidebar(event) => resize_sidebar(*event, state, frame_snapshot),
         Action::MoveSidebarSelection(delta) => {
             navigation::move_sidebar_selection(state, frame_snapshot, *delta);
         }
@@ -22,6 +24,29 @@ pub(crate) fn apply(
         _ => {}
     }
     Effect::None
+}
+
+fn resize_sidebar(event: AppMouseEvent, state: &mut AppState, snapshot: &FrameSnapshot) {
+    let Some(workspace) = snapshot.layout.workspace else {
+        return;
+    };
+    match event.kind {
+        AppMouseEventKind::Down(AppMouseButton::Left) => {
+            if let Some(area) = snapshot.layout.sidebar {
+                state.ui.dismiss_transient_interaction();
+                state.ui.sidebar.start_resize(event.column, area.width);
+            }
+        }
+        AppMouseEventKind::Drag(AppMouseButton::Left) | AppMouseEventKind::Moved => {
+            state.ui.sidebar.resize_to(event.column, workspace.width);
+        }
+        AppMouseEventKind::Up(AppMouseButton::Left) => {
+            state.ui.sidebar.resize_to(event.column, workspace.width);
+            state.ui.sidebar.stop_resize();
+            state.ui.set_hover(None);
+        }
+        _ => {}
+    }
 }
 
 fn apply_sidebar_click(x: u16, y: u16, state: &mut AppState, frame_snapshot: &FrameSnapshot) {

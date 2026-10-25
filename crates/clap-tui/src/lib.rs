@@ -165,6 +165,7 @@ mod pipeline;
 mod query;
 mod repeated_field;
 mod runtime;
+mod sidebar;
 mod spec;
 mod ui;
 mod update;

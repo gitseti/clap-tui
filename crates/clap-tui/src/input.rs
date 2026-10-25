@@ -76,6 +76,8 @@ pub enum HoverTarget {
     Help,
     Preview,
     FooterStatus,
+    SidebarToggle,
+    SidebarDivider,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +121,7 @@ pub struct UiState {
     pub dropdown_scroll: usize,
     pub dropdown_cursor: usize,
     pub sidebar_scroll: usize,
+    pub sidebar: crate::sidebar::SidebarState,
     pub form_scroll: u16,
     pub hover: Option<HoverTarget>,
     pub hover_tab: Option<ActiveTab>,
@@ -861,6 +864,7 @@ impl UiState {
 
     pub fn focus_sidebar(&mut self) {
         self.dismiss_transient_interaction();
+        self.sidebar.collapsed = false;
         self.focus = Focus::Sidebar;
     }
 
@@ -870,11 +874,16 @@ impl UiState {
 
     pub fn focus_search(&mut self) {
         self.dismiss_transient_interaction();
+        self.sidebar.collapsed = false;
         self.focus = Focus::Search;
     }
 
     pub fn focus_next(&mut self) {
         self.dismiss_transient_interaction();
+        if self.sidebar.collapsed {
+            self.focus_form();
+            return;
+        }
         self.focus = match self.focus {
             Focus::Sidebar => Focus::Search,
             Focus::Search => Focus::Form,
@@ -884,6 +893,10 @@ impl UiState {
 
     pub fn focus_previous(&mut self) {
         self.dismiss_transient_interaction();
+        if self.sidebar.collapsed {
+            self.focus_form();
+            return;
+        }
         self.focus = match self.focus {
             Focus::Sidebar => Focus::Form,
             Focus::Search => Focus::Sidebar,
@@ -1006,6 +1019,18 @@ impl UiState {
     pub fn dismiss_transient_interaction(&mut self) {
         self.close_dropdown();
         self.clear_mouse_selection();
+        self.sidebar.stop_resize();
+    }
+
+    pub fn toggle_sidebar(&mut self) {
+        self.dismiss_transient_interaction();
+        self.sidebar.collapsed = !self.sidebar.collapsed;
+        self.focus = if self.sidebar.collapsed {
+            Focus::Form
+        } else {
+            Focus::Sidebar
+        };
+        self.hover = None;
     }
 
     pub fn reset_transient_form_ui(&mut self) {
@@ -1069,6 +1094,7 @@ impl AppState {
                 dropdown_open: None,
                 dropdown_scroll: 0,
                 dropdown_cursor: 0,
+                sidebar: crate::sidebar::SidebarState::default(),
                 sidebar_scroll: 0,
                 form_scroll: 0,
                 hover: None,

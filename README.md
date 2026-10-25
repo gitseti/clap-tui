@@ -147,6 +147,7 @@ Available presets:
 
 ## Controls
 
+- `Ctrl+B` or the divider chevron collapses/reopens the command sidebar; drag the divider to resize it
 - `Tab` switches focus
 - `Shift+Tab` cycles tabs
 - `?` toggles the Help tab

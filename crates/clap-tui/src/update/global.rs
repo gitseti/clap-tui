@@ -11,6 +11,13 @@ pub(crate) fn apply(
     frame_snapshot: &FrameSnapshot,
 ) -> Effect {
     match action {
+        Action::ToggleSidebar => {
+            state.ui.toggle_sidebar();
+            if !state.ui.sidebar.collapsed {
+                navigation::ensure_selected_sidebar_visible(state, frame_snapshot);
+            }
+            Effect::None
+        }
         Action::JumpToError => {
             let validation = state.derived_validation();
             navigation::focus_first_invalid_field(state, frame_snapshot, &validation);
@@ -136,7 +143,8 @@ fn apply_footer_click(
             Effect::None
         }
         HoverTarget::FooterStatus => apply(&Action::JumpToError, state, frame_snapshot),
-        HoverTarget::Preview => Effect::None,
+        HoverTarget::SidebarToggle => apply(&Action::ToggleSidebar, state, frame_snapshot),
+        HoverTarget::SidebarDivider | HoverTarget::Preview => Effect::None,
     }
 }
 

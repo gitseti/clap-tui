@@ -9,7 +9,7 @@ use crate::query::{form, selectors, tree::TreeRow};
 use crate::spec::{CommandPath, CommandSpec};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Block;
 
 use super::{dropdown, footer, form as form_ui, header, layout, preview, sidebar, styles, toast};
 
@@ -107,34 +107,18 @@ pub(crate) fn render(
         &vm,
         &frame_snapshot,
     );
-    sidebar::render_sidebar(
-        frame,
-        &state.ui,
-        &vm.selected_path,
-        config,
-        areas.sidebar,
-        &vm,
-        &frame_snapshot.layout,
-    );
-    if areas.form.x > 0 {
-        let divider_height = areas.preview.y.saturating_sub(areas.sidebar.y);
-        let divider_area = Rect::new(
-            areas.form.x.saturating_sub(1),
-            areas.sidebar.y,
-            1,
-            divider_height,
-        );
-        frame.render_widget(
-            Paragraph::new(
-                (0..divider_area.height)
-                    .map(|_| "│")
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )
-            .style(styles::surface(config, styles::Surface::Workspace).fg(config.theme.divider)),
-            divider_area,
+    if areas.sidebar.width > 0 {
+        sidebar::render_sidebar(
+            frame,
+            &state.ui,
+            &vm.selected_path,
+            config,
+            areas.sidebar,
+            &vm,
+            &frame_snapshot.layout,
         );
     }
+    super::sidebar_controls::render(frame, &state.ui, config, &frame_snapshot);
     dropdown::render_dropdown(
         frame,
         &state.ui,
