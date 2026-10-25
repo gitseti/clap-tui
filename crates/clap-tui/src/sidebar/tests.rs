@@ -6,8 +6,11 @@ use crate::{
     frame_snapshot::FrameSnapshot,
     input::{AppState, Focus, HoverTarget, MouseSelection},
     runtime::{
-        AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers, AppMouseButton, AppMouseEvent,
-        AppMouseEventKind, MousePointer,
+        AppEvent, AppKeyCode, AppKeyEvent, AppKeyModifiers,
+        AppMouseButton::Left,
+        AppMouseEvent,
+        AppMouseEventKind::{self, Down, Drag, Moved, Up},
+        MousePointer,
     },
     update::{Effect, apply_action},
 };
@@ -30,13 +33,23 @@ fn event(state: &mut AppState, snapshot: &FrameSnapshot, event: &AppEvent) {
     assert_eq!(apply_action(&action, state, snapshot), Effect::None);
 }
 
-fn mouse(kind: AppMouseEventKind, column: u16, row: u16) -> AppEvent {
-    AppEvent::Mouse(AppMouseEvent {
-        kind,
-        column,
-        row,
-        modifiers: AppKeyModifiers::default(),
-    })
+fn send_mouse(
+    state: &mut AppState,
+    snapshot: &FrameSnapshot,
+    kind: AppMouseEventKind,
+    column: u16,
+    row: u16,
+) {
+    event(
+        state,
+        snapshot,
+        &AppEvent::Mouse(AppMouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: AppKeyModifiers::default(),
+        }),
+    );
 }
 
 fn toggle() -> AppEvent {
@@ -70,11 +83,7 @@ fn header_and_footer_toggles_highlight_independently_but_share_the_action() {
         (HoverTarget::SidebarToggle, header),
         (HoverTarget::FooterSidebarToggle, footer),
     ] {
-        event(
-            &mut state,
-            &snapshot,
-            &mouse(AppMouseEventKind::Moved, area.x, area.y),
-        );
+        send_mouse(&mut state, &snapshot, Moved, area.x, area.y);
         assert_eq!(state.ui.hover, Some(target));
         terminal
             .draw(|frame| snapshot = crate::ui::render(frame, &mut state, &config))
@@ -101,15 +110,7 @@ fn header_and_footer_toggles_highlight_independently_but_share_the_action() {
             }
         );
     }
-    event(
-        &mut state,
-        &snapshot,
-        &mouse(
-            AppMouseEventKind::Down(AppMouseButton::Left),
-            footer.x,
-            footer.y,
-        ),
-    );
+    send_mouse(&mut state, &snapshot, Down(Left), footer.x, footer.y);
     assert!(state.ui.sidebar.collapsed);
 }
 
@@ -123,20 +124,8 @@ fn button_free_motion_recovers_from_a_missing_release_without_resizing() {
         let mut state = AppState::from_command(&Command::new("tool"));
         let before = draw(&mut state, 80, 24);
         let divider = before.layout.sidebar_divider.unwrap();
-        event(
-            &mut state,
-            &before,
-            &mouse(AppMouseEventKind::Down(AppMouseButton::Left), divider.x, 4),
-        );
-        event(
-            &mut state,
-            &before,
-            &mouse(
-                AppMouseEventKind::Drag(AppMouseButton::Left),
-                divider.x + 4,
-                4,
-            ),
-        );
+        send_mouse(&mut state, &before, Down(Left), divider.x, 4);
+        send_mouse(&mut state, &before, Drag(Left), divider.x + 4, 4);
         let dragged = draw(&mut state, 80, 24);
         let width = dragged.layout.sidebar.unwrap().width;
         assert_eq!(dragged.mouse_pointer, MousePointer::ResizeHorizontal);
@@ -154,11 +143,7 @@ fn button_free_motion_recovers_from_a_missing_release_without_resizing() {
             HoverTarget::SidebarDivider => dragged.layout.sidebar_divider.unwrap(),
             _ => unreachable!(),
         };
-        event(
-            &mut state,
-            &dragged,
-            &mouse(AppMouseEventKind::Moved, area.x, area.y),
-        );
+        send_mouse(&mut state, &dragged, Moved, area.x, area.y);
         assert!(!state.ui.sidebar.is_resizing());
         assert_eq!(state.ui.hover, Some(target));
         let recovered = draw(&mut state, 80, 24);
@@ -172,15 +157,7 @@ fn button_free_motion_recovers_from_a_missing_release_without_resizing() {
             }
         );
         let button = recovered.layout.sidebar_toggle.unwrap();
-        event(
-            &mut state,
-            &recovered,
-            &mouse(
-                AppMouseEventKind::Down(AppMouseButton::Left),
-                button.x,
-                button.y,
-            ),
-        );
+        send_mouse(&mut state, &recovered, Down(Left), button.x, button.y);
         assert!(
             state.ui.sidebar.collapsed,
             "normal clicks resume after capture ends"
@@ -193,11 +170,7 @@ fn rendered_pointer_matches_divider_interaction_during_help_and_dragging() {
     let mut state = AppState::from_command(&Command::new("tool"));
     let before = draw(&mut state, 80, 24);
     let divider = before.layout.sidebar_divider.unwrap();
-    event(
-        &mut state,
-        &before,
-        &mouse(AppMouseEventKind::Moved, divider.x, 4),
-    );
+    send_mouse(&mut state, &before, Moved, divider.x, 4);
     event(
         &mut state,
         &before,
@@ -209,36 +182,16 @@ fn rendered_pointer_matches_divider_interaction_during_help_and_dragging() {
     assert!(state.ui.help_open);
     let help = draw(&mut state, 80, 24);
     assert_eq!(help.mouse_pointer, MousePointer::ResizeHorizontal);
-    event(
-        &mut state,
-        &help,
-        &mouse(AppMouseEventKind::Down(AppMouseButton::Left), divider.x, 4),
-    );
+    send_mouse(&mut state, &help, Down(Left), divider.x, 4);
     state.ui.hover = None;
-    event(
-        &mut state,
-        &help,
-        &mouse(
-            AppMouseEventKind::Drag(AppMouseButton::Left),
-            divider.x + 4,
-            4,
-        ),
-    );
+    send_mouse(&mut state, &help, Drag(Left), divider.x + 4, 4);
     let dragged = draw(&mut state, 80, 24);
     assert_eq!(
         dragged.layout.sidebar.unwrap().width,
         before.layout.sidebar.unwrap().width + 4
     );
     assert_eq!(dragged.mouse_pointer, MousePointer::ResizeHorizontal);
-    event(
-        &mut state,
-        &dragged,
-        &mouse(
-            AppMouseEventKind::Up(AppMouseButton::Left),
-            divider.x + 4,
-            4,
-        ),
-    );
+    send_mouse(&mut state, &dragged, Up(Left), divider.x + 4, 4);
     assert_eq!(
         draw(&mut state, 80, 24).mouse_pointer,
         MousePointer::Default
@@ -278,38 +231,20 @@ fn drag_collapse_and_reopen_keep_width_and_form_values() {
         assert_eq!(button.width, 3);
         assert_eq!(button.x, before.layout.form.unwrap().x);
         let original = before.layout.sidebar.unwrap().width;
-        event(
-            &mut state,
-            &before,
-            &mouse(
-                AppMouseEventKind::Down(AppMouseButton::Left),
-                divider.x,
-                divider.y + 2,
-            ),
-        );
+        send_mouse(&mut state, &before, Down(Left), divider.x, divider.y + 2);
         assert!(state.ui.sidebar.is_resizing());
         assert!(state.ui.mouse_select.is_none() && state.ui.dropdown_open.is_none());
-        event(
+        send_mouse(
             &mut state,
             &before,
-            &mouse(
-                AppMouseEventKind::Drag(AppMouseButton::Left),
-                divider.x + 7,
-                divider.y + 2,
-            ),
+            Drag(Left),
+            divider.x + 7,
+            divider.y + 2,
         );
         let resized = draw(&mut state, width, height);
         assert_eq!(resized.layout.sidebar.unwrap().width, original + 7);
         // Release over the footer, outside the divider; the gesture still ends.
-        event(
-            &mut state,
-            &resized,
-            &mouse(
-                AppMouseEventKind::Up(AppMouseButton::Left),
-                divider.x + 9,
-                height - 1,
-            ),
-        );
+        send_mouse(&mut state, &resized, Up(Left), divider.x + 9, height - 1);
         assert!(!state.ui.sidebar.is_resizing());
         assert_eq!(state.ui.focus, Focus::Form);
         let resized = draw(&mut state, width, height);
@@ -332,14 +267,12 @@ fn drag_collapse_and_reopen_keep_width_and_form_values() {
         let control = hidden.layout.sidebar_toggle.unwrap();
         assert_eq!(control.width, 3);
         assert_eq!(control.x, hidden.layout.form.unwrap().x);
-        event(
+        send_mouse(
             &mut state,
             &hidden,
-            &mouse(
-                AppMouseEventKind::Down(AppMouseButton::Left),
-                control.right() - 1,
-                control.y,
-            ),
+            Down(Left),
+            control.right() - 1,
+            control.y,
         );
         let reopened = draw(&mut state, width, height);
         assert_eq!(reopened.layout.sidebar.unwrap().width, original + 9);
@@ -353,22 +286,10 @@ fn widths_are_clamped_and_terminal_resize_retains_the_preference() {
     let mut state = AppState::from_command(&Command::new("tool"));
     let before = draw(&mut state, 100, 24);
     let divider = before.layout.sidebar_divider.unwrap();
-    event(
-        &mut state,
-        &before,
-        &mouse(AppMouseEventKind::Down(AppMouseButton::Left), divider.x, 2),
-    );
-    event(
-        &mut state,
-        &before,
-        &mouse(AppMouseEventKind::Drag(AppMouseButton::Left), 0, 2),
-    );
+    send_mouse(&mut state, &before, Down(Left), divider.x, 2);
+    send_mouse(&mut state, &before, Drag(Left), 0, 2);
     assert_eq!(draw(&mut state, 100, 24).layout.sidebar.unwrap().width, 16);
-    event(
-        &mut state,
-        &before,
-        &mouse(AppMouseEventKind::Up(AppMouseButton::Left), u16::MAX, 2),
-    );
+    send_mouse(&mut state, &before, Up(Left), u16::MAX, 2);
     assert_eq!(draw(&mut state, 100, 24).layout.sidebar.unwrap().width, 80);
     let narrow = draw(&mut state, 60, 20);
     assert_eq!(narrow.layout.sidebar.unwrap().width, 40);
@@ -421,15 +342,7 @@ fn search_and_command_errors_reopen_the_sidebar_and_reveal_selection() {
         .find(|button| button.target == HoverTarget::Search)
         .unwrap()
         .rect;
-    event(
-        &mut state,
-        &hidden,
-        &mouse(
-            AppMouseEventKind::Down(AppMouseButton::Left),
-            search.x,
-            search.y,
-        ),
-    );
+    send_mouse(&mut state, &hidden, Down(Left), search.x, search.y);
     assert!(!state.ui.sidebar.collapsed);
     assert_eq!(state.ui.focus, Focus::Search);
 }
@@ -456,7 +369,12 @@ fn preview_owns_events_and_argument_errors_leave_sidebar_hidden() {
     assert!(preview.layout.sidebar_divider.is_none());
     for input in [
         toggle(),
-        mouse(AppMouseEventKind::Drag(AppMouseButton::Left), 20, 2),
+        AppEvent::Mouse(AppMouseEvent {
+            kind: Drag(Left),
+            column: 20,
+            row: 2,
+            modifiers: AppKeyModifiers::default(),
+        }),
     ] {
         assert_eq!(
             controller::handle_event(&input, &state, &preview, &TuiConfig::default()),

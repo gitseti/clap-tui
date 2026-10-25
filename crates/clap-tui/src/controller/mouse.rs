@@ -126,11 +126,7 @@ fn handle_sidebar_event(
     }
     match snapshot.sidebar_control_at(event.column, event.row) {
         Some(crate::input::HoverTarget::SidebarToggle) => Some(Action::ToggleSidebar),
-        Some(crate::input::HoverTarget::SidebarDivider) => Some(if state.ui.sidebar.collapsed {
-            Action::ToggleSidebar
-        } else {
-            Action::ResizeSidebar(event)
-        }),
+        Some(crate::input::HoverTarget::SidebarDivider) => Some(Action::ResizeSidebar(event)),
         _ => None,
     }
 }
