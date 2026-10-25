@@ -115,12 +115,19 @@ impl SidebarListView {
 fn render_title(
     frame: &mut Frame<'_>,
     config: &TuiConfig,
-    title_area: Rect,
+    mut title_area: Rect,
     root: &crate::spec::CommandSpec,
     root_selected: bool,
     needs_command: bool,
 ) {
+    // Keep a gap before the collapse button at the right end of the header.
+    title_area.width = title_area
+        .width
+        .saturating_sub(crate::sidebar::TOGGLE_WIDTH + 1);
     let mut title = sidebar_title(config, root, root_selected);
+    if title.width() > usize::from(title_area.width) {
+        title.spans.truncate(1);
+    }
     if needs_command {
         for span in &mut title.spans {
             span.style = span.style.fg(config.theme.error);

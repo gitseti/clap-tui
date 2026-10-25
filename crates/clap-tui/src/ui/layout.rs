@@ -90,10 +90,16 @@ pub(crate) fn build_screen_layout(
     let footer_area = vertical[2];
     let sidebar_width = ui.sidebar.width(body_area.width, sidebar_width);
     let sidebar_area = Rect::new(body_area.x, body_area.y, sidebar_width, body_area.height);
+    let rail_width = if ui.sidebar.collapsed {
+        crate::sidebar::TOGGLE_WIDTH.min(body_area.width.saturating_sub(1))
+    } else {
+        0
+    };
+    let main_offset = sidebar_width + rail_width;
     let main_area = Rect::new(
-        body_area.x.saturating_add(sidebar_width),
+        body_area.x.saturating_add(main_offset),
         body_area.y,
-        body_area.width.saturating_sub(sidebar_width),
+        body_area.width.saturating_sub(main_offset),
         body_area.height,
     );
     let main_inner = main_area.inner(Margin {
@@ -134,16 +140,7 @@ pub(crate) fn build_screen_layout(
     preview.populate_snapshot(&mut snapshot);
     snapshot.layout.footer = Some(footer_area);
     snapshot.layout.workspace = Some(body_area);
-    if body_area.width > 0 && body_area.height > 0 {
-        snapshot.layout.sidebar_divider =
-            Some(Rect::new(main_area.x, body_area.y, 1, body_area.height));
-        snapshot.layout.sidebar_toggle = Some(Rect::new(
-            main_area.x,
-            body_area.y,
-            crate::sidebar::TOGGLE_WIDTH.min(main_area.width),
-            1,
-        ));
-    }
+    super::sidebar_controls::populate_layout(sidebar_area, main_area, &mut snapshot.layout);
     if sidebar_area.width > 0 {
         sidebar::populate_layout(sidebar_area, vm, &mut snapshot.layout);
     }
@@ -249,6 +246,7 @@ mod tests {
 
         let areas = layout.areas.expect("workspace layout");
         let preview = layout.snapshot.layout.preview.expect("preview layout");
+        assert_eq!(areas.header.x, areas.form.x);
         assert_eq!(areas.header.height, 2);
         assert_eq!(preview.height, 2);
         assert_eq!(preview.x, 0);
@@ -268,6 +266,7 @@ mod tests {
 
         let areas = layout.areas.expect("workspace layout");
         let preview = layout.snapshot.layout.preview.expect("preview layout");
+        assert_eq!(areas.header.x, areas.form.x);
         assert_eq!(areas.header.height, 3);
         assert_eq!(preview.height, 4);
         assert_eq!(preview.x, 0);

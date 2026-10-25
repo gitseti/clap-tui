@@ -66,6 +66,10 @@ fn drag_collapse_and_reopen_keep_width_and_form_values() {
         });
         let before = draw(&mut state, width, height);
         let divider = before.layout.sidebar_divider.unwrap();
+        let button = before.layout.sidebar_toggle.unwrap();
+        assert_eq!(button.width, 3);
+        assert_eq!(button.right(), before.layout.sidebar.unwrap().right());
+        assert_eq!(button.right(), divider.x);
         let original = before.layout.sidebar.unwrap().width;
         event(
             &mut state,
@@ -107,7 +111,7 @@ fn drag_collapse_and_reopen_keep_width_and_form_values() {
         let hidden = draw(&mut state, width, height);
         assert!(hidden.layout.sidebar.is_none() && hidden.layout.search.is_none());
         assert!(hidden.layout.sidebar_items.is_empty());
-        assert_eq!(hidden.layout.form.unwrap().width, width - 2);
+        assert_eq!(hidden.layout.form.unwrap().width, width - 5);
         for key in [AppKeyCode::Tab, AppKeyCode::BackTab] {
             event(
                 &mut state,

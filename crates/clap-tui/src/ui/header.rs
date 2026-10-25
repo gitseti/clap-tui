@@ -53,10 +53,7 @@ pub(crate) fn render_header(
 }
 
 fn header_lines(config: &TuiConfig, vm: &ScreenView<'_>, height: u16) -> Vec<Line<'static>> {
-    // Leave one cell between the sidebar button and the title.
-    let mut breadcrumb = vec![Span::raw(
-        " ".repeat(usize::from(crate::sidebar::TOGGLE_WIDTH)),
-    )];
+    let mut breadcrumb = Vec::new();
     breadcrumb.push(Span::styled(
         vm.root.name.clone(),
         Style::default()
